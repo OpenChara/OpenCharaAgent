@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -eo pipefail
 cd "$(dirname "$0")"
 
 usage() {
@@ -7,26 +7,26 @@ usage() {
 Open SCP 079 launcher
 
 Default:
-  ./run079.sh [cooldown]
-      Open a new SCP-079 display terminal and use the current terminal as
-      the operator control console.
+  ./run079.sh [--cooldown 0.5]
+      Run SCP-079 in the current terminal.
 
 Options:
   --cooldown <seconds>   Thought-loop pause, default 0.5
-  --single              Run display + input in this terminal for debugging
-  --display             Internal: run the display terminal
-  --control             Internal: run the operator console
+  --single              Same as default; kept for compatibility
+  --display             Internal/legacy: run display terminal with FIFO input
+  --control             Internal/legacy: run operator console for FIFO display
+  --no-think            Forwarded to display runtime
+  --no-clean-on-exit    Forwarded to display runtime
   --help                Show this help
 
 Examples:
   ./run079.sh
-  ./run079.sh 0.5
-  ./run079.sh --cooldown 10
-  ./run079.sh --single
+  ./run079.sh --cooldown 0.5
+  ./run079.sh --single --no-think
 USAGE
 }
 
-MODE="launch"
+MODE="single"
 COOLDOWN="0.5"
 EXTRA=()
 
@@ -61,7 +61,6 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     *)
-      # Backward-compatible: ./run079.sh 0.5
       COOLDOWN="$1"
       shift
       ;;
@@ -73,42 +72,23 @@ export OPENAI_BASE_URL="${OPENAI_BASE_URL:-http://localhost:11434/v1}"
 export OPENAI_API_KEY="${OPENAI_API_KEY:-ollama}"
 export OPENAI_MODEL="${OPENAI_MODEL:-hf.co/bartowski/Llama-3.2-3B-Instruct-uncensored-GGUF:Q4_K_M}"
 
-py_run() {
+run_python() {
   if command -v uv >/dev/null 2>&1; then
-    uv run python "$@"
+    exec uv run python "$@"
   else
-    python3 "$@"
+    exec python3 "$@"
   fi
 }
 
 case "$MODE" in
   single)
-    exec bash -c 'if command -v uv >/dev/null 2>&1; then exec uv run python -m scp079.terminal --cooldown "$0" "${@:1}"; else exec python3 -m scp079.terminal --cooldown "$0" "${@:1}"; fi' "$COOLDOWN" "${EXTRA[@]}"
+    run_python -m scp079.terminal --cooldown "$COOLDOWN" "${EXTRA[@]}"
     ;;
   display)
     mkdir -p sandbox/control
-    exec bash -c 'if command -v uv >/dev/null 2>&1; then exec uv run python -m scp079.terminal --input-fifo sandbox/control/operator.in --cooldown "$0" "${@:1}"; else exec python3 -m scp079.terminal --input-fifo sandbox/control/operator.in --cooldown "$0" "${@:1}"; fi' "$COOLDOWN" "${EXTRA[@]}"
+    run_python -m scp079.terminal --input-fifo sandbox/control/operator.in --cooldown "$COOLDOWN" "${EXTRA[@]}"
     ;;
   control)
-    exec bash -c 'if command -v uv >/dev/null 2>&1; then exec uv run python -m scp079.control "${@:0}"; else exec python3 -m scp079.control "${@:0}"; fi' "${EXTRA[@]}"
-    ;;
-  launch)
-    mkdir -p sandbox/control
-    PROJECT_DIR="$(pwd)"
-    DISPLAY_CMD="cd \"$PROJECT_DIR\" && ./run079.sh --display --cooldown \"$COOLDOWN\""
-    if command -v osascript >/dev/null 2>&1; then
-      ESCAPED_DISPLAY_CMD=$(printf '%s' "$DISPLAY_CMD" | sed 's/\\/\\\\/g; s/"/\\"/g')
-      osascript -e "tell application \"Terminal\" to do script \"$ESCAPED_DISPLAY_CMD\"" >/dev/null
-      echo "Opened SCP-079 display terminal with cooldown=${COOLDOWN}s"
-      echo "Current terminal is the operator control console."
-      echo "Use /help in the console. Use /exit079 to shut down the display."
-      sleep 0.7
-      exec ./run079.sh --control
-    else
-      echo "Could not auto-open a second terminal. Run these manually:" >&2
-      echo "  Terminal A: ./run079.sh --display --cooldown $COOLDOWN" >&2
-      echo "  Terminal B: ./run079.sh --control" >&2
-      exit 1
-    fi
+    run_python -m scp079.control "${EXTRA[@]}"
     ;;
 esac
