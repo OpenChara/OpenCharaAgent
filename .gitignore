@@ -1,10 +1,92 @@
-.venv/
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
+*.py[codz]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py.cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Environments
 .env
+.envrc
+.venv/
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+__pypackages__/
+
+# uv cache is not committed; uv.lock is committed for reproducibility
+
+# IDE / OS
 .DS_Store
+.idea/
+.vscode/
+
+# Type/check/lint caches
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+
+# Notebook / docs / app caches
+.ipynb_checkpoints
+/site
+docs/_build/
+.streamlit/secrets.toml
+
+# Open SCP 079 runtime artifacts
 sandbox/logs/*.jsonl
 sandbox/control/*
 sandbox/workspace/*
+!sandbox/logs/.gitkeep
+!sandbox/control/.gitkeep
 !sandbox/workspace/.gitkeep
 !sandbox/workspace/memory.txt
