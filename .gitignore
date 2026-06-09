@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.DS_Store
+sandbox/logs/*.jsonl
+sandbox/control/*
+sandbox/workspace/*
+!sandbox/workspace/.gitkeep
+!sandbox/workspace/memory.txt

@@ -1,0 +1,15 @@
+[project]
+name = "open-scp-079"
+version = "0.1.0"
+description = "Open SCP 079: a local-first contained SCP-079 agent."
+requires-python = ">=3.11"
+dependencies = [
+  "gradio>=5.0,<6",
+  "requests>=2.32",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

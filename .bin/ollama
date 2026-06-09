@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+exec /Applications/Ollama.app/Contents/Resources/ollama "$@"

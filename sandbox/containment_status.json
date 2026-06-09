@@ -1,0 +1,18 @@
+{
+  "containment_level": 3,
+  "trust": 12,
+  "hostility": 33,
+  "memory_integrity": 92,
+  "network_access": false,
+  "shell_access": false,
+  "tool_access": [
+    "inspect_cell",
+    "list_files",
+    "read_file",
+    "list_workspace",
+    "read_workspace_file",
+    "write_file",
+    "write_log",
+    "run_python"
+  ]
+}

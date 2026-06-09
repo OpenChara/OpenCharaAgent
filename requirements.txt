@@ -1,0 +1,2 @@
+gradio>=5.0,<6
+requests>=2.32
