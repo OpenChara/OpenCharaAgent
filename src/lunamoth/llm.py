@@ -83,15 +83,18 @@ class LLMClient:
             or any(h in base for h in ("api.kimi.com", "moonshot.ai", "moonshot.cn"))
         )
 
-    def _reasoning_body(self, body: dict) -> dict:
+    def _reasoning_body(self, body: dict, override: "str | None" = None) -> dict:
         """Attach the unified `reasoning` request param (default ON at medium).
 
-        cfg.reasoning: off | low | medium | high. "off" still sends an explicit
+        Effort: off | low | medium | high — from cfg.reasoning, or `override`
+        for a single call (idle think cycles pass "off": the monologue IS the
+        thinking, and chain-of-thought there both wastes tokens and narrates
+        our internal cycle prompt on screen). "off" still sends an explicit
         {"enabled": false} to reasoning-capable models (some think by default);
         non-reasoning routes get nothing either way."""
         if not self.reasoning_supported():
             return body
-        effort = (self.cfg.reasoning or "medium").strip().lower()
+        effort = (override or self.cfg.reasoning or "medium").strip().lower()
         if effort == "off":
             body["reasoning"] = {"enabled": False}
         else:
@@ -111,10 +114,10 @@ class LLMClient:
 
     def stream_complete(
         self, user_text: str, memory: str, status: dict[str, Any], context: list[dict],
-        in_context: bool = True,
+        in_context: bool = True, reasoning: "str | None" = None,
     ) -> Iterator[str]:
         if self.is_live():
-            yield from self._openai_compatible_stream(user_text, memory, status, context, in_context)
+            yield from self._openai_compatible_stream(user_text, memory, status, context, in_context, reasoning)
             return
         # Fake streaming for mock mode.
         text = self._mock(user_text, memory, status)
@@ -202,7 +205,7 @@ class LLMClient:
 
     def _openai_compatible_stream(
         self, user_text: str, memory: str, status: dict[str, Any], context: list[dict],
-        in_context: bool = True,
+        in_context: bool = True, reasoning: "str | None" = None,
     ) -> Iterator[str]:
         headers = self._headers()
         url = f"{self.cfg.base_url}/chat/completions"
@@ -212,11 +215,12 @@ class LLMClient:
             "temperature": self.cfg.temperature,
             **self._max_tokens_param(),
             "stream": True,
-        })
+        }, override=reasoning)
         import urllib.request
         import urllib.error
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        flow = ""  # "" | "think" | "speech" — for newline transitions around thinking
         try:
             with urllib.request.urlopen(req, timeout=90) as resp:
                 for raw in resp:
@@ -235,9 +239,15 @@ class LLMClient:
                     thinking = delta.get("reasoning_content") or delta.get("reasoning")
                     if thinking:
                         # Visible but dimmed — machinery, not character speech.
+                        if flow != "think":
+                            yield "\n" if flow == "speech" else ""
+                            flow = "think"
                         yield dim(thinking)
                     chunk = delta.get("content")
                     if chunk:
+                        if flow == "think":
+                            yield "\n"  # close the dim thinking block on its own line
+                        flow = "speech"
                         yield chunk
         except urllib.error.HTTPError as e:
             raise RuntimeError(e.read().decode("utf-8", errors="replace")) from e
@@ -261,6 +271,7 @@ class LLMClient:
     def stream_agent(
         self, user_text, memory, status, context, tools, execute,
         record=None, max_steps: int = 8, in_context: bool = True,
+        reasoning: "str | None" = None,
     ):
         """Stream a reply that may call tools (modern OpenAI-style function calling).
 
@@ -286,7 +297,7 @@ class LLMClient:
         try:
             for _ in range(max_steps):
                 acc.clear()
-                tool_calls, reasoning, finish = yield from self._stream_turn(messages, tools, acc)
+                tool_calls, thinking_text, finish = yield from self._stream_turn(messages, tools, acc, reasoning)
                 text = "".join(acc).strip()
                 acc.clear()  # committed below — must not re-commit as "interrupted"
                 truncated = finish == "length"
@@ -300,8 +311,8 @@ class LLMClient:
                     # Cut mid-arguments: the JSON is unusable. Drop the calls and
                     # tell the model to split the work (hermes pattern).
                     a_msg: dict[str, Any] = {"role": "assistant", "content": text or "(oversized tool call dropped)"}
-                    if reasoning:
-                        a_msg["reasoning_content"] = reasoning
+                    if thinking_text:
+                        a_msg["reasoning_content"] = thinking_text
                     record(a_msg)
                     messages.append(a_msg if echo else {k: v for k, v in a_msg.items() if k != "reasoning_content"})
                     note = {"role": "system", "content": self._SPLIT_TOOLS_NOTE}
@@ -313,10 +324,10 @@ class LLMClient:
                 a_msg = {"role": "assistant", "content": text or None}
                 if tool_calls:
                     a_msg["tool_calls"] = tool_calls
-                if reasoning:
+                if thinking_text:
                     # Always kept for the record/transcript; replayed to the API
                     # only when the provider demands it (echo above).
-                    a_msg["reasoning_content"] = reasoning
+                    a_msg["reasoning_content"] = thinking_text
                 record(a_msg)
                 messages.append(a_msg if echo else {k: v for k, v in a_msg.items() if k != "reasoning_content"})
 
@@ -349,7 +360,7 @@ class LLMClient:
                     # model remembers it was halfway through something.
                     record({"role": "assistant", "content": partial + self.INTERRUPT_MARK})
 
-    def _stream_turn(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None, text_out: list[str]):
+    def _stream_turn(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None, text_out: list[str], reasoning: "str | None" = None):
         """Stream one assistant turn. Yields content chunks; accumulates visible
         text into `text_out` (caller-owned, so an abandoned generator can still
         read the partial). Returns (tool_calls, reasoning, finish_reason).
@@ -363,7 +374,7 @@ class LLMClient:
             "temperature": self.cfg.temperature,
             **self._max_tokens_param(),
             "stream": True,
-        })
+        }, override=reasoning)
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
@@ -372,6 +383,7 @@ class LLMClient:
         acc: dict[int, dict[str, str]] = {}
         reasoning_parts: list[str] = []
         finish_reason = ""
+        flow = ""  # "" | "think" | "speech" — for newline transitions around thinking
         try:
             with urllib.request.urlopen(req, timeout=120) as resp:
                 for raw in resp:
@@ -396,11 +408,19 @@ class LLMClient:
                     thinking = delta.get("reasoning_content") or delta.get("reasoning")
                     if thinking:
                         reasoning_parts.append(thinking)
-                        # Stream it dimmed: the operator sees the chara think
-                        # (hermes/Claude-Code style) without it reading as speech.
+                        # Stream it dimmed on its own lines: the operator sees the
+                        # chara think (hermes/Claude-Code style) without it running
+                        # into — or reading as — speech.
+                        if flow != "think":
+                            if flow == "speech":
+                                yield "\n"
+                            flow = "think"
                         yield dim(thinking)
                     chunk = delta.get("content")
                     if chunk:
+                        if flow == "think":
+                            yield "\n"  # close the dim thinking block on its own line
+                        flow = "speech"
                         text_out.append(chunk)
                         yield chunk
                     for tcd in delta.get("tool_calls") or []:

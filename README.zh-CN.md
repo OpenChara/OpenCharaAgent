@@ -172,8 +172,7 @@ lunamoth --patience 4     # 自发循环的间隔秒数（live 模式）
 lunamoth --plain          # 旧版纯终端模式
 ```
 
-会话内命令：`/help`、`/status`、`/memory`、`/workspace`、`/mode live|chat`、`/net on|off`、`/allow-dir <path>`、`/patience <s>`、`/theme`、`/settings`、`/clear`、`/exit`。
-一切皆 slash 命令，无组合键。
+会话内命令：`/help`、`/status`、`/memory`、`/files`、`/mode live|chat`、`/reasoning`、`/net on|off`、`/allow-dir <path>`、`/patience <s>`、`/panel`、`/theme`、`/settings`、`/clear`、`/exit` —— 冗长输出会点亮右侧**聚光板**（遥测 / 记忆 / 文件树点击预览 / 操作员终端 / 帮助），控制台始终是干净的聊天记录。`! <cmd>` 以你的身份在 chara 沙盒里跑 shell（同一牢笼，输出进面板）；`Esc` 让面板回到遥测。
 
 ## 许可与致谢
 

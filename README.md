@@ -172,8 +172,7 @@ lunamoth --patience 4     # pause between its spontaneous cycles (live mode)
 lunamoth --plain          # legacy plain terminal mode
 ```
 
-In-session: `/help`, `/status`, `/memory`, `/workspace`, `/mode live|chat`, `/net on|off`, `/allow-dir <path>`, `/patience <s>`, `/theme`, `/settings`, `/clear`, `/exit`.
-Everything is a slash command — no chord shortcuts.
+In-session: `/help`, `/status`, `/memory`, `/files`, `/mode live|chat`, `/reasoning`, `/net on|off`, `/allow-dir <path>`, `/patience <s>`, `/panel`, `/theme`, `/settings`, `/clear`, `/exit` — verbose output lights up the right-side **spotlight panel** (telemetry / memory / file tree with click-to-preview / operator terminal / help), so the console stays a clean chat log. `! <cmd>` runs YOUR shell command in the chara's sandbox (same jail, output in the panel); `Esc` brings the panel home to telemetry.
 
 ## License & acknowledgements
 

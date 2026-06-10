@@ -17,7 +17,9 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.suggester import SuggestFromList
-from textual.widgets import Button, Footer, Header, Input, Label, RichLog, Select, Static
+from textual.widgets import (
+    Button, ContentSwitcher, DirectoryTree, Footer, Header, Input, Label, RichLog, Select, Static,
+)
 
 # Console commands, used both for inline autocomplete (ghost text) and the visible
 # suggestion line under the input.
@@ -25,7 +27,7 @@ SLASH_COMMANDS = [
     "/help", "/status", "/memory", "/memory_path", "/files", "/workspace",
     "/read", "/wread", "/write", "/logs", "/reset",
     "/mode live", "/mode chat", "/patience", "/reasoning", "/theme", "/net on", "/net off",
-    "/allow-dir", "/settings", "/clear", "/exit",
+    "/allow-dir", "/panel", "/settings", "/clear", "/exit",
 ]
 
 from . import art
@@ -34,6 +36,7 @@ from .cleanup import clean_runtime_sandbox
 from .config import ROOT
 from .llm import DIM_OFF, DIM_ON, LLMClient
 from .presence import MODES, normalize_mode
+from .runner import run_terminal
 from .settings import PRESETS, Settings, config_path, load_settings, save_settings
 from .themes import TuiTheme, load_theme
 
@@ -430,7 +433,16 @@ class LunaMothTUI(App):
     #input {
         background: #050505;
     }
-    /* Right 1/4: live telemetry — context/memory/sandbox gauges + the memory doc. */
+    /* Steady solid block caret (cursor_blink=False on the widget). Textual hides
+       this block automatically when the input loses focus, so an unfocused input
+       shows no caret — close to the terminal's transparent-on-blur behavior. */
+    #input > .input--cursor {
+        background: #e8f2fb;
+        color: #050505;
+    }
+    /* Right 1/4: the spotlight panel — one frame, many views (telemetry is the
+       default; /help, /memory, /files, !cmd and friends light up the others).
+       View-only by design: the console below is the ONLY input. */
     #sidebar {
         width: 1fr;
         border: heavy #1f3a1f;
@@ -440,6 +452,13 @@ class LunaMothTUI(App):
         color: #cfe6cf;
         padding: 0 1;
     }
+    #panel {
+        height: 1fr;
+    }
+    #panel > VerticalScroll {
+        height: 1fr;
+        scrollbar-size-vertical: 1;
+    }
     #gauges {
         height: auto;
         margin-bottom: 1;
@@ -448,13 +467,45 @@ class LunaMothTUI(App):
         height: auto;
         color: #8fae8f;
     }
+    #memfull, #helptext, #outtext, #filepreview {
+        height: auto;
+    }
+    #view-term {
+        height: 1fr;
+        background: transparent;
+        scrollbar-size-vertical: 1;
+        padding: 0;
+    }
+    #view-files {
+        height: 1fr;
+    }
+    #filetree {
+        height: 2fr;
+        background: transparent;
+        scrollbar-size-vertical: 1;
+    }
+    #preview-scroll {
+        height: 1fr;
+        scrollbar-size-vertical: 1;
+    }
     """
 
-    # Slash-command driven (like Claude Code / Codex): the only key binding is Ctrl+C to
-    # shut down cleanly. Every feature lives behind a /command in the console below.
+    # Slash-command driven (like Claude Code / Codex): Ctrl+C shuts down, Esc
+    # brings the spotlight panel home to telemetry. Everything else is a /command.
     BINDINGS = [
         ("ctrl+c", "quit_clean", "Shutdown"),
+        ("escape", "panel_home", "Telemetry"),
     ]
+
+    # Spotlight panel views and their frame titles (telemetry's comes from the skin).
+    PANEL_TITLES = {
+        "telemetry": "",  # skin.sidebar_title
+        "memory": "MEMORY",
+        "files": "SANDBOX FILES",
+        "term": "OPERATOR TERMINAL",
+        "help": "HELP",
+        "out": "OUTPUT",
+    }
 
     # Spontaneous-cycle activity words, shown in the status line while a self-talk
     # stream runs (replies always show as "talking"; idle shows "waiting").
@@ -515,10 +566,23 @@ class LunaMothTUI(App):
                         id="input",
                         suggester=SuggestFromList(SLASH_COMMANDS, case_sensitive=False),
                     )
-            # Right 1/4: live telemetry + memory document.
-            with VerticalScroll(id="sidebar"):
-                yield Static("", id="gauges")
-                yield Static("", id="memview")
+            # Right 1/4: the spotlight panel — one frame, many views, no input.
+            with Vertical(id="sidebar"):
+                with ContentSwitcher(initial="view-telemetry", id="panel"):
+                    with VerticalScroll(id="view-telemetry"):
+                        yield Static("", id="gauges")
+                        yield Static("", id="memview")
+                    with VerticalScroll(id="view-memory"):
+                        yield Static("", id="memfull")
+                    with VerticalScroll(id="view-help"):
+                        yield Static("", id="helptext")
+                    with VerticalScroll(id="view-out"):
+                        yield Static("", id="outtext")
+                    yield RichLog(id="view-term", wrap=True, auto_scroll=True, markup=False)
+                    with Vertical(id="view-files"):
+                        yield DirectoryTree(str(self.agent.sandbox.root), id="filetree")
+                        with VerticalScroll(id="preview-scroll"):
+                            yield Static("", id="filepreview")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -530,9 +594,21 @@ class LunaMothTUI(App):
         self.suggest = self.query_one("#suggest", Static)
         self.gauges = self.query_one("#gauges", Static)
         self.memview = self.query_one("#memview", Static)
+        self.panel = self.query_one("#panel", ContentSwitcher)
+        self.memfull = self.query_one("#memfull", Static)
+        self.helptext = self.query_one("#helptext", Static)
+        self.outtext = self.query_one("#outtext", Static)
+        self.termlog = self.query_one("#view-term", RichLog)
+        self.filetree = self.query_one("#filetree", DirectoryTree)
+        self.filepreview = self.query_one("#filepreview", Static)
         # Display is read-only: it must never grab keyboard focus (so the caret stays in
         # the input below). Mouse wheel still scrolls a non-focusable scroll view.
         self.display_scroll.can_focus = False
+        # The panel is view-only: nothing in it may steal the keyboard. The file
+        # tree alone stays focusable for mouse clicks; selecting hands focus back.
+        self.termlog.can_focus = False
+        for scroll in self.panel.query(VerticalScroll):
+            scroll.can_focus = False
         self._display_dirty = False
         self._ws_cache = (0.0, 0, 0)  # (monotonic_ts, bytes, files) — throttle disk walk
         self._apply_theme()
@@ -558,10 +634,10 @@ class LunaMothTUI(App):
         bottom.styles.border_title_color = t.accent
         bottom.border_title = t.console_title
         self.status.styles.color = t.accent
-        sb = self.query_one("#sidebar", VerticalScroll)
+        sb = self.query_one("#sidebar", Vertical)
         sb.styles.border = ("heavy", t.sidebar_border)
         sb.styles.border_title_color = t.accent
-        sb.border_title = t.sidebar_title
+        sb.border_title = self.PANEL_TITLES.get(self._panel_view(), "") or t.sidebar_title
 
     def _welcome_done(self, result: Settings | None) -> None:
         if result is not None:
@@ -663,6 +739,84 @@ class LunaMothTUI(App):
                 pfx = self.skin.reply_pfx(name)
             self._append_display(f"{pfx}{content}\n\n")
         self._console(f"restored {len(rows)} message(s) from the transcript", "grey50")
+
+    # ---- spotlight panel -----------------------------------------------------------
+    # The right frame shows ONE view at a time; the console below is its remote
+    # control. It never takes keyboard input (the file tree accepts mouse clicks
+    # only, and hands focus straight back).
+
+    def _panel_view(self) -> str:
+        cur = getattr(getattr(self, "panel", None), "current", "") or "view-telemetry"
+        return cur.removeprefix("view-")
+
+    def _switch_panel(self, view: str) -> None:
+        self.panel.current = f"view-{view}"
+        sb = self.query_one("#sidebar", Vertical)
+        sb.border_title = self.PANEL_TITLES.get(view, "") or self.skin.sidebar_title
+        if view == "memory":
+            self._render_memory_view()
+        elif view == "files":
+            try:
+                self.filetree.reload()
+            except Exception:
+                pass
+
+    def action_panel_home(self) -> None:
+        """Esc: bring the panel home to telemetry and the caret home to the input."""
+        self._switch_panel("telemetry")
+        self.input.focus()
+
+    def _render_memory_view(self) -> None:
+        mem = self.agent.memory.load()
+        limits = self.agent.memory.limits
+        t = Text()
+        t.append("MEMORY DOCUMENT\n", style=f"bold {self.skin.accent}")
+        t.append(self._bar(len(mem) / (limits.max_chars or 1), color=self.skin.gauge_memory))
+        t.append(f"\n{len(mem)} / {limits.max_chars} chars · {self.agent.memory.path}\n\n", style="grey50")
+        t.append(mem if mem.strip() else "(empty — the chara writes here via write_memory)", style="grey85")
+        self.memfull.update(t)
+
+    def _panel_out(self, title: str, body: str) -> None:
+        """Route one-shot command output to the panel's OUTPUT view."""
+        t = Text()
+        t.append(f"{title}\n", style=f"bold {self.skin.accent}")
+        t.append(body, style="grey85")
+        self.outtext.update(t)
+        self._switch_panel("out")
+
+    def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
+        """Mouse click on a file: preview it in the lower half of the files view,
+        then hand the keyboard straight back to the console input."""
+        try:
+            raw = Path(event.path).read_text(encoding="utf-8", errors="replace")
+            body = raw[:8000] + (f"\n… [{len(raw)} chars total]" if len(raw) > 8000 else "")
+        except OSError as e:
+            body = f"(unreadable: {e})"
+        t = Text()
+        t.append(f"{Path(event.path).name}\n", style=f"bold {self.skin.accent}")
+        t.append(body, style="grey85")
+        self.filepreview.update(t)
+        self.input.focus()
+
+    def _run_operator_command(self, command: str) -> None:
+        """`!cmd`: the OPERATOR's shell in the chara's sandbox — same runner, same
+        isolation, same audit trail, output to the panel's terminal view."""
+        self.termlog.write(Text(f"$ {command}", style=self.skin.accent))
+        self._switch_panel("term")
+        self.agent.audit.write("operator_command", command=command[:500])
+        status = self.agent.state.load()
+
+        def worker() -> None:
+            out = run_terminal(
+                command,
+                self.agent.sandbox.root / "workspace",
+                allow_network=bool(status.get("network_access", False)),
+                writable_paths=status.get("writable_paths", []),
+                timeout=120,
+            )
+            self.output.put(("term", out))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     # ---- output routing ----------------------------------------------------------
     # Two surfaces, strictly separated:
@@ -891,6 +1045,8 @@ class LunaMothTUI(App):
                 self._console(text, "red")
             elif kind == "perm":
                 self._console(text, "yellow")
+            elif kind == "term":
+                self.termlog.write(Text(text, style="grey85"))
             elif kind == "done":
                 self._append_display(text)
                 self.next_spont_at = time.monotonic() + self.patience
@@ -939,7 +1095,29 @@ class LunaMothTUI(App):
             if low in {"n", "no", "deny", "拒绝", "否"}:
                 return
             # Anything else denies AND is processed as a normal message/command below.
-        # ---- console commands: handled locally, output to the console pane only ----
+        # ---- operator shell: `!cmd` runs in the sandbox, output -> panel terminal ----
+        if text.startswith("!") and len(text) > 1:
+            self._console(f"! {text[1:].strip()}", self.skin.operator_color)
+            self._run_operator_command(text[1:].strip())
+            return
+        # ---- console commands: the console stays the chat log; anything verbose
+        # ---- lights up the spotlight panel on the right instead ----
+        if low in {"/memory"}:
+            self._console("/memory → panel", "grey50")
+            self._switch_panel("memory")
+            return
+        if low in {"/files", "/workspace"}:
+            self._console(f"{low} → panel (click a file to preview)", "grey50")
+            self._switch_panel("files")
+            return
+        if low.startswith("/panel"):
+            parts = low.split()
+            views = [v for v in self.PANEL_TITLES]
+            if len(parts) == 2 and parts[1] in views:
+                self._switch_panel(parts[1])
+            else:
+                self._console(f"panel = {self._panel_view()}  (usage: /panel {'|'.join(views)} · Esc returns to telemetry)", "grey50")
+            return
         if low in {"/exit", "/quit"}:
             await self.action_quit_clean()
             return
@@ -1031,15 +1209,15 @@ class LunaMothTUI(App):
             self._show_help()
             return
         if text.startswith("/"):
-            # Remaining agent commands (/status /memory /files /read ...): run inline,
-            # echo command + result into the console — never the character pane.
-            self._console(text, "green")
+            # Remaining agent commands (/status /read /logs ...): run inline; the
+            # console logs WHAT you asked, the panel shows the answer — so the
+            # console stays a clean chat log.
+            self._console(f"{text} → panel", "green")
             try:
                 result = self.agent._command(text, self.session)
             except Exception as e:  # noqa: BLE001 - surface to operator
                 result = f"command failed: {e}"
-            for line in str(result).splitlines() or [""]:
-                self._console(line, "grey62")
+            self._panel_out(text.split()[0].lstrip("/").upper(), str(result))
             self._update_status()
             return
         # ---- ordinary message: QUEUE it for the persona (never dropped) ----
@@ -1059,23 +1237,37 @@ class LunaMothTUI(App):
         self._pump()
 
     def _show_help(self) -> None:
-        self._console("operator console commands:", "grey50")
-        for line in (
-            "  talk        type anything (no slash) — sent to the persona, reply shows in the top pane",
-            "  /status     environment + context size            /memory   show loaded memory",
-            "  /files      sandbox files     /workspace  workspace files     /logs   recent audit",
-            "  /read <f>   read sandbox file      /wread <f>  read workspace file",
-            "  /reset      zero session context (memory document stays)",
-            "  /mode live|chat   how it behaves while you're here — live: keeps creating while",
-            "                    you watch (interject anytime); chat: waits and only replies to you",
-            "  /net on|off       allow the terminal tool to reach the network (this session)",
-            "  /allow-dir <path> add a writable path outside the workspace (sandbox isolation)",
-            "  /patience <sec>   pause between its spontaneous cycles (live mode)",
-            "  /reasoning off|low|medium|high   thinking effort (default medium; shown dimmed)",
-            "  /theme [name]     list/switch TUI skin",
-            "  /settings   reopen config      /clear   clear top pane      /exit   shut down",
-        ):
-            self._console(line, "grey62")
+        """Render help in the spotlight panel — the console stays a clean chat log."""
+        body = "\n".join((
+            "talk — type anything (no slash); the reply",
+            "streams in the top pane",
+            "",
+            "! <cmd>   YOUR shell in the chara's sandbox",
+            "          (same jail; output shows here)",
+            "Esc       panel back to telemetry",
+            "/panel <view>  switch this panel by hand",
+            "",
+            "/memory   memory document (this panel)",
+            "/files    sandbox file tree (click = preview)",
+            "/status   environment + context size",
+            "/logs     recent audit    /read <f>  a file",
+            "/reset    zero session context",
+            "",
+            "/mode live|chat   live: it keeps creating",
+            "          while you watch; chat: replies only",
+            "/patience <sec>   pause between its cycles",
+            "/reasoning off|low|medium|high  (default medium)",
+            "/net on|off       terminal network access",
+            "/allow-dir <path> extra writable path",
+            "/theme [name]     TUI skin",
+            "/settings  config   /clear  top pane   /exit",
+        ))
+        t = Text()
+        t.append("HELP\n", style=f"bold {self.skin.accent}")
+        t.append(body, style="grey85")
+        self.helptext.update(t)
+        self._switch_panel("help")
+        self._console("/help → panel", "grey50")
 
     def _cmd_theme(self, text: str) -> None:
         """`/theme` lists available skins; `/theme <name>` switches and persists it."""

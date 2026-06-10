@@ -351,15 +351,15 @@ class LunaMothAgent:
 
     def _reply_stream(
         self, user_text: str, memory: str, status: dict[str, Any], context: list[dict],
-        *, in_context: bool = True, record=None,
+        *, in_context: bool = True, record=None, reasoning: "str | None" = None,
     ):
         """Pick the tool-enabled agent loop or a plain stream depending on pack/backend."""
         if self._agent_loop_active():
             return self.llm.stream_agent(
                 user_text, memory, status, context, self.tools.schemas(), self._execute_tool,
-                record=record, in_context=in_context,
+                record=record, in_context=in_context, reasoning=reasoning,
             )
-        return self.llm.stream_complete(user_text, memory, status, context, in_context=in_context)
+        return self.llm.stream_complete(user_text, memory, status, context, in_context=in_context, reasoning=reasoning)
 
     def _execute_tool(self, tool_call: dict[str, Any]) -> dict[str, str]:
         """Run one native tool call; return a compact display line + the result fed back to the model."""
@@ -482,7 +482,7 @@ class LunaMothAgent:
                     # never enters the durable context, only the monologue does.
                     stream = self._reply_stream(
                         prompt, self.memory.render(), status, self._context_view(session),
-                        in_context=False, record=self._record_think(session),
+                        in_context=False, record=self._record_think(session), reasoning="off",
                     )
                     for chunk in stream:
                         chunks.append(chunk)
