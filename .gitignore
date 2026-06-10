@@ -122,3 +122,4 @@ reference/
 
 # runtime env state (regenerated per session)
 sandbox/env_status.json
+sandbox/presence.json

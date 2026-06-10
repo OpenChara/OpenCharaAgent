@@ -40,6 +40,7 @@
 - [x] **语言无关的 `terminal` 工具** —— 在会话隔离下跑 shell 命令，网络可运行时开关（`/net on`）
 - [x] **角色驱动的配置** —— 语言、世界书、工具与限制全部来自角色卡；引擎保持角色无关，普通 SillyTavern 卡也有安全默认值
 - [x] **Resume 优先的启动器与持久 chara** —— `lunamoth` 打开蓝色名册；每个 chara 在后台持续运行（`start` / `start-all` / `stop`），你 attach / detach 而非创建 / 杀死
+- [x] **在场感知** —— chara 能感觉到你的接入/离开，提示词由角色卡 `on_attach`/`on_detach` 声明；`/presence auto|always|off`（auto：接入时打招呼，等你先开口再恢复自语）；你在场时它可以 `request_permission` 请求网络/路径/资源（超时即拒绝），你不在场时请求自动拒绝
 
 以下每个未完成项都按"可独立完成"拆分——各自标注了涉及的模块；不共享模块的两项可以并行开发、互不影响。
 
@@ -173,7 +174,7 @@ lunamoth --cooldown 4     # 自语循环间隔秒数
 lunamoth --plain          # 旧版纯终端模式
 ```
 
-会话内命令：`/help`、`/status`、`/memory`、`/workspace`、`/net on|off`、`/allow-dir <path>`、`/forever on|off`、`/cooldown <s>`、`/exit`。
+会话内命令：`/help`、`/status`、`/memory`、`/workspace`、`/net on|off`、`/allow-dir <path>`、`/forever on|off`、`/presence auto|always|off`、`/cooldown <s>`、`/exit`。
 一切皆 slash 命令，无组合键：`/settings`、`/clear`、`/forever on|off`、`/exit`。
 
 ## 许可与致谢

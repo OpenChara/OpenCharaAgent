@@ -23,7 +23,8 @@ SLASH_COMMANDS = [
     "/help", "/status", "/memory", "/memory_path", "/files", "/workspace",
     "/read", "/wread", "/write", "/logs", "/reset",
     "/forever on", "/forever off", "/cooldown", "/theme", "/net on", "/net off",
-    "/allow-dir", "/settings", "/clear", "/exit",
+    "/allow-dir", "/presence auto", "/presence always", "/presence off",
+    "/settings", "/clear", "/exit",
 ]
 
 from . import art
@@ -31,6 +32,7 @@ from .agent import LunaMothAgent, Session
 from .cleanup import clean_runtime_sandbox
 from .config import ROOT
 from .llm import LLMClient
+from .presence import MODES as PRESENCE_MODES, normalize_mode
 from .settings import PRESETS, Settings, config_path, load_settings, save_settings
 from .themes import TuiTheme, load_theme
 
@@ -483,6 +485,17 @@ class LunaMothTUI(App):
         # cycle is almost always streaming, so starting a stream synchronously on submit
         # would silently fail. The pump (scheduler + submit) drains this with priority.
         self.pending_input: str | None = None
+        # Presence awareness (see presence/): the mode, plus the auto-mode latch that
+        # holds self-talk after attach until the operator's first message.
+        self.presence_mode = normalize_mode(self.settings.presence)
+        self.forever_held = False
+        self._detached = False
+        # Pending request_permission call: the worker thread blocks on _perm_event
+        # while the operator answers (y/n) in the console; timeout = deny.
+        self._perm_pending: str | None = None
+        self._perm_answer = False
+        self._perm_event = threading.Event()
+        self.agent.tools.permission_hook = self._permission_request
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -556,6 +569,7 @@ class LunaMothTUI(App):
             self.settings = result
             save_settings(result)
             self.agent.reconfigure(result)
+            self.presence_mode = normalize_mode(result.presence)
             # Re-apply the (possibly new) context limit to the live session.
             self.session.context.max_tokens = self.agent.context_limit()
             self.skin = load_theme(result.tui_theme_path)
@@ -584,17 +598,36 @@ class LunaMothTUI(App):
         self.set_interval(0.06, self._flush_display)  # ~16fps repaint of the top pane
         self.set_interval(0.1, self._scheduler_tick)
         self.next_forever_at = time.monotonic() + 0.2
+        # Presence: the chara now has an operator attached.
+        mode = self.presence_mode
+        self.agent.state.set_present(True)
+        self.agent.presence.pop_event()  # discard any stale handoff line — we're here now
+        if mode == "off":
+            # Never self-start. /forever on remains an explicit operator override.
+            self.forever = False
+        elif mode == "auto":
+            # Greet, then hold self-talk until the operator's first message.
+            self.forever_held = True
         self._update_status()
         name = self.agent.char_name()
         greeting = self.agent.greeting()
-        if greeting:
-            # SillyTavern first_mes: shown as the opening line without an LLM call.
+        first = self.agent.presence.first_meeting()
+        enter = self.agent.attach_event_text() if mode != "off" else ""
+        self.agent.presence.mark_met()
+        if greeting and (first or not enter):
+            # SillyTavern first_mes: the card's designed opener for a first meeting
+            # (also the fallback whenever the card declares no arrival prompt).
             self._append_display(f"{self.skin.reply_pfx(name)}{greeting}\n")
             self.session.context.add("assistant", greeting)
             self.next_forever_at = time.monotonic() + self.cooldown
-        else:
+        elif enter:
+            # The card's on_attach prompt: a live arrival turn — the chara reacts
+            # to the operator coming back.
+            self._start_stream(StreamJob(kind="event", text=enter), prefix=self.skin.reply_pfx(name))
+        elif mode != "off":
             probe = "你是谁？只用一句话回答。" if self.agent.lang == "zh" else "Who are you? Answer in one sentence."
             self._start_stream(StreamJob(kind="user", text=probe), prefix=self.skin.reply_pfx(name))
+        # mode == off with no greeting: stay silent until the operator speaks.
 
     # ---- output routing ----------------------------------------------------------
     # Two surfaces, strictly separated:
@@ -639,10 +672,10 @@ class LunaMothTUI(App):
         model = self.agent.settings.model
         provider = self.agent.settings.provider
         persona = self.agent.char_name()
-        state = "ON" if self.forever else "OFF"
+        state = "HELD" if (self.forever and self.forever_held) else ("ON" if self.forever else "OFF")
         running = "STREAM" if self._is_streaming() else "IDLE"
         self.status.update(
-            f"persona={persona} | forever={state} | stream={running} | cooldown={self.cooldown:.2f}s | "
+            f"persona={persona} | forever={state} | presence={self.presence_mode} | stream={running} | cooldown={self.cooldown:.2f}s | "
             f"memory={mem_chars} chars/{self.agent.memory.limits.max_tokens} tok | "
             f"ctx≈{ctx}/{self.session.context.max_tokens} | {provider}:{model}"
         )
@@ -757,6 +790,8 @@ class LunaMothTUI(App):
         chunks: Iterable[str]
         if job.kind == "think":
             chunks = self.agent.stream_think(self.session)
+        elif job.kind == "event":
+            chunks = self.agent.stream_event(job.text or "", self.session)
         else:
             chunks = self.agent.stream_handle(job.text or "", self.session)
         self.output.put(("prefix", prefix))
@@ -791,6 +826,8 @@ class LunaMothTUI(App):
                 self._console(text, "grey42")
             elif kind == "error":
                 self._console(text, "red")
+            elif kind == "perm":
+                self._console(text, "yellow")
             elif kind == "done":
                 self._append_display(text)
                 self.next_forever_at = time.monotonic() + self.cooldown
@@ -807,9 +844,10 @@ class LunaMothTUI(App):
             self.pending_input = None
             self._start_stream(StreamJob(kind="user", text=text), prefix=self.skin.reply_pfx(self.agent.char_name()))
             return
-        if self.forever and time.monotonic() >= self.next_forever_at:
+        if self.forever and not self.forever_held and time.monotonic() >= self.next_forever_at:
             # forever = eternal self-talk. The thought prefix marks a spontaneous cycle;
             # the stream itself shows the persona is working. No "[internal cycle]" banner.
+            # (forever_held = presence auto mode is waiting for the operator to speak first.)
             self._start_stream(StreamJob(kind="think"), prefix=self.skin.thought_pfx(self.agent.char_name()))
 
     def _scheduler_tick(self) -> None:
@@ -825,6 +863,19 @@ class LunaMothTUI(App):
         if not text:
             return
         low = text.lower()
+        # ---- pending permission request: this input is the answer ----
+        if self._perm_pending is not None:
+            if low in {"y", "yes", "allow", "ok", "同意", "允许", "是"}:
+                self._perm_answer = True
+                self._perm_event.set()
+                self._console(f"⚿ {self._perm_pending} → granted", "yellow")
+                return
+            self._perm_answer = False
+            self._perm_event.set()
+            self._console(f"⚿ {self._perm_pending} → denied", "yellow")
+            if low in {"n", "no", "deny", "拒绝", "否"}:
+                return
+            # Anything else denies AND is processed as a normal message/command below.
         # ---- console commands: handled locally, output to the console pane only ----
         if low in {"/exit", "/quit"}:
             await self.action_quit_clean()
@@ -850,14 +901,34 @@ class LunaMothTUI(App):
             return
         if low in {"/forever off", "/forever", "/pause"}:
             self.forever = False
+            self.forever_held = False
             self._console("forever (self-talk) = OFF", "grey50")
             self._update_status()
             return
         if low in {"/forever on", "/resume"}:
             self.forever = True
+            self.forever_held = False
             self.next_forever_at = time.monotonic()
             self._console("forever (self-talk) = ON", "grey50")
             self._update_status()
+            return
+        if low.startswith("/presence"):
+            parts = low.split()
+            if len(parts) == 2 and parts[1] in PRESENCE_MODES:
+                self.presence_mode = parts[1]
+                self.settings = replace(self.settings, presence=parts[1])
+                save_settings(self.settings)
+                if parts[1] == "off":
+                    self.forever = False
+                self.forever_held = False  # mid-session switch: the operator is clearly here
+                self._console(f"presence = {parts[1]} (persisted)", "grey50")
+                self._update_status()
+            else:
+                self._console(
+                    f"presence = {self.presence_mode}  (usage: /presence auto|always|off — "
+                    "auto: greet on attach then wait for you; always: never wait; off: no presence events)",
+                    "grey50",
+                )
             return
         if low.startswith("/theme"):
             self._cmd_theme(text)
@@ -904,6 +975,9 @@ class LunaMothTUI(App):
         if self.display_text and not self.display_text.endswith("\n\n"):
             self._append_display("\n")
         self._append_display(f"{self.skin.operator_pfx(self.settings.user_name)}{text}\n")
+        # Presence auto mode: the operator has spoken — release the self-talk hold
+        # (forever resumes only if it was configured on; we never force it on).
+        self.forever_held = False
         self.pending_input = text
         # Interrupt any in-flight cycle so the queued message goes out promptly; the pump
         # then starts it the moment the worker actually stops.
@@ -920,6 +994,8 @@ class LunaMothTUI(App):
             "  /read <f>   read sandbox file      /wread <f>  read workspace file",
             "  /reset      zero session context (memory document stays)",
             "  /forever on|off   eternal self-talk loop (default off; NOT model reasoning)",
+            "  /presence auto|always|off  attach/detach awareness — auto: greet then wait for you;",
+            "                    always: greet and keep running; off: no events, never self-starts",
             "  /net on|off       allow the terminal tool to reach the network (this session)",
             "  /allow-dir <path> add a writable path outside the workspace (sandbox isolation)",
             "  /cooldown <sec>   self-talk pause      /theme [name]   list/switch TUI skin",
@@ -953,6 +1029,45 @@ class LunaMothTUI(App):
         self._write_banner()
         self._console(f"theme → {self.skin.name}", "grey50")
 
+    # ---- presence: permission requests + detach ------------------------------------
+
+    def _permission_request(self, kind: str, reason: str, detail: str, wait_seconds: int) -> bool:
+        """request_permission hook. Runs on the WORKER thread: post the question to
+        the console, block until the operator answers in the input or the model's
+        own deadline passes (timeout = deny)."""
+        if self.shutdown_requested:
+            return False
+        label = kind + (f" ({detail})" if detail.strip() else "")
+        self._perm_answer = False
+        self._perm_event.clear()
+        self._perm_pending = label
+        self.output.put(("perm", f"⚿ {self.agent.char_name()} requests permission: {label}"))
+        if reason.strip():
+            self.output.put(("perm", f"  reason: {reason.strip()}"))
+        self.output.put(("perm", f"  y/yes = allow · anything else denies · auto-deny in {wait_seconds}s"))
+        answered = self._perm_event.wait(wait_seconds)
+        granted = bool(answered and self._perm_answer)
+        self._perm_pending = None
+        if not answered:
+            self.output.put(("perm", f"⚿ {label} → denied (no answer in {wait_seconds}s)"))
+        return granted
+
+    def _note_detach_once(self) -> None:
+        """Presence bookkeeping on the way out: tell the chara the operator left,
+        queue the handoff line for the daemon, and clear the present flag."""
+        if self._detached:
+            return
+        self._detached = True
+        try:
+            if self.presence_mode != "off":
+                self.agent.note_detach(self.session)
+        except Exception:
+            pass
+        try:
+            self.agent.state.set_present(False)
+        except Exception:
+            pass
+
     async def action_open_settings(self) -> None:
         if self._is_streaming():
             self.interrupt_event.set()
@@ -968,6 +1083,8 @@ class LunaMothTUI(App):
     async def action_quit_clean(self) -> None:
         self.shutdown_requested = True
         self.interrupt_event.set()
+        self._perm_event.set()  # release a worker blocked on a permission question
+        self._note_detach_once()
         self._console(self.skin.quit_line, self.skin.tagline_color)
         if self.clean_on_exit:
             try:
@@ -980,6 +1097,8 @@ class LunaMothTUI(App):
     async def on_unmount(self) -> None:
         self.shutdown_requested = True
         self.interrupt_event.set()
+        self._perm_event.set()
+        self._note_detach_once()
         if self.clean_on_exit:
             try:
                 clean_runtime_sandbox(clear_memory=True)

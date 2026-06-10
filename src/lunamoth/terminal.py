@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from .agent import LunaMothAgent
 from .config import ThoughtConfig
 from .cleanup import clean_runtime_sandbox
+from .presence import normalize_mode
 
 
 from .themes import LUNAMOTH_BANNER
@@ -73,6 +74,31 @@ def _cooldown(seconds: float) -> str | None:
     return None
 
 
+_GRANT_WORDS = {"y", "yes", "allow", "ok", "同意", "允许", "是"}
+
+
+def _stdin_permission_hook(kind: str, reason: str, detail: str, wait_seconds: int) -> bool:
+    """request_permission hook for the plain terminal: ask on stdout, wait on stdin.
+
+    Single-threaded by design — the tool call blocks the stream until the operator
+    answers or the model's own deadline passes (timeout = deny)."""
+    label = kind + (f" ({detail})" if detail.strip() else "")
+    print(f"\n⚿ permission request: {label}", flush=True)
+    if reason.strip():
+        print(f"  reason: {reason.strip()}", flush=True)
+    print(f"  y/yes = allow · anything else denies · auto-deny in {wait_seconds}s: ", end="", flush=True)
+    end = time.monotonic() + max(1, wait_seconds)
+    while time.monotonic() < end:
+        if _stdin_line_ready():
+            line = (_read_line() or "").strip().lower()
+            granted = line in _GRANT_WORDS
+            print(f"  → {'granted' if granted else 'denied'}", flush=True)
+            return granted
+        time.sleep(0.05)
+    print("\n  → denied (no answer)", flush=True)
+    return False
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description='LunaMoth plain terminal mode (legacy; the TUI is the default)')
     parser.add_argument('--no-think', action='store_true', help='disable eternal visible thought cycles')
@@ -90,17 +116,46 @@ def main(argv: list[str] | None = None) -> int:
     name = agent.char_name()
     reply_pfx, think_pfx = f"{name}> ", f"{name}~ "
 
-    print(BANNER)
-    greeting = agent.greeting()
-    if greeting:
-        # SillyTavern first_mes: shown as the opening line without an LLM call.
-        print(f"{reply_pfx}{greeting}", flush=True)
-        session.context.add("assistant", greeting)
+    # Presence: interactive terminal = operator attached; detached daemon
+    # (stdin is /dev/null, started by `lunamoth start`) = operator away.
+    interactive = sys.stdin.isatty()
+    mode = normalize_mode(agent.settings.presence)
+    held = False
+    if not interactive:
+        agent.state.set_present(False)
+        # Adopt the chara: if the detaching TUI queued a departure line, the loop
+        # continues *knowing* the operator left (permission requests auto-deny).
+        handoff = agent.presence.pop_event()
+        if handoff:
+            session.context.add("system", handoff)
+        print(BANNER)
     else:
-        probe = "你是谁？只用一句话回答。" if agent.lang == "zh" else "Who are you? Answer in one sentence."
-        _stream_with_interrupt(reply_pfx, agent.stream_handle(probe, session), allow_interrupt=False)
+        agent.state.set_present(True)
+        agent.presence.pop_event()  # discard any stale handoff — we're here now
+        agent.tools.permission_hook = _stdin_permission_hook
+        if mode == "off":
+            state.eternal = False  # never self-start; /resume_think is the explicit override
+        elif mode == "auto":
+            held = True  # greet, then wait for the operator's first message
+
+        print(BANNER)
+        greeting = agent.greeting()
+        first = agent.presence.first_meeting()
+        enter = agent.attach_event_text() if mode != "off" else ""
+        agent.presence.mark_met()
+        if greeting and (first or not enter):
+            # SillyTavern first_mes: the card's designed opener for a first meeting.
+            print(f"{reply_pfx}{greeting}", flush=True)
+            session.context.add("assistant", greeting)
+        elif enter:
+            # The card's on_attach prompt: a live arrival turn.
+            _stream_with_interrupt(reply_pfx, agent.stream_event(enter, session), allow_interrupt=False)
+        elif mode != "off":
+            probe = "你是谁？只用一句话回答。" if agent.lang == "zh" else "Who are you? Answer in one sentence."
+            _stream_with_interrupt(reply_pfx, agent.stream_handle(probe, session), allow_interrupt=False)
     pending_line: str | None = None
-    _prompt()
+    if interactive:
+        _prompt()
 
     try:
         while state.running:
@@ -127,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 if stripped == '/resume_think':
                     state.eternal = True
+                    held = False
                     print('eternal thinking = True')
                     _prompt()
                     continue
@@ -142,6 +198,8 @@ def main(argv: list[str] | None = None) -> int:
                     print('/status /memory /memory_path /files /read <file> /write <file> <text> /logs /reset /toggle_think /pause_think /resume_think /set_cooldown <sec> /exit')
                     _prompt()
                     continue
+                # The operator has spoken — release the presence auto-mode hold.
+                held = False
                 _, interrupt = _stream_with_interrupt(reply_pfx, agent.stream_handle(line, session), allow_interrupt=True)
                 if interrupt is not None:
                     pending_line = interrupt
@@ -150,19 +208,24 @@ def main(argv: list[str] | None = None) -> int:
                 _prompt()
                 continue
 
-            if state.eternal:
+            if state.eternal and not held:
                 print("\n\x1b[2m[internal cycle]\x1b[0m", flush=True)
                 _, interrupt = _stream_with_interrupt(think_pfx, agent.stream_think(session), allow_interrupt=True)
                 if interrupt is not None:
                     pending_line = interrupt
                     continue
                 pending_line = _cooldown(cooldown)
-                _prompt()
+                if interactive:
+                    _prompt()
             else:
                 pending_line = _cooldown(0.1)
     except KeyboardInterrupt:
         print('\n[interrupted]')
     finally:
+        if interactive:
+            if mode != "off":
+                agent.note_detach(session)
+            agent.state.set_present(False)
         if args.clean_on_exit:
             try:
                 clean_runtime_sandbox(clear_memory=True)

@@ -40,6 +40,7 @@ It borrows the best of three worlds: the agent runtime of [Hermes](https://githu
 - [x] **Language-agnostic `terminal` tool** — shell commands under the session's isolation, with a runtime network toggle (`/net on`)
 - [x] **Character-driven config** — language, world, tools and limits all come from the card; the engine stays character-neutral, and plain SillyTavern imports get safe defaults
 - [x] **Resume-first launcher & persistent charas** — `lunamoth` opens a blue roster of your agents; each lives in the background (`start` / `start-all` / `stop`), you attach & detach instead of create & kill
+- [x] **Presence awareness** — the chara feels you attach/detach via card-declared `on_attach`/`on_detach` prompts; `/presence auto|always|off` (auto greets you, then waits for your first message before self-talk resumes); while you're present it can `request_permission` (network / paths / resources, timeout = deny), while you're away requests auto-deny
 
 Each unchecked item below is scoped to be independently completable — it lists the modules it touches, and two items that don't share a module can be worked on in parallel.
 
@@ -173,7 +174,7 @@ lunamoth --cooldown 4     # pause between self-talk cycles
 lunamoth --plain          # legacy plain terminal mode
 ```
 
-In-session: `/help`, `/status`, `/memory`, `/workspace`, `/net on|off`, `/allow-dir <path>`, `/forever on|off`, `/cooldown <s>`, `/exit`.
+In-session: `/help`, `/status`, `/memory`, `/workspace`, `/net on|off`, `/allow-dir <path>`, `/forever on|off`, `/presence auto|always|off`, `/cooldown <s>`, `/exit`.
 Everything is a slash command — no chord shortcuts: `/settings`, `/clear`, `/forever on|off`, `/exit`.
 
 ## License & acknowledgements
