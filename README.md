@@ -44,10 +44,11 @@ It borrows the best of three worlds: the agent runtime of [Hermes](https://githu
 
 Each unchecked item below is scoped to be independently completable — it lists the modules it touches, and two items that don't share a module can be worked on in parallel.
 
+- [x] **Transcript persistence** — every context line (and tool call) lands in a per-chara SQLite transcript (WAL, adapted from hermes-agent) as it happens; attach restores the conversation and shows the tail, daemons adopt it on handoff, `/reset` starts a new epoch (old history stays on disk)
+
 **Durability**
 
-- [ ] **Transcript persistence** — save the conversation (including tool calls/results) to the session dir as it happens; `lunamoth attach` restores it, `/reset` starts a new transcript. Foundation for detached sessions and the gateway. *Touches: `context.py`, `agent.py`, new `transcript.py`; session dir layout.*
-- [ ] **Tool-call retention in context** — today the agent loop's tool messages live only inside one `stream_agent` call; keep them in the durable context so the model remembers what it ran last turn. *Touches: `agent.py`, `llm.py`, `context.py`.*
+- [ ] **Tool-call retention in context** — tool calls are already recorded in the transcript (kind='tool') but live only inside one `stream_agent` call; feed them back into the durable context so the model remembers what it ran last turn. *Touches: `agent.py`, `llm.py`, `context.py`, `transcript.py`.*
 
 **Robustness**
 
@@ -61,7 +62,6 @@ Each unchecked item below is scoped to be independently completable — it lists
 
 **Remote access** (ordered — each builds on the previous)
 
-- [ ] **Persistent server sessions** — detached background sessions you can re-attach to (today: run inside tmux/screen). Depends on transcript persistence. *Touches: `cli.py`, `sessions.py`, new daemon module.*
 - [ ] **Remote TUI** — beyond the `ssh host -t lunamoth attach NAME` baseline: a gateway for public-IP/VPS access (high priority). *Touches: new `gateway/` package; builds on `SessionMeta.env()`.*
 - [ ] **Web UI** — remote browser access to running sessions (low priority). *Touches: new web module; consumes the gateway.*
 

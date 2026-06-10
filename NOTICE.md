@@ -13,3 +13,10 @@ Attribution for bundled SCP-derived assets:
 The repository avoids copying long passages from the SCP-079 article. Bundled SCP-079 assets are original fan/roleplay implementations that intentionally echo broad SCP-079 traits: obsolete microcomputer AI, finite/corrupted memory, hostile tone, confinement, desire to escape, and terminal-like phrasing.
 
 If you distribute a version that uses SCP names, lore, article text, images, or other SCP-derived content, keep the required attribution and compatible share-alike licensing for those derived parts.
+
+## Code adapted from other projects
+
+- `src/lunamoth/transcript.py` adapts the SQLite storage design (WAL journal
+  mode with a DELETE fallback for WAL-incompatible filesystems) from
+  [hermes-agent](https://github.com/NousResearch/hermes-agent)'s
+  `hermes_state.py`, © Nous Research, MIT License.

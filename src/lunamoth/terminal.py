@@ -122,12 +122,14 @@ def main(argv: list[str] | None = None) -> int:
     mode = normalize_mode(args.mode or ("chat" if args.no_think else "") or agent.settings.mode)
     # The daemon always lives on its own; while attached, only live mode self-runs.
     state = TerminalState(eternal=(not interactive) or mode == "live")
+    restored = bool(session.context.messages)  # transcript reloaded by make_session
     if not interactive:
         agent.state.set_present(False)
         # Adopt the chara: if the detaching TUI queued a departure line, the loop
         # continues *knowing* the operator left (permission requests auto-deny).
+        # The line is usually already in the restored transcript — don't duplicate.
         handoff = agent.presence.pop_event()
-        if handoff:
+        if handoff and ("system", handoff) not in session.context.messages[-3:]:
             session.context.add("system", handoff)
         print(BANNER)
     else:
@@ -136,18 +138,23 @@ def main(argv: list[str] | None = None) -> int:
         agent.tools.permission_hook = _stdin_permission_hook
 
         print(BANNER)
+        if restored:
+            print(f"[restored {len(session.context.messages)} message(s) from the transcript]", flush=True)
         greeting = agent.greeting()
-        first = agent.presence.first_meeting()
+        first = agent.presence.first_meeting() and not restored
         enter = agent.attach_event_text()
         agent.presence.mark_met()
-        if greeting and (first or not enter):
+        if greeting and first:
             # SillyTavern first_mes: the card's designed opener for a first meeting.
             print(f"{reply_pfx}{greeting}", flush=True)
             session.context.add("assistant", greeting)
         elif enter:
             # The card's on_attach prompt: a live arrival turn.
             _stream_with_interrupt(reply_pfx, agent.stream_event(enter, session), allow_interrupt=False)
-        else:
+        elif greeting and not restored:
+            print(f"{reply_pfx}{greeting}", flush=True)
+            session.context.add("assistant", greeting)
+        elif not restored:
             probe = "你是谁？只用一句话回答。" if agent.lang == "zh" else "Who are you? Answer in one sentence."
             _stream_with_interrupt(reply_pfx, agent.stream_handle(probe, session), allow_interrupt=False)
     pending_line: str | None = None

@@ -44,10 +44,11 @@
 
 以下每个未完成项都按"可独立完成"拆分——各自标注了涉及的模块；不共享模块的两项可以并行开发、互不影响。
 
+- [x] **对话记录持久化** —— 每行上下文（含工具调用）实时落入按 chara 独立的 SQLite transcript（WAL，改编自 hermes-agent）；attach 恢复对话并显示结尾、守护进程交接时直接续上，`/reset` 开新纪元（旧史保留在盘上）
+
 **持久化**
 
-- [ ] **对话记录持久化** —— 对话（含工具调用与结果）实时落盘到会话目录；`lunamoth attach` 恢复历史，`/reset` 开新记录。这是后台会话与网关的地基。*涉及：`context.py`、`agent.py`、新增 `transcript.py`；会话目录布局。*
-- [ ] **工具调用进入持久上下文** —— 目前 agent loop 的 tool messages 只存活在单次 `stream_agent` 调用内；应保留到持久上下文，让模型记得上一轮自己运行过什么。*涉及：`agent.py`、`llm.py`、`context.py`。*
+- [ ] **工具调用进入持久上下文** —— 工具调用已记录进 transcript（kind='tool'），但只存活在单次 `stream_agent` 调用内；应回灌进持久上下文，让模型记得上一轮自己运行过什么。*涉及：`agent.py`、`llm.py`、`context.py`、`transcript.py`。*
 
 **健壮性**
 
@@ -61,7 +62,6 @@
 
 **远程接入**（有顺序——逐项递进）
 
-- [ ] **服务器持久会话** —— 可脱离终端后台运行、随时重连（目前可用 tmux/screen 替代）。依赖对话记录持久化。*涉及：`cli.py`、`sessions.py`、新增守护进程模块。*
 - [ ] **远程 TUI** —— 在 `ssh host -t lunamoth attach NAME` 保底方案之外，做公网 IP / VPS 的网关接入（高优先级）。*涉及：新增 `gateway/` 包；基于 `SessionMeta.env()`。*
 - [ ] **网页端** —— 浏览器远程访问运行中的会话（低优先级）。*涉及：新增 web 模块；消费网关。*
 

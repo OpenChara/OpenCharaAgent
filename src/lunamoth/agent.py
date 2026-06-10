@@ -27,6 +27,7 @@ from .sandbox import Sandbox
 from .state import EnvState
 from .toolpacks import ToolPack, load_toolpack
 from .tools import ToolGateway
+from .transcript import TranscriptStore
 from .worldinfo import Lorebook, apply_macros
 
 
@@ -72,6 +73,9 @@ class LunaMothAgent:
         self.llm = LLMClient(self.settings.to_llm_config(), self._build_system_messages)
         self.thought_cfg = ThoughtConfig()
         self.presence = presence.PresenceState(SANDBOX_ROOT)
+        # Durable conversation log: every context line lands here as it happens,
+        # so the chara keeps its conversation across detach/attach and daemons.
+        self.transcript = TranscriptStore(SANDBOX_ROOT / "transcript.db")
 
     def reconfigure(self, settings: "Settings") -> None:
         """Hot-swap the LLM backend, persona, tool pack and limits at runtime."""
@@ -200,6 +204,10 @@ class LunaMothAgent:
         ctx = self.context_limit()
         session.context.max_tokens = ctx
         session.context.trim_buffer_tokens = min(100_000, max(4096, ctx // 8))
+        # Durable conversation: restore the current transcript epoch, then persist
+        # every new line back — the conversation survives restarts and handoffs.
+        session.context.restore(self.transcript.load())
+        session.context.persist = self.transcript.append
         return session
 
     def char_name(self) -> str:
@@ -338,6 +346,8 @@ class LunaMothAgent:
             err = str(result.get("error", ""))
             display = f"⚙ {name} ✗ {_abbrev(err, 160)}"
             content = f"ERROR: {err}"
+        # Transcript forensics (not yet reloaded into context — see roadmap).
+        self.transcript.append_tool(name, args, content)
         return {"display": display, "content": content}
 
     def stream_handle(self, text: str, session: Session):
@@ -450,7 +460,10 @@ class LunaMothAgent:
                 session.context.messages.clear()
                 session.thoughts.clear()
                 session.ticks = 0
-                return "session context zeroed. memory document remains."
+                # New transcript epoch: old history stays on disk but is no
+                # longer reloaded on attach.
+                self.transcript.reset()
+                return "session context zeroed (new transcript epoch). memory document remains."
         except Exception as e:
             self.audit.write("command_error", command=text[:200], error=str(e))
             return f"command failed: {e}"

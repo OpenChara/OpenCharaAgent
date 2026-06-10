@@ -612,13 +612,14 @@ class LunaMothTUI(App):
         self.grace_until = time.monotonic() + max(30.0, 2 * self.patience)
         self._update_status()
         name = self.agent.char_name()
+        restored = bool(self.session.context.messages)
+        self._render_restored_tail(name)
         greeting = self.agent.greeting()
-        first = self.agent.presence.first_meeting()
+        first = self.agent.presence.first_meeting() and not restored
         enter = self.agent.attach_event_text()
         self.agent.presence.mark_met()
-        if greeting and (first or not enter):
-            # SillyTavern first_mes: the card's designed opener for a first meeting
-            # (also the fallback whenever the card declares no arrival prompt).
+        if greeting and first:
+            # SillyTavern first_mes: the card's designed opener for a first meeting.
             self._append_display(f"{self.skin.reply_pfx(name)}{greeting}\n")
             self.session.context.add("assistant", greeting)
             self.next_spont_at = time.monotonic() + self.patience
@@ -626,9 +627,35 @@ class LunaMothTUI(App):
             # The card's on_attach prompt: a live arrival turn — the chara reacts
             # to the operator coming back.
             self._start_stream(StreamJob(kind="event", text=enter), prefix=self.skin.reply_pfx(name))
-        else:
+        elif greeting and not restored:
+            # Card without an arrival prompt, fresh session: fall back to first_mes.
+            self._append_display(f"{self.skin.reply_pfx(name)}{greeting}\n")
+            self.session.context.add("assistant", greeting)
+            self.next_spont_at = time.monotonic() + self.patience
+        elif not restored:
             probe = "你是谁？只用一句话回答。" if self.agent.lang == "zh" else "Who are you? Answer in one sentence."
             self._start_stream(StreamJob(kind="user", text=probe), prefix=self.skin.reply_pfx(name))
+        # Restored history with no arrival prompt: continue silently — the
+        # restored tail above already says where things left off.
+
+    def _render_restored_tail(self, name: str, max_lines: int = 8) -> None:
+        """Show the tail of the restored transcript so the operator sees what
+        happened while they were away (the full history is on disk)."""
+        rows = self.session.context.messages
+        if not rows:
+            return
+        tail = rows[-max_lines:]
+        if len(rows) > len(tail):
+            self._append_display(f"··· {len(rows) - len(tail)} earlier messages (restored) ···\n\n")
+        for role, content in tail:
+            if role == "user":
+                pfx = self.skin.operator_pfx(self.settings.user_name)
+            elif role == "system":
+                pfx = "· "
+            else:
+                pfx = self.skin.reply_pfx(name)
+            self._append_display(f"{pfx}{content}\n\n")
+        self._console(f"restored {len(rows)} message(s) from the transcript", "grey50")
 
     # ---- output routing ----------------------------------------------------------
     # Two surfaces, strictly separated:
