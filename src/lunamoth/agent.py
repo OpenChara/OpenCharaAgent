@@ -22,11 +22,12 @@ from .persona import (
     system_language,
 )
 from . import presence
+from . import soul
 from .sandbox import Sandbox
 from .state import EnvState
 from .toolpacks import ToolPack, load_toolpack
 from .tools import ToolGateway
-from .worldinfo import Lorebook
+from .worldinfo import Lorebook, apply_macros
 
 
 def _abbrev(text: str, limit: int) -> str:
@@ -254,12 +255,27 @@ class LunaMothAgent:
     def _build_system_messages(self, scan_text: str) -> list[str]:
         status = self.state.load()
         memory = self.memory.render()
+        char, user = self.char_name(), self.settings.user_name
+        tools_on = self._tools_active()
         msgs: list[str] = []
+
+        # 1) Soul — the always-on existential frame (autonomy + "you are real"),
+        #    above the card. Card may override via extensions.lunamoth.soul.
+        card_soul = str(self.character.defaults().get("soul", "")) if self.character else ""
+        msgs.append(apply_macros(soul.soul(self.lang, card_soul), char, user))
+
+        # 2) Reality grounding — anti-fabrication. ONLY when the chara actually has
+        #    tools; a pure-roleplay chara is free to narrate fiction.
+        if tools_on:
+            msgs.append(apply_macros(soul.reality_grounding(self.lang), char, user))
+
+        # 3) Who it is (character card) / where it is comes next.
         if self.character is not None:
             msgs.append(self.character.render_system(self.settings.user_name))
         else:
             msgs.append(fallback_persona(self.lang))
-        if self._tools_active():
+
+        if tools_on:
             # Native tool schemas already describe each tool, so no prose tool spec —
             # just a short, neutral nudge + the live env facts.
             net = "on" if status.get("network_access") else "off"
@@ -274,15 +290,20 @@ class LunaMothAgent:
                 msgs.append(self.toolpack.note.strip())
             if memory.strip():
                 msgs.append(f"Your saved memory:\n{memory}")
+
         # World info: card-embedded book + explicit standalone world book.
         world_blocks: list[str] = []
-        char, user = self.char_name(), self.settings.user_name
         if self.character and self.character.character_book:
             world_blocks += self.character.character_book.activate(scan_text, char, user)
         if self.world:
             world_blocks += self.world.activate(scan_text, char, user)
         if world_blocks:
             msgs.append("[World Info / 世界书]\n" + "\n\n".join(world_blocks))
+
+        # 4) Closer — the last, strongest steer (SillyTavern post-history style),
+        #    only when tools are on. Placed last so it weighs most before generation.
+        if tools_on:
+            msgs.append(apply_macros(soul.closer(self.lang), char, user))
         return msgs
 
 
