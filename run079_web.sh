@@ -1,8 +1,3 @@
 #!/usr/bin/env bash
-set -euo pipefail
-cd "$(dirname "$0")"
-if command -v uv >/dev/null 2>&1; then
-  exec uv run python app.py "$@"
-else
-  exec python3 app.py "$@"
-fi
+# Compatibility wrapper; use ./run_web.sh
+exec "$(dirname "$0")/run_web.sh" "$@"

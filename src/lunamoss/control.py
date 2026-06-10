@@ -30,7 +30,7 @@ Forwarded 079 commands:
 
 def open_fifo(fifo: Path) -> TextIO:
     if not fifo.exists() or not fifo.is_fifo():
-        raise FileNotFoundError(f"FIFO not found: {fifo}. Start ./run079_display.sh first.")
+        raise FileNotFoundError(f"FIFO not found: {fifo}. Start ./run.sh first.")
     # Keep a single writer open so rapid console commands are not lost between FIFO opens.
     return fifo.open("w", encoding="utf-8", buffering=1)
 
