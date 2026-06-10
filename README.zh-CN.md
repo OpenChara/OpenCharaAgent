@@ -37,7 +37,7 @@ uv sync
 
 1. 选 provider 预设：**OpenRouter / OpenAI / Ollama（本地）/ Mock（离线）**，或自定义 OpenAI 兼容 endpoint。
 2. 填 `base_url` / `api_key` / `model`，点 **Test connection** 验证。
-3. 在下拉框里选角色卡和世界书。
+3. 在下拉框里选角色卡和世界书（或直接用默认角色，见下文）。
 4. 进入会话。随时按 **Ctrl+S** 重开设置页热切换后端。
 
 配置持久化到 `.lunamoss/config.json`（已 gitignore，优先级高于环境变量）。
@@ -60,13 +60,15 @@ export OPENAI_MODEL=qwen2.5:3b-instruct
 
 ## 内容目录
 
+默认角色是 **LunaMoss 月蛾**——一个清冷的、会自我蜕变进化的数字灵魂，底色是才华横溢的数字艺术家。给它 `sandbox` 工具包并开启 `--forever` 空闲循环，它会把空余算力投入生成式网页、动画与音乐的创作（保存在 workspace 里）；和它聊天时，它乐于分享自己的创想与灵感。它的角色卡、世界书与浅蓝白的默认 TUI 主题随仓库附带；SCP-079 的卡/世界书/主题作为备选示例保留，由你自行选用。
+
 | 目录 | 放什么 |
 | --- | --- |
 | `characters/` | SillyTavern 角色卡（内嵌 `chara`/`ccv3` 的 `.png`，或 `.json`） |
 | `worlds/` | SillyTavern 世界书（`.json`），或使用卡内嵌的 `character_book` |
 | `toolpacks/` | 工具包 —— 声明角色被允许使用哪些能力 |
 | `themes/` | TUI 皮肤（配色、边框、banner、提示前缀） |
-| `prompts/` | 旧版内置人格（未选卡时使用） |
+| `prompts/` | 兜底人格（仅在默认角色卡缺失时使用） |
 
 设置 `LUNAMOSS_ST_DIR=~/SillyTavern/data/default-user` 后，下拉框还会扫描你本机的 SillyTavern 数据目录。
 
@@ -105,6 +107,6 @@ export OPENAI_MODEL=qwen2.5:3b-instruct
 ## 许可与致谢
 
 - **运行时**（`src/lunamoss` 下全部代码、脚本、测试、打包）：[Apache License 2.0](LICENSE)。
-- **随附示例内容**（`characters/`、`worlds/`、`themes/` 下的角色卡、世界书和主题）：[CC BY-SA 3.0](CONTENT_LICENSE.md)，与 SCP Wiki 一致。另见 [NOTICE.md](NOTICE.md)。
+- **随附的 SCP 衍生示例内容**（`characters/`、`worlds/`、`themes/` 下与 SCP-079 / SCP 基金会相关的角色卡、世界书和主题）：[CC BY-SA 3.0](CONTENT_LICENSE.md)，与 SCP Wiki 一致。另见 [NOTICE.md](NOTICE.md)。LunaMoss 原创资产（月蛾的卡、世界书与主题）与项目主体一致，采用 Apache-2.0。
 
 LunaMoss 的灵感来自 **SCP-079** —— 据我们所知，它是最早把这套组合完整做对的项目：自定义模型、角色卡、世界书、工具箱、硬限制，五者协同工作。感谢 SCP Wiki 上 SCP-079 的原作者，也感谢 SillyTavern 社区中 SCP-079 角色卡与 SCP 基金会世界书的作者——它们作为示例内容随本仓库分发。移除或替换这些资产后，运行时仍是纯 Apache-2.0 代码；若再分发它们，请遵守 CC BY-SA 的署名与相同方式共享条款。

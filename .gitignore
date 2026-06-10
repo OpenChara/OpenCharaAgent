@@ -93,6 +93,10 @@ worlds/*
 !characters/LICENSE-CC-BY-SA-3.0.md
 !worlds/.gitkeep
 !worlds/LICENSE-CC-BY-SA-3.0.md
+!characters/LunaMoss.zh.json
+!characters/LunaMoss.en.json
+!worlds/LunaMoss.zh.json
+!worlds/LunaMoss.en.json
 !characters/SCP-079.zh.json
 !characters/SCP-079.en.json
 !worlds/SCP-Foundation.zh.json

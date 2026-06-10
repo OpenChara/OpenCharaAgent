@@ -11,8 +11,20 @@ def language() -> str:
     return "en" if lang.startswith("en") else "zh"
 
 
-# Name used for display when no character card is selected (persona comes from cards).
-DEFAULT_NAME = "Entity"
+# Name used for display when no character card could be loaded at all.
+DEFAULT_NAME = "LunaMoss"
+
+
+def default_character_path() -> Path | None:
+    """Bundled default character (LunaMoss 月蛾) for the active language, if present."""
+    p = ROOT / "characters" / f"LunaMoss.{language()}.json"
+    return p if p.exists() else None
+
+
+def default_world_path() -> Path | None:
+    """World book that pairs with the default character, if present."""
+    p = ROOT / "worlds" / f"LunaMoss.{language()}.json"
+    return p if p.exists() else None
 
 
 def persona_path() -> Path:

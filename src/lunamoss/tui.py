@@ -172,14 +172,14 @@ class WelcomeScreen(Screen):
             worlds = _discover("worlds", (".json",))
             yield Label("Character card (persona)", classes="field-label")
             yield Select(
-                _picker_options(chars, self.draft.character_path, "(built-in default persona)"),
+                _picker_options(chars, self.draft.character_path, "(default · LunaMoss 月蛾)"),
                 value=self.draft.character_path or "",
                 allow_blank=False,
                 id="character",
             )
             yield Label("World book (optional)", classes="field-label")
             yield Select(
-                _picker_options(worlds, self.draft.world_path, "(none)"),
+                _picker_options(worlds, self.draft.world_path, "(auto · pairs with default character)"),
                 value=self.draft.world_path or "",
                 allow_blank=False,
                 id="world",
@@ -201,7 +201,7 @@ class WelcomeScreen(Screen):
             themes = _discover("themes", (".json",))
             yield Label("TUI theme (cosmetic skin)", classes="field-label")
             yield Select(
-                _picker_options(themes, self.draft.tui_theme_path, "(built-in LunaMoss look)"),
+                _picker_options(themes, self.draft.tui_theme_path, "(default · LunaMoss 月蛾)"),
                 value=self.draft.tui_theme_path or "",
                 allow_blank=False,
                 id="theme",

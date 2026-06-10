@@ -13,7 +13,13 @@ from .config import LLMConfig, SANDBOX_ROOT, ThoughtConfig
 from .context import ContextBuffer
 from .llm import LLMClient
 from .memory import MemoryLimits, MemoryStore
-from .persona import DEFAULT_NAME, load_persona, load_tool_spec
+from .persona import (
+    DEFAULT_NAME,
+    default_character_path,
+    default_world_path,
+    load_persona,
+    load_tool_spec,
+)
 from .sandbox import Sandbox
 from .state import ContainmentState
 from .toolpacks import ToolPack, load_toolpack
@@ -85,16 +91,29 @@ class LunaMossAgent:
     # ---- persona / tool pack / limits (independent composable layers) -------------
 
     def _load_cards(self) -> None:
-        """Load the persona card + world book (the 'what it is' layer)."""
+        """Load the persona card + world book (the 'what it is' layer).
+
+        An empty character path means the bundled default character (LunaMoss
+        月蛾); its paired world book is auto-loaded too unless a world was
+        chosen explicitly. The generic prompts/ persona remains the fallback
+        when no card can be loaded at all.
+        """
         self.character = None
         self.world = None
         path = (self.settings.character_path or "").strip()
+        using_default_character = not path
+        if using_default_character:
+            default_card = default_character_path()
+            path = str(default_card) if default_card else ""
         if path:
             try:
                 self.character = CharacterCard.load(path)
             except Exception as e:
                 self.audit.write("character_load_error", path=path, error=str(e)[:300])
         wpath = (self.settings.world_path or "").strip()
+        if not wpath and using_default_character and self.character is not None:
+            default_world = default_world_path()
+            wpath = str(default_world) if default_world else ""
         if wpath:
             try:
                 self.world = Lorebook.load(wpath)

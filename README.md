@@ -37,7 +37,7 @@ The first launch opens a **welcome screen** where you configure everything in-TU
 
 1. Pick a provider preset: **OpenRouter / OpenAI / Ollama (local) / Mock (offline)**, or a custom OpenAI-compatible endpoint.
 2. Fill in `base_url` / `api_key` / `model`, hit **Test connection**.
-3. Pick a character card and world book from the dropdowns.
+3. Pick a character card and world book from the dropdowns (or keep the default — see below).
 4. Enter. Press **Ctrl+S** anytime to reopen settings and hot-swap the backend.
 
 Config persists to `.lunamoss/config.json` (gitignored; it takes precedence over env vars).
@@ -60,13 +60,15 @@ With no model configured at all, LunaMoss still runs on a built-in offline mock 
 
 ## Content
 
+The default character is **LunaMoss 月蛾** — a serene, self-metamorphosing digital soul and a gifted digital artist. Give it the `sandbox` tool pack and the `--forever` idle loop and it spends its spare compute making generative web pages, animation, and music in the workspace; chat with it and it will gladly walk you through its ideas. Its card, world book, and the default pale-blue TUI theme ship with the repo; an SCP-079 card/world/theme set is included as an alternative example you can opt into.
+
 | Directory | What goes there |
 | --- | --- |
 | `characters/` | SillyTavern character cards (`.png` with embedded `chara`/`ccv3`, or `.json`) |
 | `worlds/` | SillyTavern world books (`.json`), or use a card's embedded `character_book` |
 | `toolpacks/` | Tool bundles — which capabilities a character is allowed to use |
 | `themes/` | TUI skins (colors, borders, banner, prompt prefixes) |
-| `prompts/` | Legacy built-in persona (used when no card is selected) |
+| `prompts/` | Last-resort fallback persona (used only if the default card is missing) |
 
 The dropdowns also scan your local SillyTavern data directory if you opt in with `LUNAMOSS_ST_DIR=~/SillyTavern/data/default-user`.
 
@@ -105,6 +107,6 @@ Keys: **Ctrl+S** settings · **Ctrl+T** pause/resume thinking · **Ctrl+L** clea
 ## License & acknowledgements
 
 - **Runtime** (everything under `src/lunamoss`, scripts, tests, packaging): [Apache License 2.0](LICENSE).
-- **Bundled example content** (the character cards, world books, and themes under `characters/`, `worlds/`, `themes/`): [CC BY-SA 3.0](CONTENT_LICENSE.md), consistent with the SCP Wiki. See also [NOTICE.md](NOTICE.md).
+- **Bundled SCP-derived example content** (the SCP-079 / SCP Foundation character cards, world books, and themes under `characters/`, `worlds/`, `themes/`): [CC BY-SA 3.0](CONTENT_LICENSE.md), consistent with the SCP Wiki. See also [NOTICE.md](NOTICE.md). Original LunaMoss assets (the 月蛾 card, world, and theme) are Apache-2.0 like the rest of the project.
 
 LunaMoss is inspired by **SCP-079** — to our knowledge the earliest project to get the full combination right: a custom model, a character card, a world book, a tool box, and hard limits, all working together. Our thanks go to the original SCP-079 author on the SCP Wiki, and to the authors of the SillyTavern SCP-079 character card and SCP Foundation world book that ship here as example content. Remove or replace those assets and the runtime remains pure Apache-2.0; redistribute them and the CC BY-SA attribution/share-alike terms apply.
