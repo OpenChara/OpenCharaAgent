@@ -21,6 +21,7 @@ from .persona import (
     fallback_persona,
     system_language,
 )
+from . import presence
 from .sandbox import Sandbox
 from .state import EnvState
 from .toolpacks import ToolPack, load_toolpack
@@ -69,6 +70,7 @@ class LunaMothAgent:
         self._load_toolpack()
         self.llm = LLMClient(self.settings.to_llm_config(), self._build_system_messages)
         self.thought_cfg = ThoughtConfig()
+        self.presence = presence.PresenceState(SANDBOX_ROOT)
 
     def reconfigure(self, settings: "Settings") -> None:
         """Hot-swap the LLM backend, persona, tool pack and limits at runtime."""
@@ -213,6 +215,42 @@ class LunaMothAgent:
             return g or None
         return None
 
+    # ---- presence (operator attach/detach awareness) -------------------------------
+
+    def attach_event_text(self) -> str:
+        """The card's arrival prompt ('' when the card declares none)."""
+        return presence.attach_text(self.character, self.char_name(), self.settings.user_name)
+
+    def detach_event_text(self) -> str:
+        """The card's departure prompt ('' when the card declares none)."""
+        return presence.detach_text(self.character, self.char_name(), self.settings.user_name)
+
+    def stream_event(self, event_text: str, session: Session):
+        """Stream the character's reaction to a presence event.
+
+        The event is an engine-injected context line (role: system), not operator
+        speech — it is audited as a presence event, never as a user message.
+        """
+        self.audit.write("presence_event", kind="attach", text=event_text[:300])
+        status = self.state.load()
+        chunks: list[str] = []
+        for chunk in self._reply_stream(event_text, self.memory.render(), status, session.context.render()):
+            chunks.append(chunk)
+            yield chunk
+        reply = "".join(chunks).strip()
+        session.context.add("system", event_text)
+        session.context.add("assistant", reply)
+
+    def note_detach(self, session: Session) -> None:
+        """Record the operator leaving: context line, audit, and a handoff event
+        queued for whichever process adopts this chara next (e.g. the daemon)."""
+        text = self.detach_event_text()
+        if not text:
+            return
+        self.audit.write("presence_event", kind="detach", text=text[:300])
+        session.context.add("system", text)
+        self.presence.queue_event(text)
+
     def _build_system_messages(self, scan_text: str) -> list[str]:
         status = self.state.load()
         memory = self.memory.render()
@@ -225,11 +263,12 @@ class LunaMothAgent:
             # Native tool schemas already describe each tool, so no prose tool spec —
             # just a short, neutral nudge + the live env facts.
             net = "on" if status.get("network_access") else "off"
+            who = "present" if status.get("user_present") else "away"
             msgs.append(
                 "You have tools available via native function calling. Call them directly when "
                 "you want to act; never paste code in prose or claim a result before the tool returns.\n"
                 f"Environment: isolation={status.get('isolation', 'sandbox')}, network={net}, "
-                f"workspace is your read/write directory."
+                f"operator={who}, workspace is your read/write directory."
             )
             if self.toolpack and self.toolpack.note.strip():
                 msgs.append(self.toolpack.note.strip())

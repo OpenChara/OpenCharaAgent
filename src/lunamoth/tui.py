@@ -742,6 +742,11 @@ class LunaMothTUI(App):
             if self._is_streaming():
                 return False
             self.interrupt_event.clear()
+            # Hold off the next self-talk cycle until THIS stream's "done" resets the
+            # timer to now+cooldown. Without this, _pump could fire a fresh think in
+            # the gap between the worker thread dying and "done" being drained — the
+            # cooldown would be bypassed and the chara would spam (talkative loop).
+            self.next_forever_at = time.monotonic() + 86400
             thread = threading.Thread(target=self._stream_worker, args=(job, prefix), daemon=True)
             self.current_thread = thread
             thread.start()

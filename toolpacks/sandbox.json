@@ -1,6 +1,6 @@
 {
   "name": "sandbox",
-  "description": "Workspace agent: run shell commands (any language), read/write workspace files, manage durable memory, inspect the cell.",
+  "description": "Workspace agent: run shell commands (any language), read/write workspace files, manage durable memory, inspect the environment.",
   "tools": [
     "terminal",
     "read_memory",
@@ -11,7 +11,8 @@
     "read_workspace_file",
     "write_file",
     "inspect_env",
-    "write_log"
+    "write_log",
+    "request_permission"
   ],
-  "note": "Network is OFF by default; the operator can enable it at runtime (TUI: /net on)."
+  "note": "Network is OFF by default; the operator can enable it at runtime (TUI: /net on), or you can ask for it with request_permission while the operator is present."
 }

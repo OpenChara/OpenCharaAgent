@@ -16,7 +16,7 @@ class LLMConfig:
     api_key: str = os.getenv("OPENAI_API_KEY", "")
     model: str = os.getenv("OPENAI_MODEL", "deepseek/deepseek-v4-flash")
     temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.85"))
-    max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "420"))
+    max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 
 
 @dataclass(frozen=True)

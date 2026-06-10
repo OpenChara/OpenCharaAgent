@@ -29,7 +29,9 @@
         "world": "worlds/LunaMoth.zh.json",
         "toolpack": "sandbox",
         "context_tokens": 1000000,
-        "memory_chars": 8000
+        "memory_chars": 8000,
+        "on_attach": "{{user}} 来看你了，和他聊聊这段时间你的灵感吧。",
+        "on_detach": "{{user}} 离开了，你静下心来继续你的创作。"
       }
     }
   }

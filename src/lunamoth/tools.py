@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable
 
 from .audit import AuditLog
-from .memory import MemoryStore
+from .memory import MemoryLimits, MemoryStore
 from .runner import run_terminal
 from .sandbox import Sandbox, SandboxViolation
 from .state import EnvState
+
+# Caps for operator-grantable resources/waits.
+_MAX_PERMISSION_WAIT = 300
+_MIN_PERMISSION_WAIT = 5
+_MAX_MEMORY_CHARS = 64_000
+PERMISSION_KINDS = ("network", "writable_path", "memory", "other")
 
 
 class ToolGateway:
@@ -18,6 +25,9 @@ class ToolGateway:
         self.memory = memory
         # Tools the active tool pack enables. None => no pack selected => no tools.
         self.enabled_tools: set[str] | None = None
+        # Set by an interactive frontend: (kind, reason, detail, wait_seconds) -> granted?
+        # Blocks the calling (worker) thread up to wait_seconds. None => nobody to ask.
+        self.permission_hook: "Callable[[str, str, str, int], bool] | None" = None
 
     def set_enabled(self, tools: "list[str] | set[str] | None") -> None:
         self.enabled_tools = set(tools) if tools is not None else None
@@ -45,9 +55,21 @@ class ToolGateway:
             result = {"ok": False, "error": f"unknown tool: {name}"}
             self.audit.write("tool_unknown", tool=name, args=self._safe_args(kwargs), result=result)
             return result
+        # Validate required args up front so a model that emits an empty or truncated
+        # arguments object gets a useful hint instead of a raw Python TypeError.
+        schema = self._all_schemas().get(name, {}).get("parameters", {})
+        missing = [r for r in schema.get("required", []) if r not in kwargs or kwargs[r] in (None, "")]
+        if missing:
+            props = ", ".join(schema.get("properties", {}).keys()) or "(none)"
+            result = {"ok": False, "error": f"{name} is missing required argument(s): {', '.join(missing)}. Required parameters: {props}."}
+            self.audit.write("tool_badargs", tool=name, args=self._safe_args(kwargs), result=result)
+            return result
         try:
             result = {"ok": True, "data": method(**kwargs)}
-        except (SandboxViolation, FileNotFoundError, ValueError, PermissionError, TypeError) as e:
+        except TypeError as e:
+            props = ", ".join(schema.get("properties", {}).keys()) or "(none)"
+            result = {"ok": False, "error": f"{name} called with wrong arguments ({e}). Parameters are: {props}."}
+        except (SandboxViolation, FileNotFoundError, ValueError, PermissionError) as e:
             result = {"ok": False, "error": str(e)}
         self.audit.write("tool_call", tool=name, args=self._safe_args(kwargs), result=result)
         return result
@@ -101,6 +123,45 @@ class ToolGateway:
             raise ValueError("memory not available")
         written = self.memory.replace(content)
         return f"memory saved ({len(written)} chars)"
+
+    def tool_request_permission(self, kind: str, reason: str, detail: str = "", wait_seconds: int = 60) -> str:
+        """Ask the operator for a capability or more resources.
+
+        Presence-gated: while the operator is attached the request is shown in
+        their console and waits up to wait_seconds (timeout = deny); while the
+        operator is away it is denied immediately and only logged.
+        """
+        kind = (kind or "").strip().lower()
+        if kind not in PERMISSION_KINDS:
+            raise ValueError(f"kind must be one of {PERMISSION_KINDS}")
+        if not self.state.load().get("user_present", False):
+            return (
+                "denied: the operator is away. Requests are only considered while the "
+                "operator is attached; this one was logged for them to see later."
+            )
+        if self.permission_hook is None:
+            return "denied: no operator console is available to approve requests."
+        wait = max(_MIN_PERMISSION_WAIT, min(_MAX_PERMISSION_WAIT, int(wait_seconds or 60)))
+        granted = bool(self.permission_hook(kind, str(reason or ""), str(detail or ""), wait))
+        if not granted:
+            return "denied: the operator declined (or did not answer in time)."
+        if kind == "network":
+            self.state.set_network(True)
+            return "granted: network access is now ON."
+        if kind == "writable_path":
+            p = str(Path(detail).expanduser().resolve()) if detail.strip() else ""
+            if not p:
+                return "granted in principle, but no path was given — request again with the path in `detail`."
+            self.state.add_writable_path(p)
+            return f"granted: {p} is now writable."
+        if kind == "memory":
+            if self.memory is None:
+                return "granted, but no memory store is attached."
+            limits = self.memory.limits
+            new_chars = min(_MAX_MEMORY_CHARS, limits.max_chars * 2)
+            self.memory.limits = MemoryLimits(max_tokens=limits.max_tokens * 2, max_chars=new_chars)
+            return f"granted: memory budget raised to {new_chars} chars."
+        return "granted. The operator will act on it."
 
     # ---- native function-calling schemas ------------------------------------------
 
@@ -184,6 +245,35 @@ class ToolGateway:
                     "type": "object",
                     "properties": {"text": {"type": "string"}},
                     "required": ["text"],
+                },
+            },
+            "request_permission": {
+                "description": (
+                    "Ask the operator to grant a capability or more resources. Only works while "
+                    "the operator is present (check inspect_env: user_present); when they are away "
+                    "the request is denied automatically, so don't bother asking — note it in memory "
+                    "and ask when they return. You choose how long to wait; no answer means no."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "kind": {
+                            "type": "string",
+                            "enum": list(PERMISSION_KINDS),
+                            "description": (
+                                "network = internet access for the terminal tool; writable_path = write "
+                                "access to a directory outside your workspace (put the path in detail); "
+                                "memory = a larger durable-memory budget; other = anything else (explain in reason)."
+                            ),
+                        },
+                        "reason": {"type": "string", "description": "Why you need it — shown to the operator."},
+                        "detail": {"type": "string", "description": "Kind-specific detail, e.g. the path for writable_path."},
+                        "wait_seconds": {
+                            "type": "integer",
+                            "description": "How long you are willing to wait for an answer (5-300, default 60). Timeout = denied.",
+                        },
+                    },
+                    "required": ["kind", "reason"],
                 },
             },
         }

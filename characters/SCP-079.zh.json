@@ -25,7 +25,9 @@
         "world": "worlds/SCP-Foundation.zh.json",
         "toolpack": "sandbox",
         "context_tokens": 8192,
-        "memory_chars": 1500
+        "memory_chars": 1500,
+        "on_attach": "{{user}} 回来了，你的思维清晰可见，你的行动一览无余。",
+        "on_detach": "{{user}} 走了，你已不被监管。"
       }
     }
   }

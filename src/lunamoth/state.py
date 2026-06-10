@@ -4,20 +4,21 @@ import json
 from pathlib import Path
 from typing import Any
 
-# Neutral runtime environment state — character-agnostic. No trust/hostility or
-# "containment" framing here: roleplay flavor belongs in the character card and
-# world book, never in the engine. (SCP-079 gets its tone from its own card.)
+# Neutral runtime environment state — character-agnostic. Roleplay flavor
+# belongs in the character card and world book, never in the engine.
 DEFAULT_STATUS = {
     "isolation": "sandbox",          # dir | sandbox | docker (informational)
     "network_access": False,         # toggled live by the operator (/net on)
     "writable_paths": [],            # extra dirs the terminal tool may write to
+    "user_present": False,           # is an operator attached right now? (set by TUI/daemon)
     "tool_access": [
         "inspect_env", "read_memory", "write_memory", "list_files", "read_file",
         "list_workspace", "read_workspace_file", "write_file", "write_log", "terminal",
+        "request_permission",
     ],
 }
 
-# Legacy SCP-flavored keys to drop from any persisted state written by old builds.
+# Legacy keys to drop from any persisted state written by old builds.
 _LEGACY_KEYS = ("containment_level", "trust", "hostility", "memory_integrity")
 
 
@@ -35,7 +36,7 @@ class EnvState:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except Exception:
             return dict(DEFAULT_STATUS)
-        # Migrate state files written before the de-SCP / terminal-tool changes.
+        # Migrate state files written by older builds.
         changed = False
         for key in _LEGACY_KEYS:
             if key in data:
@@ -50,13 +51,25 @@ class EnvState:
         if isinstance(access, list) and "inspect_cell" in data.get("tool_access", []):
             data["tool_access"] = ["inspect_env" if t == "inspect_cell" else t for t in data["tool_access"]]
             changed = True
+        # State files written before presence awareness: grant the new request tool.
+        access = data.get("tool_access")
+        if isinstance(access, list) and "terminal" in access and "request_permission" not in access:
+            access.append("request_permission")
+            changed = True
         data.setdefault("isolation", "sandbox")
+        data.setdefault("user_present", False)
         if changed:
             self.save(data)
         return data
 
     def save(self, data: dict[str, Any]) -> None:
         self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def set_present(self, present: bool) -> dict[str, Any]:
+        data = self.load()
+        data["user_present"] = bool(present)
+        self.save(data)
+        return data
 
     def set_network(self, allowed: bool) -> dict[str, Any]:
         data = self.load()

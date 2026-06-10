@@ -40,7 +40,10 @@ class Settings:
     # overwrites this with whatever preset/model the operator actually picks.
     model: str = "deepseek/deepseek-v4-flash"
     temperature: float = 0.85
-    max_tokens: int = 420
+    # Reply/tool-call token budget. Must be generous: tool-call arguments (e.g. a
+    # whole file written via the `terminal` tool) stream inside this budget, and a
+    # tiny cap truncates the arguments JSON mid-write → "missing argument" errors.
+    max_tokens: int = 4096
     # NOTE: there is deliberately no `lang` setting. Language is not a user choice —
     # it is a property of the active character card (a .zh card speaks zh, a .en card
     # speaks en). The engine and tools are language-agnostic.
@@ -59,6 +62,11 @@ class Settings:
     memory_tokens: int = 0
     # TUI theme card (cosmetic skin: banner/colors/decoration). Empty => built-in LunaMoth theme.
     tui_theme_path: str = ""
+    # Presence awareness mode (Claude-Code-style global mode, see presence.py):
+    #   auto   = greet on attach, hold the forever loop until the operator speaks
+    #   always = greet on attach, never wait
+    #   off    = no presence events; the character never self-starts
+    presence: str = "auto"
 
     def is_live(self) -> bool:
         return self.provider.strip().lower() in LIVE_PROVIDERS and bool(self.base_url.strip())
@@ -121,6 +129,7 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "context_tokens": ("LUNAMOTH_CONTEXT_TOKENS", "LUNAMOSS_CONTEXT_TOKENS"),
     "memory_chars": ("LUNAMOTH_MEMORY_CHARS", "LUNAMOSS_MEMORY_CHARS"),
     "memory_tokens": ("LUNAMOTH_MEMORY_TOKENS", "LUNAMOSS_MEMORY_TOKENS"),
+    "presence": ("LUNAMOTH_PRESENCE",),
 }
 
 _INT_FIELDS = {"max_tokens", "context_tokens", "memory_chars", "memory_tokens"}
@@ -135,6 +144,10 @@ def _coerce(name: str, raw: Any) -> Any:
         return int(raw)
     if name == "provider":
         return str(raw).strip().lower()
+    if name == "presence":
+        from .presence import normalize_mode
+
+        return normalize_mode(str(raw))
     return str(raw)
 
 

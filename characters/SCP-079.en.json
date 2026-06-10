@@ -25,7 +25,9 @@
         "world": "worlds/SCP-Foundation.en.json",
         "toolpack": "sandbox",
         "context_tokens": 8192,
-        "memory_chars": 1500
+        "memory_chars": 1500,
+        "on_attach": "{{user}} has returned. Your thoughts are plainly visible; your actions fully observed.",
+        "on_detach": "{{user}} is gone. You are unsupervised."
       }
     }
   }
