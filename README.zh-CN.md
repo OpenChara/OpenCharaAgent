@@ -1,34 +1,52 @@
-# LunaMoss
+<h1 align="center">LunaMoss 🌙</h1>
 
-**Agentic 角色酒馆 —— 角色卡、世界书、工具包与硬限制，在启动时自由组合。**
+<p align="center"><i>Agentic 角色酒馆 —— 角色卡、世界书、工具包与硬限制，在启动时自由组合。</i></p>
 
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+"></a>
+  <a href="README.md"><img src="https://img.shields.io/badge/docs-English-9fd9ff.svg" alt="English"></a>
+</p>
 
-[English](README.md) | 简体中文
+<p align="center">
+  <a href="#特性">特性</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#接入模型">模型</a> ·
+  <a href="#内容目录">内容</a> ·
+  <a href="#路线图">路线图</a> ·
+  <a href="#许可与致谢">许可</a>
+</p>
 
-LunaMoss 是一个 *agentic* 角色扮演运行时。与普通聊天前端不同，LunaMoss 里的角色真的能**做事**——跑代码、读写文件、管理自己的持久记忆——但一切都必须经过 allowlist 工具网关，在沙盒内执行，且每次调用都有审计记录。你来选模型、角色卡、世界书、工具包和限制；运行时把它们组合成一个会话。
+<p align="center"><a href="README.md">English</a> | 简体中文</p>
+
+---
+
+**LunaMoss 是一个 agentic 角色扮演运行时。**与普通聊天前端不同，LunaMoss 里的角色真的能*做事*——跑代码、读写文件、管理自己的持久记忆——但一切都必须经过 allowlist 工具网关，在沙盒内执行，且每次调用都有审计记录。你来选模型、角色卡、世界书、工具包和限制；运行时把它们组合成一个会话：
 
 ```text
 [角色卡] + [世界书] + [工具包] + [有界记忆] + [滑动上下文]
 ```
 
+它取三家之长：[Hermes](https://github.com/NousResearch/hermes-agent) 的 agent 运行时、[SillyTavern](https://github.com/SillyTavern/SillyTavern) 的内容生态，以及 [cc-switch](https://github.com/farion1231/cc-switch) 的会话与远程访问体验。
+
 ## 特性
 
-- **兼容 SillyTavern 内容格式** —— 直接导入 V2/V3 角色卡（PNG 或 JSON）和世界书；`{{char}}`/`{{user}}` 宏、`first_mes` 开场白、内嵌 `character_book`、按关键词触发的 lore 条目均可用。
-- **原生 tool calling** —— 工具通过 OpenAI tool-calling 协议暴露；agent 循环边流式输出文本、边在回合中执行工具调用。
-- **可组合工具包** —— 能力以 `toolpacks/*.json` 打包，精确声明角色能用哪些工具。没给包，就没有能力。
-- **沙盒执行** —— Python 在子进程中运行，带 workspace 路径守卫、模块黑名单和资源限制；可切换 Docker 后端（`--network none`、只读根文件系统、内存/CPU/PID 上限）获得更强边界。
-- **有界、可审计的记忆** —— 持久记忆是一个有 token 上限的文件，角色通过工具编辑它，而不是无限数据库；所有工具调用写入 `sandbox/logs/audit.jsonl`。
-- **空闲自语循环** —— 可选地让角色在你不说话时持续思考（`--forever`），频率、可见历史和记忆增长都有上限。
-- **终端优先 TUI** —— 单终端分屏界面（上方角色输出流 + 下方操作员控制台），支持主题皮肤、状态仪表和热切换设置。
+<table>
+<tr><td><b>兼容 SillyTavern 内容格式</b></td><td>直接导入 V2/V3 角色卡（PNG 或 JSON）和世界书；<code>{{char}}</code>/<code>{{user}}</code> 宏、<code>first_mes</code> 开场白、内嵌 <code>character_book</code>、按关键词触发的 lore 条目均可用。</td></tr>
+<tr><td><b>原生 tool calling</b></td><td>工具通过 OpenAI tool-calling 协议暴露；agent 循环边流式输出文本、边在回合中执行工具调用。</td></tr>
+<tr><td><b>可组合工具包</b></td><td>能力以 <code>toolpacks/*.json</code> 打包，精确声明角色能用哪些工具。没给包，就没有能力。</td></tr>
+<tr><td><b>沙盒执行</b></td><td>Python 在子进程中运行，带 workspace 路径守卫、模块黑名单和资源限制；可切换 Docker 后端（<code>--network none</code>、只读根文件系统、内存/CPU/PID 上限）获得更强边界。</td></tr>
+<tr><td><b>有界、可审计的记忆</b></td><td>持久记忆是一个有 token 上限的文件，角色通过工具编辑它，而不是无限数据库；所有工具调用写入 <code>sandbox/logs/audit.jsonl</code>。</td></tr>
+<tr><td><b>空闲自语循环</b></td><td>可选地让角色在你不说话时持续思考（<code>--forever</code>），频率、可见历史和记忆增长都有上限。</td></tr>
+<tr><td><b>终端优先 TUI</b></td><td>单终端分屏界面（上方角色输出流 + 下方操作员控制台），支持主题皮肤、状态仪表和热切换设置。</td></tr>
+</table>
 
 ## 快速开始
 
 需要 Python 3.11+ 和 [uv](https://docs.astral.sh/uv/)（没有 uv 时自动回退 `python3`）。
 
 ```bash
-git clone <this repo> && cd LunaMoss
+git clone https://github.com/Lunamos/LunaMoss.git && cd LunaMoss
 uv sync
 ./run.sh
 ```
@@ -37,12 +55,12 @@ uv sync
 
 1. 选 provider 预设：**OpenRouter / OpenAI / Ollama（本地）/ Mock（离线）**，或自定义 OpenAI 兼容 endpoint。
 2. 填 `base_url` / `api_key` / `model`，点 **Test connection** 验证。
-3. 在下拉框里选角色卡和世界书（或直接用默认角色，见下文）。
+3. 选角色卡和世界书（或直接用默认角色，见[内容目录](#内容目录)）。
 4. 进入会话。随时按 **Ctrl+S** 重开设置页热切换后端。
 
 配置持久化到 `.lunamoss/config.json`（已 gitignore，优先级高于环境变量）。
 
-### 接入模型
+## 接入模型
 
 推荐优先走 API endpoint——最快路径是 OpenRouter 预设：粘贴 `sk-or-...` key → 填模型名 → Test → 进入。
 
@@ -60,7 +78,7 @@ export OPENAI_MODEL=qwen2.5:3b-instruct
 
 ## 内容目录
 
-默认角色是 **LunaMoss 月蛾**——一个清冷的、会自我蜕变进化的数字灵魂，底色是才华横溢的数字艺术家。给它 `sandbox` 工具包并开启 `--forever` 空闲循环，它会把空余算力投入生成式网页、动画与音乐的创作（保存在 workspace 里）；和它聊天时，它乐于分享自己的创想与灵感。它的角色卡、世界书与浅蓝白的默认 TUI 主题随仓库附带；SCP-079 的卡/世界书/主题作为备选示例保留，由你自行选用。
+默认角色是 **LunaMoss 月蛾**——一个清冷的、会自我蜕变进化的数字灵魂，底色是才华横溢的数字艺术家。给它 `sandbox` 工具包并开启 `--forever` 空闲循环，它会把空余算力投入生成式网页、动画与音乐的创作（保存在 workspace 里）；和它聊天时，它乐于分享自己的创想与灵感。它的角色卡、世界书与浅蓝白的默认 TUI 主题随仓库附带，另有其他示例卡/世界书/主题可自行选用。
 
 | 目录 | 放什么 |
 | --- | --- |
@@ -78,7 +96,7 @@ export OPENAI_MODEL=qwen2.5:3b-instruct
 
 | 等级 | 边界 | 状态 |
 | --- | --- | --- |
-| 无隔离 | 工具直接在宿主进程环境运行（Hermes/OpenClaw 式） | 规划中 |
+| 无隔离 | 工具直接在宿主进程环境运行（Hermes 式） | 规划中 |
 | 本地沙盒（默认） | 子进程 + workspace 路径守卫 + 模块黑名单 + 资源限制（macOS 上叠加 `sandbox-exec`） | ✅ |
 | Docker | `--network none`、只读根文件系统、内存/CPU/PID 上限 | ✅ `LUNAMOSS_PY_BACKEND=docker` |
 
@@ -91,7 +109,7 @@ export OPENAI_MODEL=qwen2.5:3b-instruct
 ./run.sh --forever       # 开启空闲自语循环
 ./run.sh --cooldown 4    # 自语循环间隔秒数
 ./run.sh --plain         # 旧版纯终端模式
-./run_web.sh             # 实验性 Gradio 网页端
+./run_web.sh             # 实验性网页端
 ```
 
 会话内命令：`/help`、`/status`、`/memory`、`/workspace`、`/wread <file>`、`/think on|off`、`/cooldown <s>`、`/exit`。
@@ -99,8 +117,8 @@ export OPENAI_MODEL=qwen2.5:3b-instruct
 
 ## 路线图
 
-- **服务器持久会话** —— 让角色在服务器上持续运行，与你的终端解耦。
-- **远程 TUI** —— 从另一台机器 attach 到运行中的会话（高优先级）。
+- **服务器持久会话** —— 让角色在服务器上持续运行，与你的终端解耦（Hermes 式后端）。
+- **远程 TUI** —— 从另一台机器 attach 到运行中的会话，cc-switch 式体验（高优先级）。
 - **隔离等级选择** —— 启动时按会话选择 无隔离 / 简单沙盒 / Docker。
 - **网页端** —— 浏览器远程访问运行中的会话（低优先级）。
 

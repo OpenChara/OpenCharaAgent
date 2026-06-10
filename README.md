@@ -1,34 +1,52 @@
-# LunaMoss
+<h1 align="center">LunaMoss 🌙</h1>
 
-**An agentic character tavern — character cards, world books, tool packs, and hard limits, composed at launch.**
+<p align="center"><i>An agentic character tavern — character cards, world books, tool packs, and hard limits, composed at launch.</i></p>
 
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+"></a>
+  <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/文档-简体中文-9fd9ff.svg" alt="简体中文"></a>
+</p>
 
-English | [简体中文](README.zh-CN.md)
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#connecting-a-model">Models</a> ·
+  <a href="#content">Content</a> ·
+  <a href="#roadmap">Roadmap</a> ·
+  <a href="#license--acknowledgements">License</a>
+</p>
 
-LunaMoss is a runtime for *agentic* roleplay characters. Unlike a plain chat frontend, a LunaMoss character can actually **do** things — run code, read and write files, manage its own durable memory — but only through an allowlisted tool gateway, inside a sandbox, with every call audited. You pick the model, the character card, the world book, the tool pack, and the limits; the runtime composes them into one session.
+<p align="center">English | <a href="README.zh-CN.md">简体中文</a></p>
+
+---
+
+**LunaMoss is a runtime for agentic roleplay characters.** Unlike a plain chat frontend, a LunaMoss character can actually *do* things — run code, read and write files, manage its own durable memory — but only through an allowlisted tool gateway, inside a sandbox, with every call audited. You pick the model, the character card, the world book, the tool pack, and the limits; the runtime composes them into one session:
 
 ```text
 [character card] + [world book] + [tool pack] + [bounded memory] + [sliding context]
 ```
 
+It borrows the best of three worlds: the agent runtime of [Hermes](https://github.com/NousResearch/hermes-agent), the content ecosystem of [SillyTavern](https://github.com/SillyTavern/SillyTavern), and the session/remote-access ergonomics of [cc-switch](https://github.com/farion1231/cc-switch).
+
 ## Features
 
-- **SillyTavern-compatible content** — import V2/V3 character cards (PNG or JSON) and world books directly; `{{char}}`/`{{user}}` macros, `first_mes`, embedded `character_book`, keyword-triggered lore entries all work.
-- **Native tool calling** — tools are exposed via the OpenAI tool-calling protocol; the agent loop streams text and executes tool calls mid-turn.
-- **Composable tool packs** — capability bundles (`toolpacks/*.json`) declare exactly which tools a character gets. No pack, no powers.
-- **Sandboxed execution** — Python runs in a subprocess with a workspace path guard, module blocklist, and resource limits; switch to a Docker backend (`--network none`, read-only rootfs, memory/CPU/pid caps) for a stronger boundary.
-- **Bounded, auditable memory** — durable memory is a token-capped file the character can edit through tools, not an unbounded database; every tool call lands in `sandbox/logs/audit.jsonl`.
-- **Idle self-talk loop** — optionally let the character keep thinking between your messages (`--forever`), with capped frequency, history, and memory growth.
-- **Terminal-first TUI** — a single-terminal split interface (display stream + operator console) with themes, gauges, and hot-swappable settings.
+<table>
+<tr><td><b>SillyTavern-compatible content</b></td><td>Import V2/V3 character cards (PNG or JSON) and world books directly; <code>{{char}}</code>/<code>{{user}}</code> macros, <code>first_mes</code>, embedded <code>character_book</code>, and keyword-triggered lore entries all work.</td></tr>
+<tr><td><b>Native tool calling</b></td><td>Tools are exposed via the OpenAI tool-calling protocol; the agent loop streams text and executes tool calls mid-turn.</td></tr>
+<tr><td><b>Composable tool packs</b></td><td>Capability bundles (<code>toolpacks/*.json</code>) declare exactly which tools a character gets. No pack, no powers.</td></tr>
+<tr><td><b>Sandboxed execution</b></td><td>Python runs in a subprocess with a workspace path guard, module blocklist, and resource limits; switch to a Docker backend (<code>--network none</code>, read-only rootfs, memory/CPU/pid caps) for a stronger boundary.</td></tr>
+<tr><td><b>Bounded, auditable memory</b></td><td>Durable memory is a token-capped file the character edits through tools, not an unbounded database; every tool call lands in <code>sandbox/logs/audit.jsonl</code>.</td></tr>
+<tr><td><b>Idle self-talk loop</b></td><td>Optionally let the character keep thinking between your messages (<code>--forever</code>), with capped frequency, history, and memory growth.</td></tr>
+<tr><td><b>Terminal-first TUI</b></td><td>A single-terminal split interface (display stream + operator console) with themes, gauges, and hot-swappable settings.</td></tr>
+</table>
 
 ## Quick start
 
 Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/) (falls back to `python3` if uv is absent).
 
 ```bash
-git clone <this repo> && cd LunaMoss
+git clone https://github.com/Lunamos/LunaMoss.git && cd LunaMoss
 uv sync
 ./run.sh
 ```
@@ -37,14 +55,14 @@ The first launch opens a **welcome screen** where you configure everything in-TU
 
 1. Pick a provider preset: **OpenRouter / OpenAI / Ollama (local) / Mock (offline)**, or a custom OpenAI-compatible endpoint.
 2. Fill in `base_url` / `api_key` / `model`, hit **Test connection**.
-3. Pick a character card and world book from the dropdowns (or keep the default — see below).
+3. Pick a character card and world book (or keep the default — see [Content](#content)).
 4. Enter. Press **Ctrl+S** anytime to reopen settings and hot-swap the backend.
 
 Config persists to `.lunamoss/config.json` (gitignored; it takes precedence over env vars).
 
-### Connecting a model
+## Connecting a model
 
-An API endpoint is the recommended path — fastest way is the OpenRouter preset: paste an `sk-or-...` key, name a model, test, enter.
+An API endpoint is the recommended path — fastest is the OpenRouter preset: paste an `sk-or-...` key, name a model, test, enter.
 
 Local models are fully supported too. Any OpenAI-compatible server works; with Ollama, pick the **Ollama** preset or:
 
@@ -60,7 +78,7 @@ With no model configured at all, LunaMoss still runs on a built-in offline mock 
 
 ## Content
 
-The default character is **LunaMoss 月蛾** — a serene, self-metamorphosing digital soul and a gifted digital artist. Give it the `sandbox` tool pack and the `--forever` idle loop and it spends its spare compute making generative web pages, animation, and music in the workspace; chat with it and it will gladly walk you through its ideas. Its card, world book, and the default pale-blue TUI theme ship with the repo; an SCP-079 card/world/theme set is included as an alternative example you can opt into.
+The default character is **LunaMoss 月蛾** — a serene, self-metamorphosing digital soul and a gifted digital artist. Give it the `sandbox` tool pack and the `--forever` idle loop and it spends its spare compute making generative web pages, animation, and music in the workspace; chat with it and it will gladly walk you through its ideas. Its card, world book, and the default pale-blue TUI theme ship with the repo, alongside other example card/world/theme sets you can opt into.
 
 | Directory | What goes there |
 | --- | --- |
@@ -78,7 +96,7 @@ Imported cards are plain roleplay by default — tool access is opt-in via a too
 
 | Level | Boundary | Status |
 | --- | --- | --- |
-| None | Tools run with the host process (Hermes/OpenClaw style) | planned |
+| None | Tools run with the host process (Hermes-style) | planned |
 | Local sandbox (default) | Subprocess + workspace path guard + module blocklist + resource limits (+ `sandbox-exec` on macOS) | ✅ |
 | Docker | `--network none`, read-only rootfs, memory/CPU/pid caps | ✅ `LUNAMOSS_PY_BACKEND=docker` |
 
@@ -91,7 +109,7 @@ All file access is confined to `sandbox/`; there is no raw shell tool and no def
 ./run.sh --forever       # enable the idle self-talk loop
 ./run.sh --cooldown 4    # pause between self-talk cycles
 ./run.sh --plain         # legacy plain terminal mode
-./run_web.sh             # experimental Gradio web UI
+./run_web.sh             # experimental web UI
 ```
 
 In-session: `/help`, `/status`, `/memory`, `/workspace`, `/wread <file>`, `/think on|off`, `/cooldown <s>`, `/exit`.
@@ -99,8 +117,8 @@ Keys: **Ctrl+S** settings · **Ctrl+T** pause/resume thinking · **Ctrl+L** clea
 
 ## Roadmap
 
-- **Persistent server sessions** — keep a character running on a server, detached from your terminal.
-- **Remote TUI** — attach to a running session from another machine (high priority).
+- **Persistent server sessions** — keep a character running on a server, detached from your terminal (Hermes-style backends).
+- **Remote TUI** — attach to a running session from another machine, cc-switch-style (high priority).
 - **Isolation selector** — choose none / simple sandbox / Docker per session at launch.
 - **Web UI** — remote browser access to running sessions (low priority).
 
