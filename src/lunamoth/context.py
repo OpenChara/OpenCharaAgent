@@ -76,9 +76,11 @@ class ContextBuffer:
         """(role, content) view for UIs/tests — structured fields flattened away."""
         return [(str(m.get("role", "")), str(m.get("content") or "")) for m in self.messages]
 
-    def render(self) -> list[dict]:
-        """API-ready view: sanitized keys, reasoning withheld, old think cycles
-        dropped so self-talk can't bury the operator's instructions."""
+    def render(self, include_reasoning: bool = False) -> list[dict]:
+        """API-ready view: sanitized keys, old think cycles dropped so self-talk
+        can't bury the operator's instructions. Reasoning is withheld unless the
+        provider demands the echo-back (DeepSeek thinking mode — see llm.py)."""
+        keys = _API_KEYS + ("reasoning_content",) if include_reasoning else _API_KEYS
         think_seen = 0
         out: list[dict] = []
         for msg in reversed(self.messages):
@@ -86,7 +88,7 @@ class ContextBuffer:
                 think_seen += 1
                 if think_seen > THINK_WINDOW:
                     continue
-            out.append({k: msg[k] for k in _API_KEYS if k in msg})
+            out.append({k: msg[k] for k in keys if k in msg})
         out.reverse()
         return out
 

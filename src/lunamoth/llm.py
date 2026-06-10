@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 from typing import Any, Callable, Iterator
 
 from .config import LLMConfig
@@ -9,6 +10,32 @@ from .persona import fallback_persona
 
 
 LIVE_PROVIDERS = {"openai_compatible", "openai", "ollama", "openrouter"}
+
+# In-band style markers for "machinery" output (reasoning, tool activity):
+# UIs render the wrapped span dimmed, the way hermes / Claude Code grey out
+# everything that is not character speech. Each yielded chunk carries balanced
+# markers, and strip_dim() removes the spans before anything is committed to
+# the conversation context.
+DIM_ON = "\x01"
+DIM_OFF = "\x02"
+_DIM_SPAN = re.compile("\x01.*?\x02", re.S)
+
+
+def dim(text: str) -> str:
+    return f"{DIM_ON}{text}{DIM_OFF}"
+
+
+def strip_dim(text: str) -> str:
+    """Remove dim spans (reasoning/tool chatter) — what remains is speech."""
+    return _DIM_SPAN.sub("", text).replace(DIM_ON, "").replace(DIM_OFF, "")
+
+
+# Model families that accept OpenRouter's unified `reasoning` request param
+# (hermes gates this the same way: unknown extra_body fields get forwarded
+# upstream and some providers 400 on them).
+_REASONING_PREFIXES = (
+    "deepseek/", "anthropic/", "openai/", "x-ai/", "google/gemini", "qwen/qwen3", "nousresearch/",
+)
 
 
 class LLMClient:
@@ -20,6 +47,27 @@ class LLMClient:
 
     def is_live(self) -> bool:
         return self.cfg.provider in LIVE_PROVIDERS and bool(self.cfg.base_url)
+
+    # ---- reasoning-model policy (hermes-style, OpenRouter + DeepSeek focus) --------
+
+    def reasoning_supported(self) -> bool:
+        """Safe to send the `reasoning` request param on this route/model."""
+        base = (self.cfg.base_url or "").lower()
+        model = (self.cfg.model or "").lower()
+        if "openrouter" in base:
+            return model.startswith(_REASONING_PREFIXES)
+        return "deepseek" in model or "api.deepseek.com" in base
+
+    def reasoning_echoback_required(self) -> bool:
+        """DeepSeek thinking mode rejects replayed assistant tool-call messages
+        that omit reasoning_content (hermes #15250) — for those models we echo
+        the thinking back; for everyone else it is withheld."""
+        return "deepseek" in (self.cfg.model or "").lower() or "api.deepseek.com" in (self.cfg.base_url or "").lower()
+
+    def _reasoning_body(self, body: dict) -> dict:
+        if self.reasoning_supported():
+            body["reasoning"] = {"enabled": True, "effort": "medium"}
+        return body
 
     def stream_complete(
         self, user_text: str, memory: str, status: dict[str, Any], context: list[dict],
@@ -114,13 +162,13 @@ class LLMClient:
     ) -> Iterator[str]:
         headers = self._headers()
         url = f"{self.cfg.base_url}/chat/completions"
-        body = {
+        body = self._reasoning_body({
             "model": self.cfg.model,
             "messages": self._messages(user_text, memory, status, context, in_context),
             "temperature": self.cfg.temperature,
             "max_tokens": self.cfg.max_tokens,
             "stream": True,
-        }
+        })
         import urllib.request
         import urllib.error
         data = json.dumps(body).encode("utf-8")
@@ -140,6 +188,10 @@ class LLMClient:
                     except json.JSONDecodeError:
                         continue
                     delta = payload.get("choices", [{}])[0].get("delta", {})
+                    thinking = delta.get("reasoning_content") or delta.get("reasoning")
+                    if thinking:
+                        # Visible but dimmed — machinery, not character speech.
+                        yield dim(thinking)
                     chunk = delta.get("content")
                     if chunk:
                         yield chunk
@@ -195,6 +247,11 @@ class LLMClient:
                 acc.clear()  # committed below — must not re-commit as "interrupted"
                 truncated = finish == "length"
 
+                # DeepSeek thinking mode requires reasoning_content echoed on
+                # replayed assistant tool-call messages; everyone else gets it
+                # withheld (most providers reject echoed thinking).
+                echo = self.reasoning_echoback_required()
+
                 if truncated and tool_calls:
                     # Cut mid-arguments: the JSON is unusable. Drop the calls and
                     # tell the model to split the work (hermes pattern).
@@ -202,29 +259,29 @@ class LLMClient:
                     if reasoning:
                         a_msg["reasoning_content"] = reasoning
                     record(a_msg)
-                    messages.append({k: v for k, v in a_msg.items() if k != "reasoning_content"})
+                    messages.append(a_msg if echo else {k: v for k, v in a_msg.items() if k != "reasoning_content"})
                     note = {"role": "system", "content": self._SPLIT_TOOLS_NOTE}
                     record(note)
                     messages.append(note)
-                    yield "\n⚠ tool call truncated by the output limit — asking for smaller pieces\n"
+                    yield "\n" + dim("⚠ tool call truncated by the output limit — asking for smaller pieces") + "\n"
                     continue
 
                 a_msg = {"role": "assistant", "content": text or None}
                 if tool_calls:
                     a_msg["tool_calls"] = tool_calls
                 if reasoning:
-                    # Kept for the record/transcript; ContextBuffer.render() strips
-                    # it from future API calls (most providers reject echoed thinking).
+                    # Always kept for the record/transcript; replayed to the API
+                    # only when the provider demands it (echo above).
                     a_msg["reasoning_content"] = reasoning
                 record(a_msg)
-                messages.append({k: v for k, v in a_msg.items() if k != "reasoning_content"})
+                messages.append(a_msg if echo else {k: v for k, v in a_msg.items() if k != "reasoning_content"})
 
                 if tool_calls:
                     for tc in tool_calls:
                         res = execute(tc)
                         display = res.get("display")
                         if display:
-                            yield "\n" + display + "\n"
+                            yield "\n" + dim(display) + "\n"
                         t_msg = {"role": "tool", "tool_call_id": tc.get("id") or "", "content": res.get("content", "")}
                         record(t_msg)
                         messages.append(t_msg)
@@ -256,13 +313,13 @@ class LLMClient:
         import urllib.error
         import urllib.request
 
-        body: dict[str, Any] = {
+        body: dict[str, Any] = self._reasoning_body({
             "model": self.cfg.model,
             "messages": messages,
             "temperature": self.cfg.temperature,
             "max_tokens": self.cfg.max_tokens,
             "stream": True,
-        }
+        })
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
@@ -295,6 +352,9 @@ class LLMClient:
                     thinking = delta.get("reasoning_content") or delta.get("reasoning")
                     if thinking:
                         reasoning_parts.append(thinking)
+                        # Stream it dimmed: the operator sees the chara think
+                        # (hermes/Claude-Code style) without it reading as speech.
+                        yield dim(thinking)
                     chunk = delta.get("content")
                     if chunk:
                         text_out.append(chunk)

@@ -5,6 +5,7 @@ import asyncio
 import os
 import queue
 import random
+import re
 import threading
 import time
 from dataclasses import dataclass, replace
@@ -31,10 +32,13 @@ from . import art
 from .agent import LunaMothAgent
 from .cleanup import clean_runtime_sandbox
 from .config import ROOT
-from .llm import LLMClient
+from .llm import DIM_OFF, DIM_ON, LLMClient
 from .presence import MODES, normalize_mode
 from .settings import PRESETS, Settings, config_path, load_settings, save_settings
 from .themes import TuiTheme, load_theme
+
+# Splits streamed text on the in-band dim markers (see llm.py).
+_DIM_SPLIT = re.compile("(\x01|\x02)")
 
 
 def _st_dir() -> Path | None:
@@ -484,7 +488,7 @@ class LunaMothTUI(App):
         self.interrupt_event = threading.Event()
         self.worker_lock = threading.Lock()
         self.shutdown_requested = False
-        self.display_text = ""
+        self.display_segments: list[tuple[str, str]] = []  # (style, text); "dim" = machinery
         self.next_spont_at = time.monotonic() + 0.2
         # Attach grace: after the arrival greeting the chara leaves you room for
         # the first word; if you stay silent past this it returns to its work.
@@ -648,20 +652,23 @@ class LunaMothTUI(App):
         visible = [m for m in rows if not m.get("tool_call_id")]
         tail = visible[-max_lines:]
         if len(visible) > len(tail):
-            self._append_display(f"··· {len(visible) - len(tail)} earlier messages (restored) ···\n\n")
+            self._append_display(f"··· {len(visible) - len(tail)} earlier messages (restored) ···\n\n", style="dim")
         for msg in tail:
             role = msg.get("role", "")
             content = str(msg.get("content") or "")
             if msg.get("tool_calls"):
                 names = ", ".join(tc.get("function", {}).get("name", "?") for tc in msg["tool_calls"])
-                self._append_display(f"⚙ ({names})\n\n" if not content else f"{self.skin.reply_pfx(name)}{content}\n⚙ ({names})\n\n")
+                if content:
+                    self._append_display(f"{self.skin.reply_pfx(name)}{content}\n")
+                self._append_display(f"⚙ ({names})\n\n", style="dim")
                 continue
             if not content:
                 continue
             if role == "user":
                 pfx = self.skin.operator_pfx(self.settings.user_name)
             elif role == "system":
-                pfx = "· "
+                self._append_display(f"· {content}\n\n", style="dim")
+                continue
             else:
                 pfx = self.skin.reply_pfx(name)
             self._append_display(f"{pfx}{content}\n\n")
@@ -672,16 +679,39 @@ class LunaMothTUI(App):
     #   _append_display -> top pane (#display): ONLY the character output.
     #   _console        -> bottom pane (#console): operator input + system notices.
 
-    def _append_display(self, text: str) -> None:
+    def _append_display(self, text: str, style: str = "") -> None:
         # Accumulate only; the actual repaint is throttled in _flush_display (~16fps).
         # Per-token widget updates are what made the pane thrash; batching one repaint
         # per frame lets Textual's compositor diff just the new cells (no flicker).
+        #
+        # Text may carry in-band dim markers (llm.DIM_ON/DIM_OFF) around machinery
+        # output — reasoning, tool activity. Those spans render dimmed, hermes /
+        # Claude-Code style, so they never read as character speech.
         if not text:
             return
-        self.display_text += text
-        if len(self.display_text) > 60000:  # bound UI memory
-            self.display_text = self.display_text[-50000:]
+        current = style
+        for part in _DIM_SPLIT.split(text):
+            if part == DIM_ON:
+                current = "dim"
+                continue
+            if part == DIM_OFF:
+                current = style
+                continue
+            if part:
+                self.display_segments.append((current, part))
+        total = sum(len(t) for _, t in self.display_segments)
+        while total > 60000 and self.display_segments:  # bound UI memory
+            total -= len(self.display_segments.pop(0)[1])
         self._display_dirty = True
+
+    def _display_tail(self, n: int = 2) -> str:
+        """The last n characters currently on the display (for spacing checks)."""
+        out = ""
+        for _, t in reversed(self.display_segments):
+            out = t + out
+            if len(out) >= n:
+                break
+        return out[-n:]
 
     def _flush_display(self) -> None:
         if not self._display_dirty:
@@ -690,7 +720,10 @@ class LunaMothTUI(App):
         # Follow the tail only if the operator is already at the bottom; if they scrolled
         # up to read history, don't yank them back down.
         at_bottom = self.display_scroll.scroll_offset.y >= self.display_scroll.max_scroll_y - 1
-        self.transcript.update(Text(self.display_text))
+        rendered = Text()
+        for style, chunk in self.display_segments:
+            rendered.append(chunk, style="dim" if style == "dim" else None)
+        self.transcript.update(rendered)
         if at_bottom:
             self.display_scroll.scroll_end(animate=False)
 
@@ -856,7 +889,7 @@ class LunaMothTUI(App):
             wrote = True
             if kind == "prefix":
                 # Blank-line separation between character messages in the top pane.
-                if self.display_text and not self.display_text.endswith("\n\n"):
+                if self.display_segments and self._display_tail() != "\n\n":
                     self._append_display("\n")
                 self._append_display(text)
             elif kind == "chunk":
@@ -1006,7 +1039,7 @@ class LunaMothTUI(App):
         # Echo into both panes: the console (your log) and the top transcript (so the
         # reply has your prompt right above it).
         self._console(text, self.skin.operator_color)
-        if self.display_text and not self.display_text.endswith("\n\n"):
+        if self.display_segments and self._display_tail() != "\n\n":
             self._append_display("\n")
         self._append_display(f"{self.skin.operator_pfx(self.settings.user_name)}{text}\n")
         # The operator has spoken — the attach grace has served its purpose.
@@ -1107,7 +1140,7 @@ class LunaMothTUI(App):
         self.push_screen(WelcomeScreen(self.settings, mid_session=True), self._welcome_done)
 
     async def action_clear_display(self) -> None:
-        self.display_text = ""
+        self.display_segments: list[tuple[str, str]] = []  # (style, text); "dim" = machinery
         self._display_dirty = False
         self.transcript.update(Text(""))
         self._console("top pane cleared", "grey50")

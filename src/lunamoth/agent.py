@@ -15,7 +15,7 @@ from .audit import AuditLog
 from .cards import CharacterCard
 from .config import ROOT, SANDBOX_ROOT, ThoughtConfig
 from .context import ContextBuffer
-from .llm import LLMClient
+from .llm import LLMClient, strip_dim
 from .memory import MemoryLimits, MemoryStore
 from .persona import (
     DEFAULT_NAME,
@@ -247,7 +247,7 @@ class LunaMothAgent:
         committed = False
         try:
             stream = self._reply_stream(
-                event_text, self.memory.render(), status, session.context.render(),
+                event_text, self.memory.render(), status, self._context_view(session),
                 in_context=True, record=session.context.add_message,
             )
             for chunk in stream:
@@ -255,12 +255,12 @@ class LunaMothAgent:
                 yield chunk
             committed = True
             if not agent_loop:
-                reply = "".join(chunks).strip()
+                reply = strip_dim("".join(chunks)).strip()
                 if reply:
                     session.context.add("assistant", reply)
         finally:
             if not committed and not agent_loop:
-                partial = "".join(chunks).strip()
+                partial = strip_dim("".join(chunks)).strip()
                 if partial:
                     session.context.add("assistant", partial + self.llm.INTERRUPT_MARK)
 
@@ -334,6 +334,11 @@ class LunaMothAgent:
         own messages via `record`); False = plain stream, the caller commits."""
         return self._tools_active() and self.llm.is_live()
 
+    def _context_view(self, session: Session) -> list[dict]:
+        """The API view of the context — reasoning echoed back only for providers
+        that demand it (DeepSeek thinking mode)."""
+        return session.context.render(include_reasoning=self.llm.reasoning_echoback_required())
+
     def _reply_stream(
         self, user_text: str, memory: str, status: dict[str, Any], context: list[dict],
         *, in_context: bool = True, record=None,
@@ -394,7 +399,7 @@ class LunaMothAgent:
         committed = False
         try:
             stream = self._reply_stream(
-                text, memory_text, status, session.context.render(),
+                text, memory_text, status, self._context_view(session),
                 in_context=True, record=session.context.add_message,
             )
             for chunk in stream:
@@ -402,14 +407,14 @@ class LunaMothAgent:
                 yield chunk
             committed = True
             if not agent_loop:
-                reply = "".join(chunks).strip()
+                reply = strip_dim("".join(chunks)).strip()
                 if reply:
                     session.context.add("assistant", reply)
         finally:
             # Operator interrupt (the UI abandoned this generator): in the plain
             # path WE must keep the partial; the agent loop keeps its own.
             if not committed and not agent_loop:
-                partial = "".join(chunks).strip()
+                partial = strip_dim("".join(chunks)).strip()
                 if partial:
                     session.context.add("assistant", partial + self.llm.INTERRUPT_MARK)
 
@@ -450,7 +455,7 @@ class LunaMothAgent:
             if committed:
                 return
             committed = True
-            thought = "".join(chunks).strip()
+            thought = strip_dim("".join(chunks)).strip()
             if thought:
                 session.thoughts.append(thought)
                 session.thoughts[:] = session.thoughts[-self.thought_cfg.max_session_thoughts:]
@@ -466,7 +471,7 @@ class LunaMothAgent:
                     # The think prompt itself is EPHEMERAL (in_context=False): it
                     # never enters the durable context, only the monologue does.
                     stream = self._reply_stream(
-                        prompt, self.memory.render(), status, session.context.render(),
+                        prompt, self.memory.render(), status, self._context_view(session),
                         in_context=False, record=self._record_think(session),
                     )
                     for chunk in stream:
@@ -474,7 +479,7 @@ class LunaMothAgent:
                         yield chunk
                 except Exception as e:
                     self.audit.write("llm_thought_error", error=str(e)[:500])
-            if not "".join(chunks).strip():
+            if not strip_dim("".join(chunks)).strip():
                 fallback = self._fallback_thought(cycle, status)
                 chunks.append(fallback)
                 yield fallback

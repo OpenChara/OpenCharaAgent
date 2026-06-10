@@ -74,3 +74,35 @@ def test_interrupted_think_cycle_is_committed(agent):
     gen.close()
     thinks = [m for m in s.context.messages if m.get("kind") == "think"]
     assert thinks and "[internal cycle]" in thinks[-1]["content"]
+
+
+def test_strip_dim_removes_machinery_spans():
+    from lunamoth.llm import DIM_OFF, DIM_ON, dim, strip_dim
+
+    mixed = dim("thinking about it…") + "你好。" + "\n" + dim("⚙ terminal ✓") + "\n再见。"
+    assert strip_dim(mixed) == "你好。\n\n再见。"
+    assert DIM_ON not in strip_dim(mixed) and DIM_OFF not in strip_dim(mixed)
+
+
+def test_reasoning_policy_openrouter_and_deepseek():
+    from lunamoth.config import LLMConfig
+    from lunamoth.llm import LLMClient
+
+    def client(base_url, model):
+        return LLMClient(LLMConfig(provider="openai_compatible", base_url=base_url, model=model))
+
+    v4 = client("https://openrouter.ai/api/v1", "deepseek/deepseek-v4-flash")
+    assert v4.reasoning_supported() and v4.reasoning_echoback_required()
+    llama = client("https://openrouter.ai/api/v1", "meta-llama/llama-3.3-70b-instruct")
+    assert not llama.reasoning_supported() and not llama.reasoning_echoback_required()
+    direct = client("https://api.deepseek.com/v1", "deepseek-chat")
+    assert direct.reasoning_supported() and direct.reasoning_echoback_required()
+    ollama = client("http://localhost:11434/v1", "qwen2.5:3b-instruct")
+    assert not ollama.reasoning_supported()
+
+
+def test_render_echoes_reasoning_only_on_request():
+    c = ContextBuffer()
+    c.add_message({"role": "assistant", "content": "done", "reasoning_content": "thought hard"})
+    assert "reasoning_content" not in c.render()[0]
+    assert c.render(include_reasoning=True)[0]["reasoning_content"] == "thought hard"
