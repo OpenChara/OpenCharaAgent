@@ -613,7 +613,7 @@ def transcribe_card(defaults: dict[str, str], text: str, model: str = "") -> dic
     return draft
 
 
-def draft_to_card(draft: dict[str, Any], origin_text: str = "") -> dict[str, Any]:
+def draft_to_card(draft: dict[str, Any], origin_text: str = "", as_draft: bool = False) -> dict[str, Any]:
     """Assemble a V3 card object from a (possibly user-edited) draft."""
     world_entries = []
     for i, w in enumerate(draft.get("world") or []):
@@ -628,6 +628,8 @@ def draft_to_card(draft: dict[str, Any], origin_text: str = "") -> dict[str, Any
             "insertion_order": i,
         })
     ext: dict[str, Any] = {"origin": origin_text[:8000]}
+    if as_draft:
+        ext["draft"] = True
     if draft.get("goals"):
         ext["goals"] = [str(g) for g in draft["goals"]][:5]
     if draft.get("rules"):
@@ -753,7 +755,10 @@ class HubDispatcher:
             draft = p.get("draft")
             if not isinstance(draft, dict):
                 raise RpcError(-32602, "card.from_draft expects a draft object")
-            return save_card(draft_to_card(draft, origin_text=str(p.get("origin") or "")))
+            return save_card(
+                draft_to_card(draft, origin_text=str(p.get("origin") or ""), as_draft=bool(p.get("as_draft"))),
+                path=str(p.get("path") or ""),
+            )
         if method == "defaults.get":
             return _public_defaults(load_defaults())
         if method == "defaults.set":

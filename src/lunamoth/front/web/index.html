@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LunaMoth</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <aside class="sidebar">
+    <button class="nav-item active" data-view="board">
+      <svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3 2.7-5 6-5s6 2 6 5" opacity=".6"/></svg>
+      <span data-i18n="nav-charas">角色</span>
+    </button>
+    <button class="nav-item" data-view="deck">
+      <svg viewBox="0 0 16 16" fill="currentColor"><rect x="2" y="2" width="9" height="12" rx="1.5" opacity=".55"/><rect x="5" y="2" width="9" height="12" rx="1.5"/></svg>
+      <span data-i18n="nav-deck">卡册</span>
+    </button>
+    <button class="nav-item" data-view="settings">
+      <svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="2.4"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      <span data-i18n="nav-settings">设置</span>
+    </button>
+    <div class="spacer"></div>
+    <div class="foot"><i id="conn-dot"></i><span id="version"></span></div>
+  </aside>
+
+  <div class="main">
+    <!-- 角色看板 -->
+    <div class="view active" id="view-board">
+      <div class="toolbar">
+        <h1><span data-i18n="nav-charas">角色</span><span class="count" id="board-count"></span></h1>
+        <div class="grow"></div>
+        <button class="sortsel" id="board-sort"></button>
+        <input class="searchfield" id="board-search" data-i18n-ph="search">
+        <button class="btn primary" id="board-new" data-i18n="new-chara">＋ 新角色</button>
+      </div>
+      <div class="board"><div class="grid" id="board-grid"></div>
+        <div class="empty-state" id="board-empty" style="display:none">
+          <svg width="64" height="64" viewBox="0 0 100 100" fill="none">
+            <ellipse cx="38" cy="44" rx="17" ry="25" transform="rotate(24 38 44)" fill="rgba(91,159,212,.35)"/>
+            <ellipse cx="62" cy="44" rx="17" ry="25" transform="rotate(-24 62 44)" fill="rgba(91,159,212,.35)"/>
+            <ellipse cx="50" cy="52" rx="3.4" ry="15" fill="rgba(91,159,212,.55)"/>
+          </svg>
+          <div data-i18n="empty-board">还没有角色。</div>
+          <div class="acts">
+            <button class="btn primary" id="empty-meet" data-i18n="meet-luna">遇见月蛾</button>
+            <button class="btn soft" id="empty-create" data-i18n="create-chara">创建角色</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 卡册 -->
+    <div class="view" id="view-deck">
+      <div class="toolbar">
+        <h1><span data-i18n="nav-deck">卡册</span><span class="count" id="deck-count"></span></h1>
+        <div class="grow"></div>
+        <input class="searchfield" id="deck-search" data-i18n-ph="search">
+        <button class="btn soft" id="deck-import" data-i18n="import">导入</button>
+        <button class="btn primary" id="deck-new" data-i18n="new-card">＋ 新角色卡</button>
+      </div>
+      <div class="deck"><div class="deck-grid" id="deck-grid"></div></div>
+    </div>
+
+    <!-- 设置 -->
+    <div class="view" id="view-settings">
+      <div class="toolbar"><h1 data-i18n="nav-settings">设置</h1></div>
+      <div class="settings-root">
+        <nav class="settings-nav" id="settings-nav">
+          <button data-pane="model" class="on" data-i18n="set-model">模型</button>
+          <button data-pane="general" data-i18n="set-general">通用</button>
+          <button data-pane="gateway" data-i18n="set-gateway">网关</button>
+          <button data-pane="advanced" data-i18n="set-advanced">高级</button>
+          <button data-pane="about" data-i18n="set-about">关于</button>
+        </nav>
+        <div class="settings-body">
+          <div class="settings-pane on" id="pane-model"></div>
+          <div class="settings-pane" id="pane-general">
+            <h2 data-i18n="set-general">通用</h2>
+            <div class="set-row">
+              <div class="lbl"><span data-i18n="set-appearance">外观</span></div>
+              <div class="seg" id="theme-seg">
+                <span data-th="system" data-i18n="th-system">跟随系统</span>
+                <span data-th="light" data-i18n="th-light">浅色</span>
+                <span data-th="dark" data-i18n="th-dark">深色</span>
+              </div>
+            </div>
+            <div class="set-row">
+              <div class="lbl"><span data-i18n="set-uilang">界面语言</span><small data-i18n="set-uilang-sub"></small></div>
+              <div class="seg" id="lang-seg">
+                <span data-lang="zh">中文</span>
+                <span data-lang="en">English</span>
+              </div>
+            </div>
+          </div>
+          <div class="settings-pane" id="pane-gateway">
+            <h2 data-i18n="set-gateway">网关</h2>
+            <div class="placeholder-pane" data-i18n="set-gw-sub"></div>
+          </div>
+          <div class="settings-pane" id="pane-advanced">
+            <h2 data-i18n="set-advanced">高级</h2>
+            <div class="set-row">
+              <div class="lbl"><span data-i18n="set-data">数据位置</span><small id="home-path"></small></div>
+              <button class="btn soft" id="reveal-home" data-i18n="set-reveal">在访达中显示</button>
+            </div>
+          </div>
+          <div class="settings-pane" id="pane-about">
+            <h2>LunaMoth</h2>
+            <div class="about-block">
+              <div id="about-version"></div>
+              <div data-i18n="about-text"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 对话页 -->
+    <div class="view" id="view-chat">
+      <div class="chat-root">
+        <div class="chat-col">
+          <div class="chat-head">
+            <button class="back" id="chat-back">‹</button>
+            <div class="avatar-s" id="chat-avatar"><span id="chat-avatar-glyph"></span><span class="mini-dot" id="chat-dot"></span></div>
+            <div class="who"><b id="chat-name"></b><span id="chat-statusword"></span></div>
+            <div class="grow"></div>
+            <div class="seg" id="mode-seg">
+              <span data-mode="live" data-i18n="seg-live">生活</span>
+              <span data-mode="chat" data-i18n="seg-chat">对话</span>
+            </div>
+            <button class="icon-btn warn" id="net-btn" style="display:none" title="">⚠︎⌁</button>
+            <button class="icon-btn" id="drawer-btn" title="">▤</button>
+          </div>
+          <div class="stream" id="stream"><div class="stream-inner" id="stream-inner"></div></div>
+          <div class="composer-wrap">
+            <div class="palette" id="palette"></div>
+            <div class="composer">
+              <button class="cmd-btn" id="cmd-btn">⌘</button>
+              <textarea id="composer-input" rows="1"></textarea>
+              <button class="send" id="send-btn">↑</button>
+            </div>
+          </div>
+        </div>
+        <aside class="drawer" id="drawer">
+          <div class="drawer-tabs" id="drawer-tabs">
+            <span data-p="d-status" class="on" data-i18n="tab-status">状态</span>
+            <span data-p="d-works" data-i18n="tab-works">作品</span>
+            <span data-p="d-memory" data-i18n="tab-memory">记忆</span>
+            <span data-p="d-skills" data-i18n="tab-skills">能力</span>
+            <span data-p="d-terminal" data-i18n="tab-terminal">终端</span>
+            <span data-p="d-gateway" data-i18n="tab-gateway">网关</span>
+          </div>
+          <div class="drawer-pane on" id="d-status"></div>
+          <div class="drawer-pane" id="d-works"></div>
+          <div class="drawer-pane" id="d-memory"></div>
+          <div class="drawer-pane" id="d-skills"></div>
+          <div class="drawer-pane" id="d-terminal"><div class="placeholder-pane" data-i18n="d-term-coming"></div></div>
+          <div class="drawer-pane" id="d-gateway"><div class="placeholder-pane" data-i18n="d-gw-coming"></div></div>
+        </aside>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 首次启动 -->
+<div class="overlay" id="overlay-firstrun">
+  <div class="fr-dots" id="fr-dots"><i class="on"></i><i></i></div>
+  <div id="fr-welcome" style="display:flex;flex-direction:column;align-items:center">
+    <div class="fr-word">LunaMoth</div>
+    <div class="seg fr-langseg" id="fr-langseg">
+      <span data-lang="zh" class="on">中文</span>
+      <span data-lang="en">English</span>
+    </div>
+    <div class="fr-tagline" data-i18n="tagline"></div>
+    <button class="btn primary big stacked" id="fr-try">
+      <span data-i18n="btn-try">尝试默认角色 · 月蛾</span>
+      <small data-i18n="btn-try-sub">LunaMoth · 高尚的数字存在</small>
+    </button>
+    <button class="btn text fr-second" id="fr-create" data-i18n="btn-create">创建我自己的角色</button>
+    <button class="fr-tert" id="fr-import" data-i18n="btn-import">导入角色卡</button>
+  </div>
+  <div id="fr-setup" class="setup-col" style="display:none"></div>
+</div>
+
+<!-- 新角色流程 -->
+<div class="overlay flow-overlay" id="overlay-flow">
+  <div class="flow" id="flow-root"></div>
+</div>
+
+<!-- 模态 -->
+<div class="modal-layer" id="modal-layer"><div class="modal" id="modal-box"></div></div>
+
+<div class="toast-wrap" id="toasts"></div>
+<input type="file" id="file-input" accept=".json,.png" style="display:none">
+
+<script src="i18n.js"></script>
+<script src="rpc.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

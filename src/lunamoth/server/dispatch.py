@@ -123,6 +123,10 @@ class JsonRpcDispatcher:
                 return self._send(rid, params, wants_response)
             elif method == "idle":
                 return self._idle(rid, params, wants_response)
+            elif method == "event":
+                return self._event(rid, params, wants_response)
+            elif method == "greet":
+                result = self._greet(params)
             elif method == "interrupt":
                 result = self._interrupt()
             elif method == "command":
@@ -190,6 +194,24 @@ class JsonRpcDispatcher:
             raise RpcError(-32602, "idle takes no params")
         self._start_stream("idle", rid, wants_response, self.handle.stream_idle)
         return None
+
+    def _event(self, rid: Any, params: dict[str, Any], wants_response: bool) -> None:
+        """A world event turn (e.g. the card's on_attach arrival line)."""
+        self._require_attached()
+        text = params.get("text")
+        if not isinstance(text, str):
+            raise RpcError(-32602, "event.text must be a string")
+        self._start_stream("event", rid, wants_response, lambda: self.handle.stream_event(text))
+        return None
+
+    def _greet(self, params: dict[str, Any]) -> dict[str, bool]:
+        """Commit a card greeting the client displayed (AttachInfo opening='greeting')."""
+        self._require_attached()
+        text = params.get("text")
+        if not isinstance(text, str) or not text:
+            raise RpcError(-32602, "greet.text must be a non-empty string")
+        self.handle.record_greeting(text)
+        return {"ok": True}
 
     def _interrupt(self) -> dict[str, bool]:
         with self._lock:

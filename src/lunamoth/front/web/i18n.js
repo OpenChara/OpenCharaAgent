@@ -1,0 +1,229 @@
+/* UI-chrome i18n. The shell speaks zh/en; a chara's words always stay in the
+   card's own language (language belongs to the card, never a setting). */
+"use strict";
+
+const I18N = {
+  // sidebar / views
+  "nav-charas": ["角色", "Characters"],
+  "nav-deck": ["卡册", "Card deck"],
+  "nav-settings": ["设置", "Settings"],
+  "sort-recent": ["排序：最近活跃", "Sort: recently active"],
+  "sort-created": ["排序：创建时间", "Sort: created"],
+  "search": ["⌕ 搜索", "⌕ Search"],
+  "new-chara": ["＋ 新角色", "＋ New character"],
+  "import": ["导入", "Import"],
+  "new-card": ["＋ 新角色卡", "＋ New card"],
+  "empty-board": ["还没有角色。", "No characters yet."],
+  "meet-luna": ["遇见月蛾", "Meet LunaMoth"],
+  "create-chara": ["创建角色", "Create a character"],
+  // board card
+  "st-working": ["正在工作", "Working"],
+  "st-idle-live": ["在过自己的日子", "Living its own day"],
+  "st-offline": ["离线", "Offline"],
+  "st-new": ["尚未配置", "Not set up yet"],
+  "st-error": ["出了点问题", "Something went wrong"],
+  "go-settings": ["去设置", "Open settings"],
+  "act-sleep": ["休眠", "Put to sleep"],
+  "act-wake-up": ["唤醒", "Wake"],
+  "menu-export": ["导出存档…", "Export archive…"],
+  "menu-delete": ["删除…", "Delete…"],
+  "ago-just": ["刚刚", "just now"],
+  "ago-min": ["分钟前", "min ago"],
+  "ago-hour": ["小时前", "h ago"],
+  "ago-day": ["天前", "d ago"],
+  // chat
+  "seg-live": ["生活", "Live"],
+  "seg-chat": ["对话", "Chat"],
+  "st-listening": ["听着", "Listening"],
+  "st-creating": ["创作中", "Creating"],
+  "st-resting": ["休息", "Resting"],
+  "st-connecting": ["连接中…", "Connecting…"],
+  "net-off-tip": ["网络已断开 · 点击联网", "Network is off · click to connect"],
+  "composer-ph": ["对{name}说点什么…", "Say something to {name}…"],
+  "stop": ["停下", "Stop"],
+  "muse-fold": ["…它自己嘀咕了一会儿", "…murmured to itself for a while"],
+  "worked-steps": ["工作了 {n} 步", "worked {n} steps"],
+  "thinking": ["✶ 思考中…", "✶ thinking…"],
+  // palette
+  "cmd-compact": ["整理记忆（压缩上下文）", "Tidy memory (compact context)"],
+  "cmd-quiet": ["安静一会儿", "Quiet for a while"],
+  "cmd-reasoning": ["想得更深 / 更快", "Think deeper / faster"],
+  "cmd-thinking": ["显示 / 隐藏 TA 的思考", "Show / hide its thinking"],
+  "cmd-net": ["联网 / 断网", "Network on / off"],
+  "cmd-reset": ["重新开始这段关系…", "Start this relationship over…"],
+  "cmd-hint": ["也可以直接输入 / 命令", "You can also type / commands directly"],
+  "reset-confirm": ["清空当前上下文、开启新纪元？完整转录仍会保留在磁盘上。", "Clear the current context and start a new epoch? The full transcript stays on disk."],
+  // drawer
+  "tab-status": ["状态", "Status"],
+  "tab-works": ["作品", "Works"],
+  "tab-memory": ["记忆", "Memory"],
+  "tab-skills": ["能力", "Abilities"],
+  "tab-terminal": ["终端", "Terminal"],
+  "tab-gateway": ["网关", "Gateway"],
+  "d-context": ["上下文", "Context"],
+  "d-tidy": ["整理记忆", "Tidy"],
+  "d-memory": ["记忆", "Memory"],
+  "d-sandbox": ["沙盒", "Sandbox"],
+  "d-net": ["网络", "Network"],
+  "d-net-sub": ["允许访问外部网络", "Allow outside network access"],
+  "d-goals": ["目标", "Goals"],
+  "d-mem-own": ["TA 记下的", "What it remembers"],
+  "d-mem-user": ["关于你", "About you"],
+  "d-empty-mem": ["还没有记忆。", "No memories yet."],
+  "d-empty-works": ["还没有作品。", "Nothing made yet."],
+  "d-empty-goals": ["没有进行中的目标。", "No active goals."],
+  "open-sandbox": ["打开沙盒文件夹", "Open sandbox folder"],
+  "iso-dir": ["▢ 目录", "▢ Directory"],
+  "iso-sandbox": ["◈ 沙盒", "◈ Sandbox"],
+  "iso-docker": ["⬡ 容器", "⬡ Container"],
+  "d-toolpack": ["工具包", "Toolpack"],
+  "d-term-coming": ["操作员终端将在下个版本到来。它直通沙盒（TUI 的 `!`），给专业用户。", "The operator terminal arrives in the next version. It pipes straight into the sandbox (the TUI's `!`)."],
+  "d-gw-coming": ["即将到来：Telegram / Discord / 微信公众号 绑定。全局账号将在 设置·网关 配置。", "Coming soon: Telegram / Discord / WeChat OA bindings. Global accounts will live in Settings · Gateway."],
+  "today": ["今天", "Today"],
+  "yesterday": ["昨天", "Yesterday"],
+  // deck
+  "deck-readonly": ["🔒 只读", "🔒 Read-only"],
+  "deck-draft": ["草稿", "Draft"],
+  "deck-view": ["查看", "View"],
+  "deck-copy": ["复制副本", "Duplicate"],
+  "deck-wake": ["唤醒", "Wake"],
+  "deck-delete-q": ["删除这张卡？", "Delete this card?"],
+  "deck-builtin": ["内置", "built-in"],
+  "card-frozen-by": ["只读 · {names} 的卡", "Read-only · {names}'s card"],
+  // wake sheet
+  "wake-title": ["唤醒「{name}」", "Wake “{name}”"],
+  "wake-sub": ["卡将冻结为只读副本；以下决定 TA 住在哪、用什么思考。", "The card freezes into a read-only copy; these decide where it lives and what it thinks with."],
+  "wake-name": ["名字", "Name"],
+  "wake-model": ["模型", "Model"],
+  "wake-adv": ["高级 ⌄", "Advanced ⌄"],
+  "wake-iso": ["隔离", "Isolation"],
+  "iso-dir-d": ["开放——用你的权限直接行动", "Open — acts with your privileges"],
+  "iso-sandbox-d": ["推荐——写入受限，网络默认关", "Recommended — confined writes, network off"],
+  "iso-docker-d": ["最强隔离，需要 Docker", "Strongest isolation, needs Docker"],
+  "wake-tools": ["能力（卡的期望 · 在此授予）", "Abilities (the card asks · you grant)"],
+  "wake-go": ["唤醒", "Wake"],
+  "wake-no-tools": ["该模型不支持工具调用——TA 将只能交谈，无法行动。", "This model has no tool calling — it can talk but cannot act."],
+  "cancel": ["取消", "Cancel"],
+  // create flow
+  "flow-tell": ["讲述", "Tell"],
+  "flow-shape": ["成形", "Shape"],
+  "flow-card": ["落卡", "Card"],
+  "tell-ph": ["用你自己的话介绍 TA——是谁、什么样的性子、住在怎样的世界、和你是什么关系。想到什么写什么；已有的设定直接粘进来也行。", "Introduce them in your own words — who they are, their temperament, the world they live in, what you are to each other. Write freely; paste existing lore if you have it."],
+  "tell-go": ["整理成卡 ✦", "Shape into a card ✦"],
+  "tell-blank": ["跳过，从空白卡开始", "Skip — start from a blank card"],
+  "tell-star-hint": ["当前默认模型没有 ★ 书写标——转写也能用，但擅长书写的模型会写得更好。", "Your default model has no ★ writing badge — transcription works, but a writing-strong model does it better."],
+  "transcribing": ["正在成形…", "Taking shape…"],
+  "origin-title": ["✎ 你的讲述（原文）", "✎ Your telling (original)"],
+  "origin-cue": ["永远保留 · 点击展开 · 「上一步」可回去继续写", "Always kept · click to expand · “Back” returns to it"],
+  "sec-appearance": ["名字与样貌", "Name & appearance"],
+  "sec-personality": ["性格与声音", "Personality & voice"],
+  "sec-world": ["TA 的世界", "Their world"],
+  "sec-first": ["见面的第一句话", "The first thing they say"],
+  "sec-relation": ["你们的关系", "Your relationship"],
+  "sec-goals": ["TA 想做的事", "What they want to do"],
+  "sec-rules": ["边界与底线", "Boundaries"],
+  "ai-draft": ["AI 稿", "AI draft"],
+  "ai-draft-n": ["AI 稿 v{n}", "AI draft v{n}"],
+  "edited": ["已手改", "hand-edited"],
+  "rewrite": ["换个写法 ↻", "Rewrite ↻"],
+  "revert": ["↺ 回到上一版", "↺ Previous version"],
+  "back": ["‹ 上一步", "‹ Back"],
+  "save-draft": ["保存草稿", "Save draft"],
+  "next-card": ["下一步 · 落卡", "Next · make the card"],
+  "card-made": ["卡已收进卡册。", "The card is in your deck."],
+  "wake-now-q": ["要现在唤醒 TA 吗？", "Wake them now?"],
+  "later-deck": ["先放进卡册", "Keep in the deck for now"],
+  // first run / setup
+  "tagline": ["和你的原创角色一起生活<br>Agentic 角色扮演叙事生成器", "The characters that live with you<br>An agentic character tavern"],
+  "btn-try": ["尝试默认角色 · 月蛾", "Try the default character · LunaMoth"],
+  "btn-try-sub": ["LunaMoth · 高尚的数字存在", "月蛾 · a noble digital being"],
+  "btn-create": ["创建我自己的角色", "Create my own character"],
+  "btn-import": ["导入角色卡（SillyTavern PNG / JSON）", "Import a card (SillyTavern PNG / JSON)"],
+  "setup-title": ["接入模型", "Connect a model"],
+  "setup-sub": ["角色用它思考与行动。钥匙只保存在这台电脑上。", "Your characters think and act with it. The key never leaves this computer."],
+  "rec": ["推荐", "Recommended"],
+  "or-desc": ["一把钥匙，调用所有主流模型", "One key, every major model"],
+  "more-providers": ["更多（本地 · 自定义 OpenAI 兼容端点）⌄", "More (local · custom OpenAI-compatible) ⌄"],
+  "key-ph": ["粘贴 API key…", "Paste your API key…"],
+  "base-ph": ["OpenAI 兼容端点 URL…", "OpenAI-compatible endpoint URL…"],
+  "test": ["测试连接", "Test connection"],
+  "testing": ["正在连接…", "Connecting…"],
+  "connected": ["✓ 已连通", "✓ Connected"],
+  "default-model": ["默认模型", "Default model"],
+  "cap-tool": ["工具调用 ✓", "Tool calling ✓"],
+  "cap-tool-no": ["工具调用 ✗", "Tool calling ✗"],
+  "cap-write": ["书写 ★", "Writing ★"],
+  "cap-mm": ["多模态 · 本版未启用", "Multimodal · not in this version"],
+  "cap-hint": ["角色要能动手，模型必须支持工具调用；角色卡转写会偏好 ★ 擅长书写的模型。", "To act, a character's model must support tool calling; card transcription prefers ★ writing-strong models."],
+  "later": ["稍后再说", "Later"],
+  "continue": ["继续", "Continue"],
+  "err-auth": ["key 无效或无权限", "Invalid key or no access"],
+  "err-credit": ["余额不足", "Out of credit"],
+  "err-network": ["网络不可达", "Network unreachable"],
+  "err-model": ["找不到这个模型", "Model not found"],
+  "err-ratelimit": ["请求太频繁，稍后再试", "Rate limited — try again shortly"],
+  "err-provider": ["连接模型失败", "Could not reach the model"],
+  // settings
+  "set-model": ["模型", "Model"],
+  "set-general": ["通用", "General"],
+  "set-gateway": ["网关", "Gateway"],
+  "set-advanced": ["高级", "Advanced"],
+  "set-about": ["关于", "About"],
+  "set-appearance": ["外观", "Appearance"],
+  "th-system": ["跟随系统", "System"],
+  "th-light": ["浅色", "Light"],
+  "th-dark": ["深色", "Dark"],
+  "set-uilang": ["界面语言", "Interface language"],
+  "set-uilang-sub": ["只影响机壳文案；角色的语言永远属于卡", "Shell text only; a character's language always belongs to its card"],
+  "set-data": ["数据位置", "Data location"],
+  "set-reveal": ["在访达中显示", "Reveal in Finder"],
+  "set-gw-sub": ["全局消息平台账号（Telegram / Discord / 微信公众号）将在这里点亮；每个角色的绑定在其抽屉「网关」页。", "Global messaging accounts (Telegram / Discord / WeChat OA) will light up here; per-character bindings live in each drawer's Gateway tab."],
+  "about-text": ["一座安静的居所：角色在里面持续地生活、创作、记忆。", "A quiet dwelling where characters keep living, making, remembering."],
+  // delete
+  "del-title": ["删除「{name}」", "Delete “{name}”"],
+  "del-sub": ["这是不可撤销的。删除将：", "This cannot be undone. Deleting will:"],
+  "del-1": ["立即停止运行", "Stop it immediately"],
+  "del-2": ["清空沙盒——TA 的全部作品将被删除", "Wipe the sandbox — everything it made is deleted"],
+  "del-3": ["删除记忆、技能与目标", "Delete memories, skills and goals"],
+  "del-4": ["删除全部对话转录", "Delete the entire transcript"],
+  "del-soften": ["{name} 的角色卡仍保留在卡册中，可以再次唤醒——但那将是一段新的生命。", "{name}'s card stays in your deck and can be woken again — but that will be a new life."],
+  "del-export": ["先导出完整存档…", "Export a full archive first…"],
+  "del-ph": ["输入「删除 {name}」以确认", "Type “delete {name}” to confirm"],
+  "del-word": ["删除", "delete"],
+  "del-go": ["删除", "Delete"],
+  // misc
+  "exported": ["已导出到 {path}", "Exported to {path}"],
+  "imported": ["已导入 {name}", "Imported {name}"],
+  "copied": ["副本已放进卡册", "Duplicate added to the deck"],
+  "saved": ["已保存", "Saved"],
+  "need-model": ["先接入模型", "Connect a model first"],
+  "conn-lost": ["连接断开，正在重连…", "Connection lost — reconnecting…"],
+};
+
+let _lang = "zh";
+
+function setLangCode(code) {
+  _lang = code === "en" ? "en" : "zh";
+  document.documentElement.lang = _lang === "zh" ? "zh-CN" : "en";
+  try { localStorage.setItem("lm-lang", _lang); } catch (e) { /* private mode */ }
+  applyI18n();
+}
+
+function getLangCode() { return _lang; }
+
+function t(key, vars) {
+  const pair = I18N[key];
+  let s = pair ? pair[_lang === "en" ? 1 : 0] : key;
+  if (vars) for (const k of Object.keys(vars)) s = s.replaceAll(`{${k}}`, String(vars[k]));
+  return s;
+}
+
+function applyI18n(root) {
+  (root || document).querySelectorAll("[data-i18n]").forEach((el) => {
+    el.innerHTML = t(el.dataset.i18n);
+  });
+  (root || document).querySelectorAll("[data-i18n-ph]").forEach((el) => {
+    el.placeholder = t(el.dataset.i18nPh);
+  });
+  document.dispatchEvent(new CustomEvent("lm-lang-changed"));
+}
