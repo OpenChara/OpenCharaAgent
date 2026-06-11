@@ -6,11 +6,11 @@ import sys
 import time
 from dataclasses import dataclass
 
-from ..core.agent import LunaMothAgent
-from ..session.cleanup import clean_runtime_sandbox
+from ..content.themes import LUNAMOTH_BANNER
 from ..presence import normalize_mode
 from ..protocol import Notice, TextDelta, ToolEnd
-from ..content.themes import LUNAMOTH_BANNER
+from ..protocol.api import CharaHandle
+from ..session.cleanup import clean_runtime_sandbox
 
 BANNER = (
     LUNAMOTH_BANNER
@@ -123,53 +123,38 @@ def main(argv: list[str] | None = None) -> int:
         os.environ['LUNAMOTH_DEBUG'] = '1'  # picked up by setup_logging in the agent
 
     patience = float(args.patience)
-    agent = LunaMothAgent()
-    session = agent.make_session()
-    name = agent.char_name()
+    # Presence: interactive terminal = operator attached; detached daemon
+    # (stdin is /dev/null, started by `lunamoth start`) = operator away. The
+    # handle does the presence/handoff bookkeeping on attach.
+    interactive = sys.stdin.isatty()
+    handle = CharaHandle()
+    if interactive:
+        handle.set_permission_hook(_stdin_permission_hook)
+    info = handle.attach(present=interactive)
+    name = info.char_name
     reply_pfx, think_pfx = f"{name}> ", f"{name}~ "
 
-    # Presence: interactive terminal = operator attached; detached daemon
-    # (stdin is /dev/null, started by `lunamoth start`) = operator away.
-    interactive = sys.stdin.isatty()
-    mode = normalize_mode(args.mode or ("chat" if args.no_think else "") or agent.settings.mode)
+    mode = normalize_mode(args.mode or ("chat" if args.no_think else "") or info.mode)
     # The daemon always lives on its own; while attached, only live mode self-runs.
     state = TerminalState(eternal=(not interactive) or mode == "live")
-    restored = bool(session.context.messages)  # transcript reloaded by make_session
-    if not interactive:
-        agent.state.set_present(False)
-        # Adopt the chara: if the detaching TUI queued a departure line, the loop
-        # continues *knowing* the operator left (permission requests auto-deny).
-        # The line is usually already in the restored transcript — don't duplicate.
-        handoff = agent.presence.pop_event()
-        recent = session.context.messages[-3:]
-        if handoff and not any(m.get("role") == "system" and m.get("content") == handoff for m in recent):
-            session.context.add("system", handoff)
-        print(BANNER)
-    else:
-        agent.state.set_present(True)
-        agent.presence.pop_event()  # discard any stale handoff — we're here now
-        agent.tools.permission_hook = _stdin_permission_hook
-
-        print(BANNER)
+    restored = bool(info.restored)  # transcript reloaded on attach
+    print(BANNER)
+    if interactive:
         if restored:
-            print(f"[restored {len(session.context.messages)} message(s) from the transcript]", flush=True)
-        greeting = agent.greeting()
-        first = agent.presence.first_meeting() and not restored
-        enter = agent.attach_event_text()
-        agent.presence.mark_met()
-        if greeting and first:
+            print(f"[restored {len(info.restored)} message(s) from the transcript]", flush=True)
+        if info.greeting and info.first_meeting:
             # SillyTavern first_mes: the card's designed opener for a first meeting.
-            print(f"{reply_pfx}{greeting}", flush=True)
-            session.context.add("assistant", greeting)
-        elif enter:
+            print(f"{reply_pfx}{info.greeting}", flush=True)
+            handle.record_greeting(info.greeting)
+        elif info.attach_text:
             # The card's on_attach prompt: a live arrival turn.
-            _stream_with_interrupt(reply_pfx, agent.stream_event(enter, session), allow_interrupt=False)
-        elif greeting and not restored:
-            print(f"{reply_pfx}{greeting}", flush=True)
-            session.context.add("assistant", greeting)
+            _stream_with_interrupt(reply_pfx, handle.stream_event(info.attach_text), allow_interrupt=False)
+        elif info.greeting and not restored:
+            print(f"{reply_pfx}{info.greeting}", flush=True)
+            handle.record_greeting(info.greeting)
         elif not restored:
-            probe = "你是谁？只用一句话回答。" if agent.lang == "zh" else "Who are you? Answer in one sentence."
-            _stream_with_interrupt(reply_pfx, agent.stream_handle(probe, session), allow_interrupt=False)
+            probe = "你是谁？只用一句话回答。" if info.lang == "zh" else "Who are you? Answer in one sentence."
+            _stream_with_interrupt(reply_pfx, handle.stream_user(probe), allow_interrupt=False)
     pending_line: str | None = None
     if interactive:
         _prompt()
@@ -215,10 +200,17 @@ def main(argv: list[str] | None = None) -> int:
                     _prompt()
                     continue
                 if stripped == '/help':
-                    print('/status /memory /memory_path /files /read <file> /write <file> <text> /logs /reset /toggle_think /pause_think /resume_think /set_patience <sec> /exit')
+                    print("\n".join(f"{c.usage:<34} {c.help}" for c in handle.commands()))
+                    print('plain-terminal extras: /toggle_think /pause_think /resume_think /set_patience <sec> /exit')
                     _prompt()
                     continue
-                _, interrupt = _stream_with_interrupt(reply_pfx, agent.stream_handle(line, session), allow_interrupt=True)
+                if stripped.startswith('/'):
+                    # Backend commands run through the shared registry — same
+                    # behavior and help text as every other frontend.
+                    print(handle.command(stripped).text, flush=True)
+                    _prompt()
+                    continue
+                _, interrupt = _stream_with_interrupt(reply_pfx, handle.stream_user(line), allow_interrupt=True)
                 if interrupt is not None:
                     pending_line = interrupt
                     continue
@@ -228,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
 
             if state.eternal:
                 print("\n\x1b[2m· idle ·\x1b[0m", flush=True)
-                _, interrupt = _stream_with_interrupt(think_pfx, agent.stream_think(session), allow_interrupt=True)
+                _, interrupt = _stream_with_interrupt(think_pfx, handle.stream_idle(), allow_interrupt=True)
                 if interrupt is not None:
                     pending_line = interrupt
                     continue
@@ -241,8 +233,7 @@ def main(argv: list[str] | None = None) -> int:
         print('\n[interrupted]')
     finally:
         if interactive:
-            agent.note_detach(session)
-            agent.state.set_present(False)
+            handle.detach()
         if args.clean_on_exit:
             try:
                 clean_runtime_sandbox(clear_memory=True)

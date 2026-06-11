@@ -70,12 +70,25 @@ def test_ui_libraries_only_in_front():
         assert not bad, f"{path} imports {bad} — UI libraries live in front/ only"
 
 
-def test_protocol_has_zero_internal_dependencies():
+def test_protocol_events_and_codec_are_pure():
+    """events.py/codec.py are the wire contract: zero internal deps, trivially
+    serializable. api.py (CharaHandle) is the in-process implementation and MAY
+    reach into the backend — that's its whole job."""
     for package, path in _modules():
-        if package != "protocol":
+        if package != "protocol" or path.name in {"api.py"}:
             continue
         bad = [t for t in _internal_imports(path, package) if t != "protocol"]
-        assert not bad, f"{path} imports {bad} — protocol/ must stay a pure contract"
+        assert not bad, f"{path} imports {bad} — the wire contract must stay pure"
+
+
+def test_front_reaches_backend_only_through_protocol():
+    """Frontends hold a CharaHandle and nothing deeper: no core/, no tools/.
+    (content/session/presence/obs/config are data+infra and stay importable.)"""
+    for package, path in _modules():
+        if package != "front":
+            continue
+        bad = sorted(set(_internal_imports(path, package)) & {"core", "tools"})
+        assert not bad, f"{path} imports {bad} — frontends go through protocol/ (CharaHandle)"
 
 
 def test_obs_imports_only_config():

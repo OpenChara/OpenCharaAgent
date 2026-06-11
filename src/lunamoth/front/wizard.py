@@ -75,13 +75,13 @@ def _choose_character(settings: Settings) -> None:
 
 
 def _test(settings: Settings) -> bool:
-    from ..core.llm import LLMClient
+    from ..protocol.api import test_connection
 
     if not settings.is_live():
         _say("  (offline/mock provider — nothing to test)")
         return True
     _say("  testing connection ...")
-    ok, msg = LLMClient(settings.to_llm_config()).test_connection()
+    ok, msg = test_connection(settings)
     _say(f"  {'✓' if ok else '✗'} {msg}")
     return ok
 

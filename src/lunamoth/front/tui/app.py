@@ -1,3 +1,10 @@
+"""The split TUI: character stream / operator console / spotlight panel.
+
+The app holds a CharaHandle and NOTHING deeper — streams come out as protocol
+events (rendered in _handle_event), /commands go through the shared registry,
+telemetry reads StateSnapshot. The backend's internals are invisible here,
+which is exactly what lets a web/desktop client replace this file later.
+"""
 from __future__ import annotations
 
 import argparse
@@ -9,375 +16,37 @@ import threading
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Iterable
 
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.screen import Screen
 from textual.suggester import SuggestFromList
 from textual.widgets import (
-    Button, ContentSwitcher, DirectoryTree, Footer, Header, Input, Label, RichLog, Select, Static,
+    ContentSwitcher, DirectoryTree, Footer, Header, Input, RichLog, Static,
 )
 
-# Console commands, used both for inline autocomplete (ghost text) and the visible
-# suggestion line under the input.
-SLASH_COMMANDS = [
-    "/help", "/status", "/memory", "/memory_path", "/files", "/workspace",
-    "/read", "/wread", "/write", "/logs", "/reset",
-    "/goal", "/goal done", "/goal drop", "/skills", "/mcp",
-    "/mode live", "/mode chat", "/patience", "/reasoning", "/thinking on", "/thinking off",
-    "/theme", "/net on", "/net off",
-    "/allow-dir", "/panel", "/settings", "/clear", "/exit",
-]
-
-from . import art
-from ..core.agent import LunaMothAgent
-from ..session.cleanup import clean_runtime_sandbox
-from ..obs import broker, get_logger
-from ..core.context import estimate_tokens
-from ..config import ROOT
-from ..core.llm import LLMClient
-from ..presence import MODES, normalize_mode
-from ..protocol import Notice, TextDelta, ThinkDelta, ToolEnd, ToolStart
-from ..tools.runner import run_terminal
-from ..session.settings import PRESETS, Settings, config_path, load_settings, save_settings
-from ..content.themes import TuiTheme, load_theme
+from ...content.themes import load_theme
+from ...obs import broker, get_logger
+from ...presence import normalize_mode
+from ...protocol import Notice, TextDelta, ThinkDelta, ToolEnd, ToolStart
+from ...protocol.api import CharaHandle, estimate_tokens
+from ...session.cleanup import clean_runtime_sandbox
+from ...session.settings import config_path, load_settings, save_settings
+from .welcome import WelcomeScreen, _discover
 
 _log = get_logger("tui")
 
-
-def _st_dir() -> Path | None:
-    # External scanning is OPT-IN. By default we only look inside the project folder
-    # (no links outside it). Set LUNAMOTH_ST_DIR to also scan a SillyTavern data dir.
-    d = os.getenv("LUNAMOTH_ST_DIR", os.getenv("LUNAMOSS_ST_DIR", "")).strip()
-    if not d:
-        return None
-    p = Path(d).expanduser()
-    return p if p.exists() else None
-
-
-def _discover(subdir: str, suffixes: tuple[str, ...]) -> list[tuple[str, str]]:
-    """Find persona files in the project dir (and an opt-in external SillyTavern dir)."""
-    out: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    bases = [(ROOT / subdir, "")]
-    st = _st_dir()
-    if st:
-        bases.append((st / subdir, " [ST]"))
-    for base, tag in bases:
-        if not base.exists():
-            continue
-        for p in sorted(base.iterdir()):
-            if p.is_file() and p.suffix.lower() in suffixes and not p.name.startswith("."):
-                rp = str(p.resolve())
-                if rp in seen:
-                    continue
-                seen.add(rp)
-                out.append((p.stem + tag, rp))
-    return out
-
-
-def _picker_options(discovered: list[tuple[str, str]], current: str, blank_label: str) -> list[tuple[str, str]]:
-    options = [(blank_label, "")] + discovered
-    cur = (current or "").strip()
-    if cur and cur not in {v for _, v in options}:
-        options.append((Path(cur).name + " (configured)", cur))
-    return options
+# Frontend-only commands; backend ones are appended from the registry at boot.
+_FRONT_COMMANDS = [
+    "/help", "/panel", "/theme", "/patience", "/settings", "/clear", "/exit",
+    "/mode live", "/mode chat", "/thinking on", "/thinking off", "/net on", "/net off",
+]
 
 
 @dataclass
 class StreamJob:
     kind: str
     text: str | None = None
-
-
-def _preset_for(settings: Settings) -> str:
-    for name, preset in PRESETS.items():
-        if preset.get("provider") == settings.provider and preset.get("base_url", "") == settings.base_url:
-            return name
-    return "Custom"
-
-
-class WelcomeScreen(Screen):
-    """Welcome / boot screen: pick a provider, set the API, then enter.
-
-    Dismisses with the chosen Settings, or None if the operator backs out.
-    """
-
-    CSS = """
-    WelcomeScreen {
-        align: center middle;
-        background: #050505;
-    }
-    #welcome {
-        width: 84;
-        height: auto;
-        max-height: 90%;
-        border: heavy #2f5468;
-        background: #0a0a0a;
-        padding: 1 2;
-    }
-    #banner {
-        width: auto;
-        content-align: center middle;
-    }
-    #title {
-        color: #9fd9ff;
-        text-style: bold italic;
-        margin-top: 1;
-        content-align: center middle;
-        width: 100%;
-    }
-    #lore {
-        color: #888888;
-        margin-bottom: 1;
-    }
-    .field-label {
-        color: #6db8e8;
-        margin-top: 1;
-    }
-    #conn_status {
-        margin-top: 1;
-        height: auto;
-        color: #d8d8d8;
-    }
-    #welcome-buttons {
-        height: auto;
-        margin-top: 1;
-    }
-    #welcome-buttons Button {
-        margin-right: 2;
-    }
-    Input { background: #050505; }
-    """
-
-    def __init__(self, settings: Settings, mid_session: bool = False):
-        super().__init__()
-        self.draft = replace(settings)
-        self.mid_session = mid_session
-        self.skin = load_theme(settings.tui_theme_path)
-
-    def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
-        with VerticalScroll(id="welcome"):
-            yield Static(art.wordmark(compact=True), id="banner")
-            yield Static(self.skin.subtitle, id="title")
-            yield Static(
-                "Pick a model and a character, then enter. Choosing a character fills in its "
-                "world / tools / limits — change them below if you like. Language follows the card.",
-                id="lore",
-            )
-            yield Label("Provider preset", classes="field-label")
-            options = [(name, name) for name in PRESETS] + [("Custom", "Custom")]
-            yield Select(options, value=_preset_for(self.draft), allow_blank=False, id="preset")
-            yield Label("Base URL", classes="field-label")
-            yield Input(self.draft.base_url, placeholder="https://openrouter.ai/api/v1", id="base_url")
-            yield Label("API key", classes="field-label")
-            yield Input(self.draft.api_key, placeholder="sk-or-... (blank for local/mock)", password=True, id="api_key")
-            yield Label("Model", classes="field-label")
-            yield Input(self.draft.model, placeholder="meta-llama/llama-3.3-70b-instruct", id="model")
-            with Horizontal():
-                with Vertical():
-                    yield Label("Temperature", classes="field-label")
-                    yield Input(str(self.draft.temperature), id="temperature")
-                with Vertical():
-                    yield Label("Max tokens", classes="field-label")
-                    yield Input(str(self.draft.max_tokens), id="max_tokens")
-            chars = _discover("characters", (".png", ".json"))
-            worlds = _discover("worlds", (".json",))
-            yield Label("Character card (persona)", classes="field-label")
-            yield Select(
-                _picker_options(chars, self.draft.character_path, "(default · LunaMoth 月蛾)"),
-                value=self.draft.character_path or "",
-                allow_blank=False,
-                id="character",
-            )
-            yield Label("World book (optional)", classes="field-label")
-            yield Select(
-                _picker_options(worlds, self.draft.world_path, "(auto · pairs with default character)"),
-                value=self.draft.world_path or "",
-                allow_blank=False,
-                id="world",
-            )
-            yield Label("Tool pack (capabilities)", classes="field-label")
-            packs = _discover("toolpacks", (".json",))
-            pack_options = [("(none / pure roleplay)", "")] + [(stem, stem) for stem, _ in packs]
-            cur_pack = (self.draft.toolpack or "").strip()
-            if cur_pack and cur_pack not in {v for _, v in pack_options}:
-                pack_options.append((cur_pack, cur_pack))
-            yield Select(pack_options, value=self.draft.toolpack or "", allow_blank=False, id="toolpack")
-            # Context window is the model's real window (read from the provider),
-            # not a knob. Only durable-memory size is tunable here.
-            yield Label("Memory chars (0 = card default)", classes="field-label")
-            yield Input(str(self.draft.memory_chars), id="memory_chars")
-            themes = _discover("themes", (".json",))
-            yield Label("TUI theme (cosmetic skin)", classes="field-label")
-            yield Select(
-                _picker_options(themes, self.draft.tui_theme_path, "(default · LunaMoth 月蛾)"),
-                value=self.draft.tui_theme_path or "",
-                allow_blank=False,
-                id="theme",
-            )
-            yield Label("Your name ({{user}})", classes="field-label")
-            yield Input(self.draft.user_name, id="user_name")
-            yield Static("", id="conn_status")
-            with Horizontal(id="welcome-buttons"):
-                yield Button("Test connection", id="test", variant="primary")
-                enter_label = "Apply & resume" if self.mid_session else "Enter"
-                yield Button(enter_label, id="enter", variant="success")
-                if self.mid_session:
-                    yield Button("Cancel", id="cancel")
-        yield Footer()
-
-    def on_mount(self) -> None:
-        self._paint_theme(self.skin)
-        self.query_one("#base_url", Input).focus()
-
-    def _paint_theme(self, t: TuiTheme) -> None:
-        self.query_one("#welcome").styles.border = ("heavy", t.display_border)
-        self.query_one("#banner", Static).styles.color = t.display_title_color
-        self.query_one("#title", Static).styles.color = t.accent
-
-    def _collect(self) -> Settings:
-        def _txt(wid: str) -> str:
-            return self.query_one(f"#{wid}", Input).value.strip()
-
-        try:
-            temperature = float(_txt("temperature"))
-        except ValueError:
-            temperature = self.draft.temperature
-        try:
-            max_tokens = int(_txt("max_tokens"))
-        except ValueError:
-            max_tokens = self.draft.max_tokens
-        try:
-            memory_chars = int(_txt("memory_chars"))
-        except ValueError:
-            memory_chars = self.draft.memory_chars
-        character = self.query_one("#character", Select).value
-        world = self.query_one("#world", Select).value
-        theme = self.query_one("#theme", Select).value
-        toolpack = self.query_one("#toolpack", Select).value
-        self.draft = replace(
-            self.draft,
-            base_url=_txt("base_url"),
-            api_key=_txt("api_key"),
-            model=_txt("model"),
-            temperature=temperature,
-            max_tokens=max_tokens,
-            memory_chars=memory_chars,
-            character_path=character if isinstance(character, str) else "",
-            world_path=world if isinstance(world, str) else "",
-            tui_theme_path=theme if isinstance(theme, str) else "",
-            toolpack=toolpack if isinstance(toolpack, str) else "",
-            user_name=_txt("user_name") or self.draft.user_name,
-        )
-        return self.draft
-
-    def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.id == "theme":
-            # Live-preview the chosen skin's banner/colors right in the welcome screen.
-            path = event.value if isinstance(event.value, str) else ""
-            self.skin = load_theme(path)
-            self.query_one("#title", Static).update(self.skin.subtitle)
-            self._paint_theme(self.skin)
-            return
-        if event.select.id == "character":
-            self._prefill_from_character(event.value if isinstance(event.value, str) else "")
-            return
-        if event.select.id != "preset":
-            return
-        name = event.value
-        if name == "Custom" or name not in PRESETS:
-            # Custom: keep current fields, but ensure a live provider so a pasted endpoint works.
-            if self.draft.provider == "mock":
-                self.draft = replace(self.draft, provider="openai_compatible")
-            return
-        preset = PRESETS[name]
-        self.draft = replace(
-            self.draft,
-            provider=preset.get("provider", self.draft.provider),
-            base_url=preset.get("base_url", ""),
-            api_key=preset.get("api_key", self.draft.api_key),
-            model=preset.get("model", self.draft.model),
-        )
-        self.query_one("#base_url", Input).value = self.draft.base_url
-        self.query_one("#api_key", Input).value = self.draft.api_key
-        self.query_one("#model", Input).value = self.draft.model
-
-    def _prefill_from_character(self, char_path: str) -> None:
-        """Pick a character → pre-fill its declared world / tool pack / limits.
-
-        The fields stay editable, so this is "here are the card's defaults, change
-        them if you want" rather than a hard binding. Empty path = bundled default.
-        """
-        from ..content.cards import CharacterCard
-        from ..content.persona import default_character_path, default_world_path
-
-        path = char_path or (str(default_character_path() or ""))
-        if not path:
-            return
-        try:
-            card = CharacterCard.load(path)
-        except Exception:
-            return
-        defaults = card.defaults()
-        # World: card's declared default, else same-language bundled world for the default char.
-        world = str(defaults.get("world", ""))
-        if world and not Path(world).is_absolute():
-            world = str(ROOT / world)
-        if not world and not char_path:
-            dw = default_world_path(card.language)
-            world = str(dw) if dw else ""
-        self._set_select("#world", world)
-        self._set_select("#toolpack", str(defaults.get("toolpack", "") or ""))
-        if defaults.get("memory_chars"):
-            self.query_one("#memory_chars", Input).value = str(int(defaults["memory_chars"]))
-        lang_label = "中文" if card.language == "zh" else "English"
-        self.query_one("#conn_status", Static).update(
-            f"[#9fd9ff]Loaded {card.name}'s defaults · language: {lang_label}. Adjust below if you like.[/]"
-        )
-
-    def _set_select(self, selector: str, value: str) -> None:
-        """Set a Select to value; silently ignore if it isn't an available option.
-
-        Bundled cards reference worlds/toolpacks that are already in the scanned
-        lists, so this just works. Exotic imported cards can be set manually.
-        """
-        sel = self.query_one(selector, Select)
-        try:
-            sel.value = value or ""  # "" is the explicit blank option on these selects
-        except Exception:
-            pass
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "test":
-            self._run_test()
-        elif event.button.id == "enter":
-            self.dismiss(self._collect())
-        elif event.button.id == "cancel":
-            self.dismiss(None)
-
-    def _run_test(self) -> None:
-        settings = self._collect()
-        status = self.query_one("#conn_status", Static)
-        if not settings.is_live():
-            status.update("[#ffaa00]Offline/mock provider — nothing to test. Just enter.[/]")
-            return
-        status.update("[#888888]Testing connection…[/]")
-
-        def work() -> None:
-            client = LLMClient(settings.to_llm_config())
-            ok, msg = client.test_connection()
-            self.app.call_from_thread(self._show_result, ok, msg)
-
-        threading.Thread(target=work, daemon=True).start()
-
-    def _show_result(self, ok: bool, msg: str) -> None:
-        color = "#00ff66" if ok else "#ff4040"
-        mark = "✓" if ok else "✗"
-        self.query_one("#conn_status", Static).update(f"[{color}]{mark} {msg}[/]")
 
 
 class LunaMothTUI(App):
@@ -474,7 +143,7 @@ class LunaMothTUI(App):
         height: auto;
         color: #8fae8f;
     }
-    #memfull, #helptext, #outtext, #filepreview {
+    #memfull, #helptext, #outtext, #logtext, #filepreview {
         height: auto;
     }
     #view-term {
@@ -530,8 +199,11 @@ class LunaMothTUI(App):
         # attends to you only). Per-chara persisted; a CLI flag may override.
         self.mode = normalize_mode(mode_override or self.settings.mode)
         self.skin = load_theme(self.settings.tui_theme_path)
-        self.agent = LunaMothAgent(self.settings)
-        self.session = self.agent.make_session()
+        self.handle = CharaHandle(self.settings)
+        self.char_name = self.handle.snapshot().char_name
+        self.slash_commands = sorted(set(
+            _FRONT_COMMANDS + [f"/{c.name}" for c in self.handle.commands()]
+        ))
         self.output: "queue.Queue[tuple[str, object]]" = queue.Queue()
         self.current_thread: threading.Thread | None = None
         self.interrupt_event = threading.Event()
@@ -559,7 +231,7 @@ class LunaMothTUI(App):
         self._perm_pending: str | None = None
         self._perm_answer = False
         self._perm_event = threading.Event()
-        self.agent.tools.permission_hook = self._permission_request
+        self.handle.set_permission_hook(self._permission_request)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -577,7 +249,7 @@ class LunaMothTUI(App):
                     yield Input(
                         placeholder="operator console — talk to your character, or /help",
                         id="input",
-                        suggester=SuggestFromList(SLASH_COMMANDS, case_sensitive=False),
+                        suggester=SuggestFromList(self.slash_commands, case_sensitive=False),
                     )
             # Right 1/4: the spotlight panel — one frame, many views, no input.
             with Vertical(id="sidebar"):
@@ -595,7 +267,7 @@ class LunaMothTUI(App):
                         yield Static("", id="logtext")
                     yield RichLog(id="view-term", wrap=True, auto_scroll=True, markup=False)
                     with Vertical(id="view-files"):
-                        yield DirectoryTree(str(self.agent.sandbox.root), id="filetree")
+                        yield DirectoryTree(self.handle.snapshot().sandbox_root, id="filetree")
                         with VerticalScroll(id="preview-scroll"):
                             yield Static("", id="filepreview")
         yield Footer()
@@ -670,16 +342,14 @@ class LunaMothTUI(App):
         sb.styles.border_title_color = t.accent
         sb.border_title = self.PANEL_TITLES.get(self._panel_view(), "") or t.sidebar_title
 
-    def _welcome_done(self, result: Settings | None) -> None:
+    def _welcome_done(self, result) -> None:
         if result is not None:
             theme_changed = result.tui_theme_path != self.settings.tui_theme_path
             self.settings = result
             save_settings(result)
-            self.agent.reconfigure(result)
+            self.handle.reconfigure(result)
             self.mode = normalize_mode(result.mode)
             self.show_thinking = bool(result.show_thinking)
-            # Re-apply the (possibly new) context limit to the live session.
-            self.session.context.max_tokens = self.agent.context_limit()
             self.skin = load_theme(result.tui_theme_path)
             self._apply_theme()
             if theme_changed:
@@ -687,10 +357,11 @@ class LunaMothTUI(App):
                 # console reflects the newly selected theme (fixes the "still cute" leak).
                 self.console_log.clear()
                 self._write_banner()
-            persona = self.agent.char_name()
+            snap = self.handle.snapshot(fresh=True)
+            self.char_name = snap.char_name
             self._console(
-                f"online · persona={persona} · theme={self.skin.name} · "
-                f"provider={result.provider} · model={result.model} · ctx={self.agent.context_limit()}",
+                f"online · persona={snap.char_name} · theme={self.skin.name} · "
+                f"provider={snap.provider} · model={snap.model} · ctx={snap.context_max}",
                 "grey50",
             )
         if not self._session_started:
@@ -706,44 +377,40 @@ class LunaMothTUI(App):
         self.set_interval(0.06, self._flush_display)  # ~16fps repaint of the top pane
         self.set_interval(0.1, self._scheduler_tick)
         self.next_spont_at = time.monotonic() + 0.2
-        # Presence: the chara now has an operator attached.
-        self.agent.state.set_present(True)
-        self.agent.presence.pop_event()  # discard any stale handoff line — we're here now
+        # Presence: the chara now has an operator attached (the handle does the
+        # transcript restore + handoff bookkeeping).
+        info = self.handle.attach(present=True)
+        self.char_name = info.char_name
         # Attach grace (live mode): after greeting, leave the operator room for the
         # first word; if they stay silent the chara simply returns to its work.
         self.grace_until = time.monotonic() + max(30.0, 2 * self.patience)
         self._update_status()
-        name = self.agent.char_name()
-        restored = bool(self.session.context.messages)
-        self._render_restored_tail(name)
-        greeting = self.agent.greeting()
-        first = self.agent.presence.first_meeting() and not restored
-        enter = self.agent.attach_event_text()
-        self.agent.presence.mark_met()
-        if greeting and first:
+        restored = bool(info.restored)
+        self._render_restored_tail(info.char_name, info.restored)
+        if info.greeting and info.first_meeting:
             # SillyTavern first_mes: the card's designed opener for a first meeting.
-            self._append_display(f"{self.skin.reply_pfx(name)}{greeting}\n")
-            self.session.context.add("assistant", greeting)
+            self._append_display(f"{self.skin.reply_pfx(info.char_name)}{info.greeting}\n")
+            self.handle.record_greeting(info.greeting)
             self.next_spont_at = time.monotonic() + self.patience
-        elif enter:
+        elif info.attach_text:
             # The card's on_attach prompt: a live arrival turn — the chara reacts
             # to the operator coming back.
-            self._start_stream(StreamJob(kind="event", text=enter), prefix=self.skin.reply_pfx(name))
-        elif greeting and not restored:
+            self._start_stream(StreamJob(kind="event", text=info.attach_text),
+                               prefix=self.skin.reply_pfx(info.char_name))
+        elif info.greeting and not restored:
             # Card without an arrival prompt, fresh session: fall back to first_mes.
-            self._append_display(f"{self.skin.reply_pfx(name)}{greeting}\n")
-            self.session.context.add("assistant", greeting)
+            self._append_display(f"{self.skin.reply_pfx(info.char_name)}{info.greeting}\n")
+            self.handle.record_greeting(info.greeting)
             self.next_spont_at = time.monotonic() + self.patience
         elif not restored:
-            probe = "你是谁？只用一句话回答。" if self.agent.lang == "zh" else "Who are you? Answer in one sentence."
-            self._start_stream(StreamJob(kind="user", text=probe), prefix=self.skin.reply_pfx(name))
+            probe = "你是谁？只用一句话回答。" if info.lang == "zh" else "Who are you? Answer in one sentence."
+            self._start_stream(StreamJob(kind="user", text=probe), prefix=self.skin.reply_pfx(info.char_name))
         # Restored history with no arrival prompt: continue silently — the
         # restored tail above already says where things left off.
 
-    def _render_restored_tail(self, name: str, max_lines: int = 8) -> None:
+    def _render_restored_tail(self, name: str, rows, max_lines: int = 8) -> None:
         """Show the tail of the restored transcript so the operator sees what
         happened while they were away (the full history is on disk)."""
-        rows = self.session.context.messages
         if not rows:
             return
         # Tool plumbing is noise in a recap — show prose plus a compact tool mark.
@@ -801,25 +468,24 @@ class LunaMothTUI(App):
         self.input.focus()
 
     def _render_memory_view(self) -> None:
-        store = self.agent.memory
-        mem_used = store.chars("memory")
-        cap = store.limits.memory_chars or 1
-        rendered = store.render()
+        snap = self.handle.snapshot()
         t = Text()
         t.append("DURABLE MEMORY\n", style=f"bold {self.skin.accent}")
-        t.append(self._bar(mem_used / cap, color=self.skin.gauge_memory))
-        t.append(f"\nmemory {store.usage('memory')} · user {store.usage('user')} · {store.root}\n\n", style="grey50")
-        t.append(rendered if rendered.strip() else "(empty — the chara curates this via the `memory` tool)", style="grey85")
+        t.append(self._bar(snap.memory_chars / snap.memory_max, color=self.skin.gauge_memory))
+        t.append(f"\n{snap.memory_chars} / {snap.memory_max} chars · {snap.memory_path}\n\n", style="grey50")
+        t.append(
+            snap.memory_text if snap.memory_text.strip()
+            else "(empty — the chara curates this via the `memory` tool)",
+            style="grey85",
+        )
         self.memfull.update(t)
 
     def _render_log_view(self) -> None:
         """Recent diagnostics from the in-memory ring (files: sandbox/logs/)."""
-        from ..obs.log import log_dir
-
         lines = broker.tail(120)
         t = Text()
         t.append("DIAGNOSTIC LOG\n", style=f"bold {self.skin.accent}")
-        t.append(f"{log_dir()} · last {len(lines)} line(s)\n\n", style="grey50")
+        t.append(f"sandbox/logs/ · last {len(lines)} line(s)\n\n", style="grey50")
         t.append("\n".join(lines) if lines else "(quiet so far)", style="grey70")
         self.logtext.update(t)
 
@@ -850,17 +516,9 @@ class LunaMothTUI(App):
         isolation, same audit trail, output to the panel's terminal view."""
         self.termlog.write(Text(f"$ {command}", style=self.skin.accent))
         self._switch_panel("term")
-        self.agent.audit.write("operator_command", command=command[:500])
-        status = self.agent.state.load()
 
         def worker() -> None:
-            out = run_terminal(
-                command,
-                self.agent.sandbox.root / "workspace",
-                allow_network=bool(status.get("network_access", False)),
-                writable_paths=status.get("writable_paths", []),
-                timeout=120,
-            )
+            out = self.handle.operator_command(command)
             self.output.put(("term", out))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -940,11 +598,7 @@ class LunaMothTUI(App):
         self._update_status()
 
     def _update_status(self) -> None:
-        mem_chars = self.agent.memory.chars("memory") + self.agent.memory.chars("user")
-        ctx = self.session.context.token_count()
-        model = self.agent.settings.model
-        provider = self.agent.settings.provider
-        persona = self.agent.char_name()
+        snap = self.handle.snapshot()
         if self._is_streaming():
             parts = []
             elapsed = time.monotonic() - self._stream_t0
@@ -952,18 +606,17 @@ class LunaMothTUI(App):
                 parts.append(f"{int(elapsed)}s")
             if self._recv_tokens:
                 parts.append(f"↓ {self._recv_tokens} tok")
-            effort = (self.settings.reasoning or "medium").lower()
-            if self._think_tokens and effort != "off":
-                parts.append(f"thinking {effort}")
+            if self._think_tokens and snap.reasoning != "off":
+                parts.append(f"thinking {snap.reasoning}")
             activity = f"✶ {self._activity}…" + (f" ({' · '.join(parts)})" if parts else "")
         else:
             activity = "waiting"
         self.status.update(
-            f"persona={persona} | mode={self.mode} | {activity} | patience={self.patience:.2f}s | "
-            f"memory={mem_chars} chars | "
-            f"ctx≈{ctx}/{self.session.context.max_tokens} | {provider}:{model}"
+            f"persona={snap.char_name} | mode={self.mode} | {activity} | patience={self.patience:.2f}s | "
+            f"memory={snap.memory_chars} chars | "
+            f"ctx≈{snap.context_tokens}/{snap.context_max} | {snap.provider}:{snap.model}"
         )
-        self._render_sidebar()
+        self._render_sidebar(snap)
 
     # ---- telemetry sidebar -------------------------------------------------------
 
@@ -986,15 +639,14 @@ class LunaMothTUI(App):
             f /= 1024
         return f"{f:.1f}GB"
 
-    def _workspace_usage(self) -> tuple[int, int]:
+    def _workspace_usage(self, workspace: str) -> tuple[int, int]:
         # Throttle the disk walk to ~1s; it runs off the frequent status refresh.
         now = time.monotonic()
         if now - self._ws_cache[0] < 1.0:
             return self._ws_cache[1], self._ws_cache[2]
         total = files = 0
         try:
-            ws = self.agent.sandbox.root / "workspace"
-            for p in ws.rglob("*"):
+            for p in Path(workspace).rglob("*"):
                 if p.is_file():
                     files += 1
                     try:
@@ -1006,32 +658,26 @@ class LunaMothTUI(App):
         self._ws_cache = (now, total, files)
         return total, files
 
-    def _render_sidebar(self) -> None:
+    def _render_sidebar(self, snap) -> None:
         if not hasattr(self, "gauges"):
             return
-        ctx = self.session.context.token_count()
-        ctx_max = self.session.context.max_tokens or 1
-        _mstore = self.agent.memory
-        mem_chars = _mstore.chars("memory") + _mstore.chars("user")
-        mem_max = (_mstore.limits.memory_chars + _mstore.limits.user_chars) or 1
-        ws_bytes, ws_files = self._workspace_usage()
+        ws_bytes, ws_files = self._workspace_usage(snap.workspace_root)
         ws_cap = 1_000_000  # soft 1 MB display cap (sandbox isn't hard-limited yet)
 
         t = self.skin
         head = f"bold {t.accent}"
         g = Text()
         g.append("CONTEXT\n", style=head)
-        g.append(self._bar(ctx / ctx_max, color=t.gauge_context))
-        g.append(f"\n{ctx:,} / {ctx_max:,} tok\n\n", style="grey70")
+        g.append(self._bar(snap.context_tokens / (snap.context_max or 1), color=t.gauge_context))
+        g.append(f"\n{snap.context_tokens:,} / {snap.context_max:,} tok\n\n", style="grey70")
         g.append("MEMORY\n", style=head)
-        g.append(self._bar(mem_chars / mem_max, color=t.gauge_memory))
-        g.append(f"\n{mem_chars} / {mem_max} chars\n\n", style="grey70")
+        g.append(self._bar(snap.memory_chars / snap.memory_max, color=t.gauge_memory))
+        g.append(f"\n{snap.memory_chars} / {snap.memory_max} chars\n\n", style="grey70")
         g.append("SANDBOX  (soft)\n", style=head)
         g.append(self._bar(ws_bytes / ws_cap, color=t.gauge_sandbox))
         g.append(f"\n{self._human_bytes(ws_bytes)} · {ws_files} files\n", style="grey70")
-        net_on = self.agent.state.load().get("network_access", False)
         g.append(
-            f"isolation {self.agent.settings.py_backend} · net {'ON' if net_on else 'off'} · "
+            f"isolation {snap.isolation} · net {'ON' if snap.net_on else 'off'} · "
             f"mode {self.mode}\n",
             style="grey50",
         )
@@ -1039,15 +685,14 @@ class LunaMothTUI(App):
 
         m = Text()
         m.append("─ MEMORY ─\n", style=head)
-        rendered = _mstore.render()
-        m.append(rendered if rendered.strip() else "(empty)", style="grey70")
+        m.append(snap.memory_text if snap.memory_text.strip() else "(empty)", style="grey70")
         self.memview.update(m)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Show matching /commands under the input as you type (autocomplete hint)."""
         val = (event.value or "").lower()
         if val.startswith("/"):
-            matches = [c for c in SLASH_COMMANDS if c.startswith(val)]
+            matches = [c for c in self.slash_commands if c.startswith(val)]
             self.suggest.update(Text("  ".join(matches[:8]), style="#5f875f") if matches else Text(""))
         else:
             self.suggest.update(Text(""))
@@ -1078,16 +723,15 @@ class LunaMothTUI(App):
             return True
 
     def _stream_worker(self, job: StreamJob, prefix: str) -> None:
-        chunks: Iterable[str]
         if job.kind == "think":
-            chunks = self.agent.stream_think(self.session)
+            events = self.handle.stream_idle()
         elif job.kind == "event":
-            chunks = self.agent.stream_event(job.text or "", self.session)
+            events = self.handle.stream_event(job.text or "")
         else:
-            chunks = self.agent.stream_handle(job.text or "", self.session)
+            events = self.handle.stream_user(job.text or "")
         self.output.put(("prefix", prefix))
         try:
-            for ev in chunks:
+            for ev in events:
                 if self.interrupt_event.is_set():
                     self.output.put(("interrupt", "↯ interrupt — operator input overrides current cycle"))
                     break
@@ -1136,19 +780,34 @@ class LunaMothTUI(App):
         if self.pending_input is not None:
             text = self.pending_input
             self.pending_input = None
-            self._start_stream(StreamJob(kind="user", text=text), prefix=self.skin.reply_pfx(self.agent.char_name()))
+            self._start_stream(StreamJob(kind="user", text=text), prefix=self.skin.reply_pfx(self.char_name))
             return
         now = time.monotonic()
         if self.mode == "live" and now >= self.next_spont_at and now >= self.grace_until:
             # live mode = the chara keeps living: spontaneous cycles between your
             # messages, paced by `patience` (plus the post-greeting attach grace).
-            self._start_stream(StreamJob(kind="think"), prefix=self.skin.thought_pfx(self.agent.char_name()))
+            self._start_stream(StreamJob(kind="think"), prefix=self.skin.thought_pfx(self.char_name))
 
     def _scheduler_tick(self) -> None:
         if self.shutdown_requested:
             return
         self._pump()
         self._update_status()
+
+    def _sync_after_command(self, data) -> None:
+        """Apply backend setting changes (mode/thinking/...) to frontend state."""
+        if not isinstance(data, dict):
+            return
+        if "mode" in data:
+            want = normalize_mode(str(data["mode"]))
+            if want != self.mode:
+                self.mode = want
+                self.grace_until = 0.0  # mid-session switch: the operator is clearly here
+                if want == "live":
+                    self.next_spont_at = time.monotonic() + self.patience
+        if "show_thinking" in data:
+            self.show_thinking = bool(data["show_thinking"])
+        self.settings = self.handle.settings  # stay in sync with persisted state
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
@@ -1175,9 +834,9 @@ class LunaMothTUI(App):
             self._console(f"! {text[1:].strip()}", self.skin.operator_color)
             self._run_operator_command(text[1:].strip())
             return
-        # ---- console commands: the console stays the chat log; anything verbose
-        # ---- lights up the spotlight panel on the right instead ----
-        if low in {"/memory"}:
+        # ---- frontend display commands: the console stays the chat log; anything
+        # ---- verbose lights up the spotlight panel on the right instead ----
+        if low == "/memory":
             self._console("/memory → panel", "grey50")
             self._switch_panel("memory")
             return
@@ -1196,65 +855,11 @@ class LunaMothTUI(App):
         if low in {"/exit", "/quit"}:
             await self.action_quit_clean()
             return
-        if low in {"/settings"}:
+        if low == "/settings":
             await self.action_open_settings()
             return
         if low in {"/clear", "/cls"}:
             await self.action_clear_display()
-            return
-        if low in {"/skills", "/skill"}:
-            skills = self.agent.skills.scan()
-            if not skills:
-                body = "(no skills yet)\n\nThe chara writes its own with create_skill;\nyou can drop SKILL.md dirs into ~/.lunamoth/skills/."
-            else:
-                tag = {"own": "✎", "user": "⌂", "bundled": "·"}
-                body = "\n".join(
-                    f"{tag.get(sk['origin'], '?')} {sk['name']} — {sk['description']}" for sk in skills
-                ) + "\n\n✎ the chara's own  ⌂ ~/.lunamoth/skills  · bundled"
-            self._console("/skills → panel", "grey50")
-            self._panel_out("SKILLS", body)
-            return
-        if low == "/mcp":
-            servers = self.agent.mcp.servers
-            if not servers:
-                body = "(no MCP servers configured)\n\nAdd mcp.json next to the chara's config\nor the project root — Claude Code format:\n{\"mcpServers\": {\"fetch\": {\"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]}}}\n\nNote: MCP servers run OUTSIDE the sandbox\njail — configuring one is a trust decision."
-            else:
-                allowed = set(self.agent.tools.mcp_allowed)
-                lines = []
-                for name in sorted(servers):
-                    mark = "●" if name in allowed else "○ (not in this tool pack)"
-                    lines.append(f"{mark} {name} — {servers[name].get('command', '?')}")
-                body = "\n".join(lines) + "\n\nTools appear to the chara as mcp__<server>__<tool>."
-            self._console("/mcp → panel", "grey50")
-            self._panel_out("MCP SERVERS", body)
-            return
-        if low.startswith("/goal"):
-            rest = text[len("/goal"):].strip()
-            parts = rest.split(maxsplit=1)
-            try:
-                if not rest:
-                    goals = self.agent.goals.all()
-                    if not goals:
-                        body = "(no goals yet)\n\n/goal <text>      add a goal (yours show as ⭑)\n/goal done g3     mark done\n/goal drop g3     drop it"
-                    else:
-                        icon = {"active": "○", "done": "●", "dropped": "✕"}
-                        lines = []
-                        for g in goals:
-                            mark = "⭑ " if g.get("by") == "operator" else ""
-                            lines.append(f"{icon.get(g['status'], '?')} {g['id']}  {mark}{g['text']}")
-                        body = "\n".join(lines) + "\n\n○ active  ● done  ✕ dropped\n/goal <text> · /goal done|drop <id>"
-                    self._console("/goal → panel", "grey50")
-                    self._panel_out("GOALS", body)
-                elif parts[0] in {"done", "drop", "active"} and len(parts) == 2:
-                    status = {"done": "done", "drop": "dropped", "active": "active"}[parts[0]]
-                    goal = self.agent.goals.set_status(parts[1].strip(), status)
-                    self._console(f"goal {goal['id']} → {goal['status']}", "grey50")
-                else:
-                    goal = self.agent.goals.add(rest, by="operator")
-                    self._console(f"goal {goal['id']} added ⭑ — it now steers every turn", "grey50")
-            except ValueError as e:
-                self._console(f"goal error: {e}", "red")
-            self._update_status()
             return
         if low.startswith(("/patience", "/cooldown")):
             parts = text.split(maxsplit=1)
@@ -1269,101 +874,30 @@ class LunaMothTUI(App):
             else:
                 self._console(f"patience = {self.patience:.2f}s (usage: /patience <sec>)", "grey50")
             return
-        # Pre-rename muscle memory: forever on/off were the old names for the modes.
-        if low in {"/forever off", "/forever", "/pause"}:
-            low = "/mode chat"
-        elif low in {"/forever on", "/resume"}:
-            low = "/mode live"
-        if low.startswith(("/mode", "/presence")):
-            parts = low.split()
-            known = set(MODES) | {"on", "off", "auto", "always"}  # incl. pre-rename spellings
-            if len(parts) == 2 and parts[1] in known:
-                want = normalize_mode(parts[1])
-                self.mode = want
-                self.grace_until = 0.0  # mid-session switch: the operator is clearly here
-                if want == "live":
-                    self.next_spont_at = time.monotonic() + self.patience
-                self.settings = replace(self.settings, mode=want)
-                save_settings(self.settings)
-                self._console(f"mode = {want} (persisted for this chara)", "grey50")
-                self._update_status()
-            else:
-                self._console(
-                    f"mode = {self.mode}  (usage: /mode live|chat — live: it keeps creating "
-                    "while you watch; chat: it waits and only replies to you)",
-                    "grey50",
-                )
-            return
-        if low.startswith("/thinking"):
-            parts = low.split()
-            if len(parts) == 2 and parts[1] in {"on", "off"}:
-                self.show_thinking = parts[1] == "on"
-                self.settings = replace(self.settings, show_thinking=self.show_thinking)
-                save_settings(self.settings)
-                self._console(
-                    f"thinking text = {'shown dimmed' if self.show_thinking else 'hidden (✶ indicator only)'} (persisted)",
-                    "grey50",
-                )
-            else:
-                self._console(
-                    f"thinking text = {'shown' if self.show_thinking else 'hidden'}  "
-                    "(usage: /thinking on|off — the ✶ status indicator always runs; /reasoning sets effort)",
-                    "grey50",
-                )
-            return
-        if low.startswith("/reasoning"):
-            parts = low.split()
-            levels = {"off", "low", "medium", "high"}
-            if len(parts) == 2 and parts[1] in levels:
-                self.settings = replace(self.settings, reasoning=parts[1])
-                save_settings(self.settings)
-                self.agent.reconfigure(self.settings)
-                self._console(f"reasoning = {parts[1]} (persisted)", "grey50")
-            else:
-                cur = self.settings.reasoning or "medium"
-                sup = "yes" if self.agent.llm.reasoning_supported() else "no (this model/route ignores it)"
-                self._console(
-                    f"reasoning = {cur} · model supports the param: {sup}  "
-                    "(usage: /reasoning off|low|medium|high — thinking streams dimmed in the top pane)",
-                    "grey50",
-                )
-            return
         if low.startswith("/theme"):
             self._cmd_theme(text)
-            return
-        if low.startswith("/net"):
-            parts = low.split()
-            if len(parts) == 2 and parts[1] in {"on", "off"}:
-                self.agent.state.set_network(parts[1] == "on")
-                self._console(f"network access = {parts[1].upper()} (terminal tool, this session)", "grey50")
-                self._update_status()
-            else:
-                cur = self.agent.state.load().get("network_access", False)
-                self._console(f"network access = {'ON' if cur else 'OFF'}  (usage: /net on|off)", "grey50")
-            return
-        if low.startswith("/allow-dir"):
-            parts = text.split(maxsplit=1)
-            if len(parts) == 2:
-                p = str(Path(parts[1].strip()).expanduser().resolve())
-                self.agent.state.add_writable_path(p)
-                self._console(f"writable path added (sandbox): {p}", "grey50")
-            else:
-                paths = self.agent.state.load().get("writable_paths", [])
-                self._console("writable paths: " + (", ".join(paths) or "(workspace only)"), "grey50")
             return
         if low in {"/help", "help", "?", "/?"}:
             self._show_help()
             return
+        # Pre-rename muscle memory: forever on/off were the old names for the modes.
+        if low in {"/forever off", "/forever", "/pause"}:
+            text, low = "/mode chat", "/mode chat"
+        elif low in {"/forever on", "/resume"}:
+            text, low = "/mode live", "/mode live"
         if text.startswith("/"):
-            # Remaining agent commands (/status /read /logs ...): run inline; the
-            # console logs WHAT you asked, the panel shows the answer — so the
-            # console stays a clean chat log.
-            self._console(f"{text} → panel", "green")
-            try:
-                result = self.agent._command(text, self.session)
-            except Exception as e:  # noqa: BLE001 - surface to operator
-                result = f"command failed: {e}"
-            self._panel_out(text.split()[0].lstrip("/").upper(), str(result))
+            # ---- everything else: the SHARED backend command registry ----
+            # One implementation for every frontend (core/commands.py). Verbose
+            # output lights up the panel; one-liners stay in the console.
+            reply = self.handle.command(text)
+            if not reply.ok:
+                self._console(reply.text, "red")
+            elif "\n" in reply.text:
+                self._console(f"{text} → panel", "green")
+                self._panel_out(text.split()[0].lstrip("/").upper(), reply.text)
+            else:
+                self._console(reply.text, "grey50")
+            self._sync_after_command(reply.data)
             self._update_status()
             return
         # ---- ordinary message: QUEUE it for the persona (never dropped) ----
@@ -1384,7 +918,7 @@ class LunaMothTUI(App):
 
     def _show_help(self) -> None:
         """Render help in the spotlight panel — the console stays a clean chat log."""
-        body = "\n".join((
+        front = "\n".join((
             "talk — type anything (no slash); the reply",
             "streams in the top pane",
             "",
@@ -1392,31 +926,16 @@ class LunaMothTUI(App):
             "          (same jail; output shows here)",
             "Esc       panel back to telemetry",
             "/panel <view>  switch this panel by hand",
-            "",
-            "/goal [text|done g3|drop g3]  the chara's",
-            "          goal list — goals steer every turn",
-            "/skills   skill index (the chara writes its own)",
-            "/mcp      configured MCP tool servers",
-            "/memory   memory document (this panel)",
-            "/files    sandbox file tree (click = preview)",
-            "/status   environment + context size",
-            "/logs     recent audit    /read <f>  a file",
-            "/reset    zero session context",
-            "",
-            "/mode live|chat   live: it keeps creating",
-            "          while you watch; chat: replies only",
             "/patience <sec>   pause between its cycles",
-            "/reasoning off|low|medium|high  (default medium)",
-            "/thinking on|off  show the thinking text",
-            "          (default off: just the ✶ indicator)",
-            "/net on|off       terminal network access",
-            "/allow-dir <path> extra writable path",
             "/theme [name]     TUI skin",
             "/settings  config   /clear  top pane   /exit",
+            "",
         ))
+        registry = "\n".join(f"{c.usage:<30} {c.help}" for c in self.handle.commands())
         t = Text()
         t.append("HELP\n", style=f"bold {self.skin.accent}")
-        t.append(body, style="grey85")
+        t.append(front, style="grey85")
+        t.append(registry, style="grey85")
         self.helptext.update(t)
         self._switch_panel("help")
         self._console("/help → panel", "grey50")
@@ -1459,7 +978,7 @@ class LunaMothTUI(App):
         self._perm_answer = False
         self._perm_event.clear()
         self._perm_pending = label
-        self.output.put(("perm", f"⚿ {self.agent.char_name()} requests permission: {label}"))
+        self.output.put(("perm", f"⚿ {self.char_name} requests permission: {label}"))
         if reason.strip():
             self.output.put(("perm", f"  reason: {reason.strip()}"))
         self.output.put(("perm", f"  y/yes = allow · anything else denies · auto-deny in {wait_seconds}s"))
@@ -1477,11 +996,7 @@ class LunaMothTUI(App):
             return
         self._detached = True
         try:
-            self.agent.note_detach(self.session)
-        except Exception:
-            pass
-        try:
-            self.agent.state.set_present(False)
+            self.handle.detach()
         except Exception:
             pass
 
@@ -1489,10 +1004,13 @@ class LunaMothTUI(App):
         if self._is_streaming():
             self.interrupt_event.set()
             await asyncio.sleep(0.05)
+        # Backend commands may have persisted changes (/reasoning etc.) — edit
+        # the live state, not a stale copy.
+        self.settings = self.handle.settings
         self.push_screen(WelcomeScreen(self.settings, mid_session=True), self._welcome_done)
 
     async def action_clear_display(self) -> None:
-        self.display_segments: list[tuple[str, str]] = []  # (style, text); "dim" = machinery
+        self.display_segments = []
         self._display_dirty = False
         self.transcript.update(Text(""))
         self._console("top pane cleared", "grey50")
@@ -1549,8 +1067,3 @@ def main(argv: list[str] | None = None) -> int:
     )
     app.run()
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-

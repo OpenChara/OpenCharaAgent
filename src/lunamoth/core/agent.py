@@ -489,7 +489,9 @@ class LunaMothAgent:
             yield TextDelta("...")
             return
         if text.startswith("/"):
-            yield TextDelta(self._command(text, session))
+            from . import commands
+
+            yield TextDelta(commands.execute(self, session, text).text)
             return
         status = self.state.load()
         memory_text = self._memory_text()
@@ -590,57 +592,4 @@ class LunaMothAgent:
     def think(self, session: Session) -> str:
         # Non-streaming convenience (used by tests).
         return "".join(ev.text for ev in self.stream_think(session) if isinstance(ev, TextDelta)).strip()
-
-    def _command(self, text: str, session: Session) -> str:
-        parts = text.split(maxsplit=2)
-        cmd = parts[0].lower()
-        try:
-            if cmd == "/status":
-                data = self.tools.call("inspect_env")
-                data["context_tokens_est"] = session.context.token_count()
-                return self.tools.as_json(data)
-            if cmd == "/memory":
-                return self.memory.render()
-            if cmd == "/memory_path":
-                return str(self.memory.root)
-            if cmd == "/files":
-                return self.tools.as_json(self.tools.call("list_files"))
-            if cmd == "/workspace":
-                return self.tools.as_json(self.tools.call("list_workspace"))
-            if cmd == "/read":
-                if len(parts) < 2:
-                    return "usage: /read <filename>"
-                return self.tools.as_json(self.tools.call("read_file", filename=parts[1]))
-            if cmd == "/wread":
-                if len(parts) < 2:
-                    return "usage: /wread <filename>"
-                return self.tools.as_json(self.tools.call("read_workspace_file", filename=parts[1]))
-            if cmd == "/write":
-                if len(parts) < 3:
-                    return "usage: /write <filename> <text>"
-                return self.tools.as_json(self.tools.call("write_file", filename=parts[1], text=parts[2]))
-            if cmd == "/logs":
-                return self.tools.as_json(self.audit.tail(20))
-            if cmd == "/help":
-                return "/status /memory /memory_path /files /workspace /read <filename> /wread <filename> /write <filename> <text> /logs /compact /reset /exit"
-            if cmd == "/compact":
-                before = session.context.token_count()
-                if not self.llm.is_live():
-                    return "compaction needs a live model (offline/mock can't summarize)."
-                if self._maybe_compact(session, force=True):
-                    after = session.context.token_count()
-                    return f"compacted: ~{before} → ~{after} tokens (older turns folded into a summary; full history stays on disk)."
-                return "nothing to compact yet (the window isn't long enough to be worth summarizing)."
-            if cmd == "/reset":
-                session.context.messages.clear()
-                session.thoughts.clear()
-                session.ticks = 0
-                # New transcript epoch: old history stays on disk but is no
-                # longer reloaded on attach.
-                self.transcript.reset()
-                return "session context zeroed (new transcript epoch). durable memory remains."
-        except Exception as e:
-            self.audit.write("command_error", command=text[:200], error=str(e))
-            return f"command failed: {e}"
-        return "unknown command. try /help"
 

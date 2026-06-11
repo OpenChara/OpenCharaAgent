@@ -287,12 +287,12 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"error: chara {args.name!r} isn't set up yet — `lunamoth attach {args.name}` first", file=sys.stderr)
         return 1
     _activate(meta)
-    from ..core.agent import LunaMothAgent
     from ..protocol import TextDelta, to_json
+    from ..protocol.api import CharaHandle
 
-    agent = LunaMothAgent()
-    session = agent.make_session()
-    for ev in agent.stream_handle(args.prompt, session):
+    handle = CharaHandle()
+    handle.attach(present=True)
+    for ev in handle.stream_user(args.prompt):
         if args.stream_json:
             sys.stdout.write(to_json(ev) + "\n")
         elif isinstance(ev, TextDelta):
