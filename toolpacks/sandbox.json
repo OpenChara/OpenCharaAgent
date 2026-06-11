@@ -3,8 +3,7 @@
   "description": "Workspace agent: run shell commands (any language), read/write workspace files, manage durable memory, inspect the environment.",
   "tools": [
     "terminal",
-    "read_memory",
-    "write_memory",
+    "memory",
     "list_files",
     "read_file",
     "list_workspace",

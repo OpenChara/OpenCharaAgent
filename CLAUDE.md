@@ -94,8 +94,13 @@ uvx ruff check --select F src/lunamoth tests   # lint (unused imports, undefined
   survive). `THINK_WINDOW` limits idle self-talk in the API view.
 - `transcript.py` — per-chara SQLite conversation log (WAL+fallback, epochs for
   /reset), restored on attach. The durable source of truth.
-- `memory.py` — `MemoryStore`: the bounded durable-memory document.
-  **Slated for removal** (see Parked work).
+- `memory.py` — `MemoryStore`: Hermes-style durable memory. Two `§`-delimited
+  stores (`memory` = notes-to-self, `user` = facts about the operator), file-backed
+  under `SANDBOX_ROOT/memory/`. Edited via the one `memory` tool (add/replace/remove
+  × memory/user). The agent injects a FROZEN snapshot (taken at session start, see
+  `agent._freeze_memory`) into the system prompt — mid-session writes hit disk + the
+  tool response but NOT the prompt, so the cache prefix stays stable. `memory_chars`
+  is still card-settable (079's tiny memory is characterful).
 - `presence/` — attach/detach awareness + the `/mode live|chat` interaction mode.
 - `art.py` — the blue LunaMoth wordmark (rich Text, gradient, moonlight sweep).
 - `themes.py`, `toolpacks.py`, `audit.py`, `cleanup.py`, `config.py`,
@@ -132,10 +137,11 @@ Override hooks (cards leave them empty by default): `extensions.lunamoth.rules`,
   writes confined) / `docker`. Network is runtime-toggleable (`/net on`), not all-or-nothing.
 - **Three memory-ish things, kept distinct:** context window (sliding, sent each
   turn, sized to the model's real window) · transcript (full SQLite log, restore)
-  · durable memory doc (always-injected curated note — being removed).
+  · durable memory (Hermes-style memory/user stores, frozen-snapshot into the
+  prompt — see `memory.py`).
 - **Context window = the model's real window** (providers.py), never a setting or
   card knob. Memory size (`memory_chars`) IS still card-settable (079's tiny
-  memory is characterful) — but that whole memory doc is slated for removal.
+  memory is characterful).
 
 ## Parked work (decided, not yet built)
 
@@ -149,14 +155,13 @@ Override hooks (cards leave them empty by default): `extensions.lunamoth.rules`,
    trim is the backstop). Remaining polish (optional): a cheap tool-output-pruning
    pass before the LLM call; persist the summary into the transcript so restore
    loads "summary + tail" instead of re-compacting.
-2. **Remove the durable-memory document** (`memory.py`, read_memory/write_memory
-   tools, the sidebar gauge, memory_chars/memory_tokens, the always-injected
-   "Your saved memory" block). Rationale: it mutates the system prompt → breaks
-   prompt cache, and it's redundant now that the transcript persists everything.
-   Replacement: the chara keeps notes as ordinary workspace files via its existing
-   file tools (on-demand, cache-friendly, Hermes-ish). The user chose full removal;
-   do the engine side first, leave the tui.py gauge until the sibling agent's
-   tui.py rewrite settles.
+2. ✅ **Replace the legacy memory doc with Hermes-style memory** — DONE. The old
+   single always-injected/rewritten document (which mutated the system prompt every
+   turn → broke prompt cache) is gone. Replaced by `memory.py`'s two `§`-delimited
+   stores (memory + user), one `memory` tool (add/replace/remove), and a FROZEN
+   snapshot injected into the system prompt (loaded at session start, never rebuilt
+   mid-session → cache-stable). Storage moved from `workspace/memory.txt` to
+   `SANDBOX_ROOT/memory/{memory,user}.md`.
 
 ## Roadmap (remote, ordered)
 

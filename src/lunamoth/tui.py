@@ -797,13 +797,15 @@ class LunaMothTUI(App):
         self.input.focus()
 
     def _render_memory_view(self) -> None:
-        mem = self.agent.memory.load()
-        limits = self.agent.memory.limits
+        store = self.agent.memory
+        mem_used = store.chars("memory")
+        cap = store.limits.memory_chars or 1
+        rendered = store.render()
         t = Text()
-        t.append("MEMORY DOCUMENT\n", style=f"bold {self.skin.accent}")
-        t.append(self._bar(len(mem) / (limits.max_chars or 1), color=self.skin.gauge_memory))
-        t.append(f"\n{len(mem)} / {limits.max_chars} chars · {self.agent.memory.path}\n\n", style="grey50")
-        t.append(mem if mem.strip() else "(empty — the chara writes here via write_memory)", style="grey85")
+        t.append("DURABLE MEMORY\n", style=f"bold {self.skin.accent}")
+        t.append(self._bar(mem_used / cap, color=self.skin.gauge_memory))
+        t.append(f"\nmemory {store.usage('memory')} · user {store.usage('user')} · {store.root}\n\n", style="grey50")
+        t.append(rendered if rendered.strip() else "(empty — the chara curates this via the `memory` tool)", style="grey85")
         self.memfull.update(t)
 
     def _panel_out(self, title: str, body: str) -> None:
@@ -922,7 +924,7 @@ class LunaMothTUI(App):
         self._update_status()
 
     def _update_status(self) -> None:
-        mem_chars = len(self.agent.memory.load())
+        mem_chars = self.agent.memory.chars("memory") + self.agent.memory.chars("user")
         ctx = self.session.context.token_count()
         model = self.agent.settings.model
         provider = self.agent.settings.provider
@@ -942,7 +944,7 @@ class LunaMothTUI(App):
             activity = "waiting"
         self.status.update(
             f"persona={persona} | mode={self.mode} | {activity} | patience={self.patience:.2f}s | "
-            f"memory={mem_chars} chars/{self.agent.memory.limits.max_tokens} tok | "
+            f"memory={mem_chars} chars | "
             f"ctx≈{ctx}/{self.session.context.max_tokens} | {provider}:{model}"
         )
         self._render_sidebar()
@@ -975,7 +977,7 @@ class LunaMothTUI(App):
             return self._ws_cache[1], self._ws_cache[2]
         total = files = 0
         try:
-            ws = self.agent.memory.path.parent  # SANDBOX_ROOT/workspace
+            ws = self.agent.sandbox.root / "workspace"
             for p in ws.rglob("*"):
                 if p.is_file():
                     files += 1
@@ -993,9 +995,9 @@ class LunaMothTUI(App):
             return
         ctx = self.session.context.token_count()
         ctx_max = self.session.context.max_tokens or 1
-        mem = self.agent.memory.load()
-        mem_chars = len(mem)
-        mem_max = self.agent.memory.limits.max_chars or 1
+        _mstore = self.agent.memory
+        mem_chars = _mstore.chars("memory") + _mstore.chars("user")
+        mem_max = (_mstore.limits.memory_chars + _mstore.limits.user_chars) or 1
         ws_bytes, ws_files = self._workspace_usage()
         ws_cap = 1_000_000  # soft 1 MB display cap (sandbox isn't hard-limited yet)
 
@@ -1020,8 +1022,9 @@ class LunaMothTUI(App):
         self.gauges.update(g)
 
         m = Text()
-        m.append("─ MEMORY DOC ─\n", style=head)
-        m.append(mem if mem.strip() else "(empty)", style="grey70")
+        m.append("─ MEMORY ─\n", style=head)
+        rendered = _mstore.render()
+        m.append(rendered if rendered.strip() else "(empty)", style="grey70")
         self.memview.update(m)
 
     def on_input_changed(self, event: Input.Changed) -> None:

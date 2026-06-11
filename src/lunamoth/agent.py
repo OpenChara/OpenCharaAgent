@@ -68,8 +68,11 @@ class LunaMothAgent:
         self.toolpack: "ToolPack | None" = None
         # Persona/card must load before memory so card-declared limits apply.
         self._load_cards()
-        # Memory lives inside workspace, so the entity can alter it through sandbox Python.
-        self.memory = MemoryStore(SANDBOX_ROOT / "workspace" / "memory.txt", self._memory_limits())
+        # Durable memory (Hermes-style two-store: memory + user). Edited via the
+        # `memory` tool; a frozen snapshot (self._memory_snapshot) is injected into
+        # the system prompt so mid-session writes don't churn the prompt cache.
+        self.memory = MemoryStore(SANDBOX_ROOT / "memory", self._memory_limits())
+        self._memory_snapshot: dict[str, list[str]] = self.memory.snapshot()
         # Charas are goal-driven: a persistent goal list (operator's ⭑ + its own)
         # steers every turn — and gives unattended time (empty user messages) a
         # direction without any engine-authored prompt.
@@ -96,6 +99,7 @@ class LunaMothAgent:
         self.settings = settings
         self._load_cards()  # also derives self.lang from the chosen card
         self.memory.limits = self._memory_limits()
+        self._freeze_memory()  # a reconfigure starts a fresh prompt — reload the snapshot
         self._load_toolpack()
         self.llm = LLMClient(settings.to_llm_config(), self._build_system_messages)
         self.audit.write(
@@ -199,10 +203,34 @@ class LunaMothAgent:
         return default
 
     def _memory_limits(self) -> MemoryLimits:
+        # memory_chars stays card-settable (079's tiny memory is characterful); the
+        # user store gets a fixed, smaller budget.
         return MemoryLimits(
-            max_tokens=self._effective_limit("memory_tokens", 2048),
-            max_chars=self._effective_limit("memory_chars", 8000),
+            memory_chars=self._effective_limit("memory_chars", 8000),
+            user_chars=4000,
         )
+
+    def _freeze_memory(self) -> None:
+        """Snapshot memory for the system prompt. Called when a fresh prompt/session
+        begins (init, reconfigure, new session, /reset) — NOT per turn, so mid-session
+        `memory` tool writes don't mutate the cached prompt prefix."""
+        self._memory_snapshot = self.memory.snapshot()
+
+    def _memory_text(self) -> str:
+        """The frozen snapshot rendered as the system-prompt memory block (bilingual)."""
+        snap = getattr(self, "_memory_snapshot", None) or {}
+        mem, usr = snap.get("memory") or [], snap.get("user") or []
+        if not mem and not usr:
+            return ""
+        zh = str(self.lang).startswith("zh")
+        parts: list[str] = []
+        if mem:
+            head = "你为自己留存的记忆：" if zh else "Your memory (notes you've kept for yourself):"
+            parts.append(head + "\n" + "\n".join(f"- {e}" for e in mem))
+        if usr:
+            head = "关于操作者：" if zh else "About the operator:"
+            parts.append(head + "\n" + "\n".join(f"- {e}" for e in usr))
+        return "\n\n".join(parts)
 
     # Attach restores only the transcript tail; the full history stays on disk.
     RESTORE_MAX_MESSAGES = 400
@@ -226,6 +254,7 @@ class LunaMothAgent:
         get filled to the brim before trimming kicks in.
         """
         session = Session()
+        self._freeze_memory()  # a new session = a fresh prompt → reload the memory snapshot
         ctx = self.context_limit()
         session.context.max_tokens = ctx
         session.context.trim_buffer_tokens = min(100_000, max(4096, ctx // 8))
@@ -275,7 +304,7 @@ class LunaMothAgent:
         committed = False
         try:
             stream = self._reply_stream(
-                event_text, self.memory.render(), status, self._context_view(session),
+                event_text, self._memory_text(), status, self._context_view(session),
                 in_context=True, record=session.context.add_message,
             )
             for chunk in stream:
@@ -304,7 +333,7 @@ class LunaMothAgent:
 
     def _build_system_messages(self, scan_text: str) -> list[str]:
         status = self.state.load()
-        memory = self.memory.render()
+        memory = self._memory_text()  # FROZEN snapshot (see _freeze_memory), not live — cache-stable
         char, user = self.char_name(), self.settings.user_name
         tools_on = self._tools_active()
         msgs: list[str] = []
@@ -339,7 +368,7 @@ class LunaMothAgent:
             if self.toolpack and self.toolpack.note.strip():
                 msgs.append(self.toolpack.note.strip())
             if memory.strip():
-                msgs.append(f"Your saved memory:\n{memory}")
+                msgs.append(memory)  # already headed (memory / user blocks)
             # Goals steer every turn — and give unattended time its direction.
             goals_block = self.goals.render_block()
             if goals_block:
@@ -445,7 +474,7 @@ class LunaMothAgent:
             yield self._command(text, session)
             return
         status = self.state.load()
-        memory_text = self.memory.render()
+        memory_text = self._memory_text()
         # Commit the operator's message BEFORE streaming: an interrupted reply
         # must never lose the instruction that caused it.
         session.context.add("user", text)
@@ -520,7 +549,7 @@ class LunaMothAgent:
                 # own retries) the error propagates to the UI as an error — a
                 # failed request is a failed request, never fabricated output.
                 stream = self._reply_stream(
-                    "", self.memory.render(), status, self._context_view(session),
+                    "", self._memory_text(), status, self._context_view(session),
                     in_context=False, record=self._record_think(session),
                 )
                 try:
@@ -554,7 +583,7 @@ class LunaMothAgent:
             if cmd == "/memory":
                 return self.memory.render()
             if cmd == "/memory_path":
-                return str(self.memory.path)
+                return str(self.memory.root)
             if cmd == "/files":
                 return self.tools.as_json(self.tools.call("list_files"))
             if cmd == "/workspace":
@@ -590,7 +619,7 @@ class LunaMothAgent:
                 # New transcript epoch: old history stays on disk but is no
                 # longer reloaded on attach.
                 self.transcript.reset()
-                return "session context zeroed (new transcript epoch). memory document remains."
+                return "session context zeroed (new transcript epoch). durable memory remains."
         except Exception as e:
             self.audit.write("command_error", command=text[:200], error=str(e))
             return f"command failed: {e}"

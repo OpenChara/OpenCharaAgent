@@ -94,10 +94,10 @@ def test_memory_grant_raises_budget(agent):
     a = agent(toolpack="sandbox")
     a.state.set_present(True)
     a.tools.permission_hook = lambda *args: True
-    before = a.memory.limits.max_chars
+    before = a.memory.limits.memory_chars
     out = a.tools.call("request_permission", kind="memory", reason="more room")
     assert out["ok"] and "granted" in out["data"]
-    assert a.memory.limits.max_chars > before
+    assert a.memory.limits.memory_chars > before
 
 
 def test_mode_normalization():

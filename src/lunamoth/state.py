@@ -12,7 +12,7 @@ DEFAULT_STATUS = {
     "writable_paths": [],            # extra dirs the terminal tool may write to
     "user_present": False,           # is an operator attached right now? (set by TUI/daemon)
     "tool_access": [
-        "inspect_env", "read_memory", "write_memory", "list_files", "read_file",
+        "inspect_env", "memory", "list_files", "read_file",
         "list_workspace", "read_workspace_file", "write_file", "write_log", "terminal",
         "request_permission", "add_goal", "set_goal_status", "read_skill", "create_skill",
     ],

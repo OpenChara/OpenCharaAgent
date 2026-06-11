@@ -60,7 +60,6 @@ class Settings:
     # the card's value, else the built-in default), since e.g. SCP-079's tiny memory
     # is part of its character.
     memory_chars: int = 0
-    memory_tokens: int = 0
     # TUI theme card (cosmetic skin: banner/colors/decoration). Empty => built-in LunaMoth theme.
     tui_theme_path: str = ""
     # Reasoning effort for thinking models: off | low | medium | high (default ON
@@ -135,12 +134,11 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "tui_theme_path": ("LUNAMOTH_THEME", "LUNAMOSS_THEME"),
     "toolpack": ("LUNAMOTH_TOOLPACK", "LUNAMOSS_TOOLPACK"),
     "memory_chars": ("LUNAMOTH_MEMORY_CHARS", "LUNAMOSS_MEMORY_CHARS"),
-    "memory_tokens": ("LUNAMOTH_MEMORY_TOKENS", "LUNAMOSS_MEMORY_TOKENS"),
     "mode": ("LUNAMOTH_MODE", "LUNAMOTH_PRESENCE"),
     "reasoning": ("LLM_REASONING",),
 }
 
-_INT_FIELDS = {"max_tokens", "memory_chars", "memory_tokens"}
+_INT_FIELDS = {"max_tokens", "memory_chars"}
 
 _FIELD_TYPES = {f.name: f.type for f in fields(Settings)}
 

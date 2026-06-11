@@ -107,7 +107,6 @@ sandbox/logs/*.jsonl
 sandbox/workspace/*
 !sandbox/logs/.gitkeep
 !sandbox/workspace/.gitkeep
-!sandbox/workspace/memory.txt
 
 # LunaMoth local config (may contain API keys)
 .lunamoth/
@@ -125,3 +124,4 @@ sandbox/env_status.json
 sandbox/presence.json
 sandbox/transcript.db*
 sandbox/goals.json
+sandbox/memory/

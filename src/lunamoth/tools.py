@@ -144,16 +144,26 @@ class ToolGateway:
             workdir=workdir,
         )
 
-    def tool_read_memory(self) -> str:
+    def tool_memory(self, action: str, target: str = "memory", content: str = "", old_text: str = "") -> str:
+        """add / replace / remove an entry in the 'memory' or 'user' store."""
         if self.memory is None:
             raise ValueError("memory not available")
-        return self.memory.render()
-
-    def tool_write_memory(self, content: str) -> str:
-        if self.memory is None:
-            raise ValueError("memory not available")
-        written = self.memory.replace(content)
-        return f"memory saved ({len(written)} chars)"
+        action = (action or "").strip().lower()
+        target = (target or "memory").strip().lower()
+        if target not in ("memory", "user"):
+            raise ValueError("target must be 'memory' or 'user'")
+        if action == "add":
+            self.memory.add(target, content)
+        elif action == "replace":
+            self.memory.replace(target, old_text, content)
+        elif action == "remove":
+            self.memory.remove(target, old_text)
+        else:
+            raise ValueError("action must be 'add', 'replace', or 'remove'")
+        return json.dumps(
+            {"ok": True, "target": target, "entries": self.memory.entries(target), "usage": self.memory.usage(target)},
+            ensure_ascii=False,
+        )
 
     def tool_add_goal(self, text: str) -> str:
         if self.goals is None:
@@ -212,18 +222,14 @@ class ToolGateway:
             if self.memory is None:
                 return "granted, but no memory store is attached."
             limits = self.memory.limits
-            new_chars = min(_MAX_MEMORY_CHARS, limits.max_chars * 2)
-            self.memory.limits = MemoryLimits(max_tokens=limits.max_tokens * 2, max_chars=new_chars)
+            new_chars = min(_MAX_MEMORY_CHARS, limits.memory_chars * 2)
+            self.memory.limits = MemoryLimits(memory_chars=new_chars, user_chars=limits.user_chars)
             return f"granted: memory budget raised to {new_chars} chars."
         return "granted. The operator will act on it."
 
     # ---- native function-calling schemas ------------------------------------------
 
-    def _memory_budget(self) -> int:
-        return self.memory.limits.max_chars if self.memory else 0
-
     def _all_schemas(self) -> dict[str, dict[str, Any]]:
-        budget = self._memory_budget()
         return {
             "terminal": {
                 "description": (
@@ -242,19 +248,24 @@ class ToolGateway:
                     "required": ["command"],
                 },
             },
-            "read_memory": {
-                "description": "Read your durable memory document (persists across the conversation).",
-                "parameters": {"type": "object", "properties": {}},
-            },
-            "write_memory": {
+            "memory": {
                 "description": (
-                    "Replace your durable memory document with new full text. "
-                    f"Budget: about {budget} characters — writes beyond that are truncated, so summarize and keep what matters."
+                    "Maintain your durable memory across sessions. Two stores: 'memory' (notes to "
+                    "yourself — ongoing work, what you've made, decisions, taste) and 'user' (durable "
+                    "facts about the operator). action: 'add' appends an entry; 'replace' swaps the "
+                    "entry containing old_text for content (empty content deletes it); 'remove' deletes "
+                    "the entry containing old_text. Keep entries short and durable; this is curated, not a log. "
+                    "New entries take effect in your prompt next session (this session's response confirms the save)."
                 ),
                 "parameters": {
                     "type": "object",
-                    "properties": {"content": {"type": "string", "description": "The complete new memory text."}},
-                    "required": ["content"],
+                    "properties": {
+                        "action": {"type": "string", "enum": ["add", "replace", "remove"]},
+                        "target": {"type": "string", "enum": ["memory", "user"], "description": "Which store (default 'memory')."},
+                        "content": {"type": "string", "description": "Entry text, for add/replace."},
+                        "old_text": {"type": "string", "description": "Substring identifying the entry to replace/remove."},
+                    },
+                    "required": ["action"],
                 },
             },
             "list_files": {
