@@ -2,8 +2,7 @@
 
 A theme controls the *look* of the console: ASCII banner, colors, window titles
 and a few decorative phrases. It never touches the model, the persona, tools or
-memory. The built-in default is the LunaMoth moth skin (pale blue and white,
-matching the default 月蛾 character); any character can run under any theme.
+memory. The built-in default is neutral; any character can run under any theme.
 Themes are JSON files under ``themes/`` (discovered next to characters/worlds)
 and the chosen one is persisted in config like the character/world selection.
 
@@ -22,7 +21,7 @@ LUNAMOTH_BANNER = r"""
 | |  | | | | '_ \ / _` | |\/| |/ _ \| __| '_ \
 | |__| |_| | | | | (_| | |  | | (_) | |_| | | |
 |_____\__,_|_| |_|\__,_|_|  |_|\___/ \__|_| |_|
-      · ✦ ·   月 蛾  ·  luna moth   · ✦ ·
+      · ✦ ·   agentic character tavern   · ✦ ·
 """.strip("\n")
 
 
@@ -30,13 +29,13 @@ LUNAMOTH_BANNER = r"""
 class TuiTheme:
     """Cosmetic skin for the TUI. Presentation only; persona stays external."""
 
-    name: str = "LunaMoth · 月蛾"
+    name: str = "LunaMoth"
     # --- decorative text ---
     banner: str = LUNAMOTH_BANNER
-    subtitle: str = "LUNAMOTH  ·  月蛾  ·  a digital soul in quiet metamorphosis"
-    tagline: str = "MOONLIGHT IN. THE MOTH IS CREATING."
-    quit_line: str = "The moth folds its wings. The works remain."
-    display_title: str = "LUNAMOTH // MOTHLIGHT"
+    subtitle: str = "LUNAMOTH  ·  agentic character tavern"
+    tagline: str = "RUNTIME READY."
+    quit_line: str = "Session closed."
+    display_title: str = "LUNAMOTH // CHARACTER"
     console_title: str = "OPERATOR CONSOLE"
     sidebar_title: str = "TELEMETRY"
     # --- palette (Textual color strings) ---

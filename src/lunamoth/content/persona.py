@@ -7,7 +7,7 @@ from pathlib import Path
 from ..config import ROOT
 
 # Name shown only when no character card can be loaded at all.
-DEFAULT_NAME = "LunaMoth"
+DEFAULT_NAME = "Character"
 
 # Last-resort fallback persona, used only if the bundled default card is missing.
 # Deliberately character-neutral: the engine carries no roleplay flavor of its own.
@@ -36,18 +36,25 @@ def system_language() -> str:
     return "zh" if loc.startswith(("zh", "chinese")) else "en"
 
 
+def _localized_json(root: Path, lang: str) -> Path | None:
+    suffixes = (f".{lang}.json", f"-{lang}.json", f"_{lang}.json")
+    localized = [p for p in sorted(root.glob("*.json")) if p.name.lower().endswith(suffixes)]
+    if localized:
+        return localized[0]
+    all_cards = sorted(root.glob("*.json"))
+    return all_cards[0] if all_cards else None
+
+
 def default_character_path(lang: str | None = None) -> Path | None:
-    """Bundled default character (LunaMoth 月蛾) in the operator's language, if present."""
+    """Bundled default character in the operator's language, if present."""
     lang = lang or system_language()
-    p = ROOT / "characters" / f"LunaMoth.{lang}.json"
-    return p if p.exists() else None
+    return _localized_json(ROOT / "characters", lang)
 
 
 def default_world_path(lang: str | None = None) -> Path | None:
     """World book that pairs with the default character, if present."""
     lang = lang or system_language()
-    p = ROOT / "worlds" / f"LunaMoth.{lang}.json"
-    return p if p.exists() else None
+    return _localized_json(ROOT / "worlds", lang)
 
 
 def fallback_persona(lang: str = "en") -> str:

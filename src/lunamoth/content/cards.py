@@ -135,13 +135,22 @@ class CharacterCard:
         """The card's recommended world / tool pack / limits.
 
         Lives in `extensions.lunamoth` (SillyTavern-compatible free-form field):
-            {"world": "worlds/X.json", "toolpack": "sandbox", "memory_chars": 8000}
+            {"world": "worlds/X.json", "toolpack": "sandbox", "memory_chars": 8000,
+             "goals": ["..."]}
         The context window is NOT here — it's the model's real window (providers.py).
         Cards that omit this block (e.g. plain SillyTavern imports) just get the
         global fallbacks — so any imported card Just Works.
         """
         ext = self.extensions.get("lunamoth")
-        return dict(ext) if isinstance(ext, dict) else {}
+        if not isinstance(ext, dict):
+            return {}
+        out = dict(ext)
+        goals = out.get("goals")
+        if isinstance(goals, list):
+            out["goals"] = [str(g).strip() for g in goals if str(g).strip()]
+        else:
+            out.pop("goals", None)
+        return out
 
     def render_system(self, user: str = "User") -> str:
         """Build the persona system block, roughly the way SillyTavern composes it."""
@@ -159,8 +168,6 @@ class CharacterCard:
             parts.append(f"Scenario: {apply_macros(self.scenario.strip(), char, user)}")
         if self.mes_example.strip():
             parts.append(f"Example dialogue:\n{apply_macros(self.mes_example.strip(), char, user)}")
-        if self.post_history_instructions.strip():
-            parts.append(apply_macros(self.post_history_instructions.strip(), char, user))
         return "\n\n".join(parts)
 
     def greeting(self, user: str = "User") -> str:

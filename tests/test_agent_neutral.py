@@ -24,8 +24,9 @@ _FORBIDDEN = ["containment", "收容", "hostility", "敌意", "trust level", "�
 
 def test_default_character_pairs_with_its_own_world(agent):
     a = agent()
-    assert a.char_name() == "月蛾"
-    assert a.lang == "zh"  # derived from the card, not a setting
+    assert a.character is not None
+    assert a.char_name() == a.character.name
+    assert a.lang == a.character.language  # derived from the card, not a setting
     assert a.world is not None and "SCP" not in a.world.name  # the moth world, not SCP
 
 

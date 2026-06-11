@@ -92,9 +92,9 @@ class SessionMeta:
         try:
             data = json.loads(self.config_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return "LunaMoth 月蛾"
+            return "default"
         path = (data.get("character_path") or "").strip()
-        return Path(path).stem if path else "LunaMoth 月蛾"
+        return Path(path).stem if path else "default"
 
     def save(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)

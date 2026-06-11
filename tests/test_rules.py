@@ -46,7 +46,7 @@ def test_card_is_first_then_rules(agent):
     a = agent("sandbox")
     msgs = a._build_system_messages("art")
     # the character card (the soul) comes first — engine adds no identity before it
-    assert "月蛾" in msgs[0]
+    assert a.char_name() in msgs[0]
     blob = "\n".join(msgs)
     assert "must be real" in blob or "必须是真的" in blob
     assert "记住" in msgs[-1] or "Remember" in msgs[-1]  # closer last
@@ -56,7 +56,7 @@ def test_no_tools_means_no_rules(agent):
     a = agent("")
     a.tools.set_enabled(None)
     msgs = a._build_system_messages("art")
-    assert "月蛾" in msgs[0]
+    assert a.char_name() in msgs[0]
     blob = "\n".join(msgs)
     assert "must be real" not in blob and "必须是真的" not in blob
     assert "Remember" not in blob and "记住" not in blob

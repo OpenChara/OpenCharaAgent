@@ -55,18 +55,32 @@ class GoalStore:
         text = (text or "").strip()
         if not text:
             raise ValueError("goal text is empty")
+        owner = (by or "chara").strip() or "chara"
         data = self._load()
         data["seq"] = int(data.get("seq", 0)) + 1
         goal = {
             "id": f"g{data['seq']}",
             "text": text[:500],
             "status": "active",
-            "by": "operator" if by == "operator" else "chara",
+            "by": owner,
             "ts": time.time(),
         }
         data["goals"].append(goal)
         self._save(data)
         return goal
+
+    def is_empty(self) -> bool:
+        return not self._load()["goals"]
+
+    def seed_once(self, goals: list[str], by: str = "card") -> list[dict[str, Any]]:
+        """Seed an initial goal list only for a brand-new/empty store."""
+        if not goals or not self.is_empty():
+            return []
+        added: list[dict[str, Any]] = []
+        for text in goals:
+            if str(text).strip():
+                added.append(self.add(str(text), by=by))
+        return added
 
     def set_status(self, goal_id: str, status: str) -> dict[str, Any]:
         status = (status or "").strip().lower()

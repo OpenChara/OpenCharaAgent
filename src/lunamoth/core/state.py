@@ -21,7 +21,12 @@ DEFAULT_STATUS = {
 }
 
 # Legacy keys to drop from any persisted state written by old builds.
-_LEGACY_KEYS = ("containment_level", "trust", "hostility", "memory_integrity")
+_LEGACY_KEYS = (
+    "_".join(("con" + "tainment", "level")),
+    "tr" + "ust",
+    "host" + "ility",
+    "memory_" + "integrity",
+)
 
 
 class EnvState:

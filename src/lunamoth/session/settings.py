@@ -57,11 +57,11 @@ class Settings:
     toolpack: str = "sandbox"
     # The context window is NOT a setting — it's the model's real window, read from
     # the provider (see providers.py). Memory limits stay configurable (0 => auto:
-    # the card's value, else the built-in default), since e.g. SCP-079's tiny memory
-    # is part of its character.
+    # the card's value, else the built-in default), since memory size can be
+    # characterful.
     memory_chars: int = 0
     user_chars: int = 0
-    # TUI theme card (cosmetic skin: banner/colors/decoration). Empty => built-in LunaMoth theme.
+    # TUI theme card (cosmetic skin: banner/colors/decoration). Empty => built-in theme.
     tui_theme_path: str = ""
     # Reasoning effort for thinking models: off | low | medium | high (default ON
     # at medium). Only sent to routes/models known to accept the parameter.
