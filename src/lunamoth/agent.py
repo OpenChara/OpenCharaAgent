@@ -73,6 +73,7 @@ class LunaMothAgent:
         # the system prompt so mid-session writes don't churn the prompt cache.
         self.memory = MemoryStore(SANDBOX_ROOT / "memory", self._memory_limits())
         self._memory_snapshot: dict[str, list[str]] = self.memory.snapshot()
+        self._memory_warnings: list[str] = []  # last limit-shrink warnings (for the frontend)
         # Charas are goal-driven: a persistent goal list (operator's ⭑ + its own)
         # steers every turn — and gives unattended time (empty user messages) a
         # direction without any engine-authored prompt.
@@ -98,7 +99,11 @@ class LunaMothAgent:
         """Hot-swap the LLM backend, persona, tool pack and limits at runtime."""
         self.settings = settings
         self._load_cards()  # also derives self.lang from the chosen card
-        self.memory.limits = self._memory_limits()
+        # Apply (possibly changed) memory limits; shrinking discards excess + warns.
+        # Warnings are stashed for the frontend to surface (and audited below).
+        self._memory_warnings = self.memory.set_limits(self._memory_limits())
+        for w in self._memory_warnings:
+            self.audit.write("memory_shrunk", detail=w)
         self._freeze_memory()  # a reconfigure starts a fresh prompt — reload the snapshot
         self._load_toolpack()
         self.llm = LLMClient(settings.to_llm_config(), self._build_system_messages)
@@ -203,11 +208,11 @@ class LunaMothAgent:
         return default
 
     def _memory_limits(self) -> MemoryLimits:
-        # memory_chars stays card-settable (079's tiny memory is characterful); the
-        # user store gets a fixed, smaller budget.
+        # Both stores are card-settable (extensions.lunamoth.{memory_chars,user_chars})
+        # and overridable at runtime via settings; 079's tiny memory is characterful.
         return MemoryLimits(
-            memory_chars=self._effective_limit("memory_chars", 8000),
-            user_chars=4000,
+            memory_chars=self._effective_limit("memory_chars", 4000),
+            user_chars=self._effective_limit("user_chars", 2000),
         )
 
     def _freeze_memory(self) -> None:

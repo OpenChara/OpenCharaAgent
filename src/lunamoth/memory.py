@@ -25,8 +25,8 @@ TARGETS = ("memory", "user")
 
 @dataclass(frozen=True)
 class MemoryLimits:
-    memory_chars: int = 8000
-    user_chars: int = 4000
+    memory_chars: int = 4000
+    user_chars: int = 2000
 
     def cap(self, target: str) -> int:
         return self.user_chars if target == "user" else self.memory_chars
@@ -112,6 +112,24 @@ class MemoryStore:
         cap = self.limits.cap(target)
         pct = round(100 * used / cap) if cap else 0
         return f"{pct}% — {used}/{cap} chars"
+
+    def set_limits(self, new_limits: "MemoryLimits") -> list[str]:
+        """Apply new size limits at runtime. Growing is silent; SHRINKING re-caps
+        each store immediately (oldest entries dropped, then truncation) and returns
+        a warning per store that lost content. The prompt itself reflects the change
+        next session (the snapshot is frozen — see agent._freeze_memory)."""
+        self.limits = new_limits
+        warnings: list[str] = []
+        for target in TARGETS:
+            before = self.chars(target)
+            self._write(target, self.entries(target))  # re-cap to the new limit
+            after = self.chars(target)
+            if after < before:
+                warnings.append(
+                    f"{target} memory shrunk to {new_limits.cap(target)} chars — "
+                    f"discarded {before - after} chars of the oldest content."
+                )
+        return warnings
 
     def snapshot(self) -> dict[str, list[str]]:
         """The current entries of both stores — taken once at session start and

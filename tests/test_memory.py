@@ -42,6 +42,30 @@ def test_budget_drops_oldest(tmp_path):
     assert entries == ["b" * 30]
 
 
+def test_default_limits():
+    lim = MemoryLimits()
+    assert lim.memory_chars == 4000 and lim.user_chars == 2000
+    assert lim.cap("memory") == 4000 and lim.cap("user") == 2000
+
+
+def test_set_limits_grow_is_silent(tmp_path):
+    m = MemoryStore(tmp_path / "mem", MemoryLimits(memory_chars=100, user_chars=100))
+    m.add("memory", "x" * 80)
+    warnings = m.set_limits(MemoryLimits(memory_chars=4000, user_chars=2000))
+    assert warnings == []
+    assert m.entries("memory") == ["x" * 80]  # nothing discarded on grow
+
+
+def test_set_limits_shrink_warns_and_discards(tmp_path):
+    m = MemoryStore(tmp_path / "mem", MemoryLimits(memory_chars=4000, user_chars=2000))
+    m.add("memory", "a" * 100)
+    m.add("memory", "b" * 100)
+    warnings = m.set_limits(MemoryLimits(memory_chars=120, user_chars=2000))
+    assert warnings and "memory" in warnings[0] and "discarded" in warnings[0]
+    assert m.entries("memory") == ["b" * 100]  # oldest dropped to fit
+    assert m.chars("memory") <= 120
+
+
 def test_bad_target_and_missing_args(tmp_path):
     m = MemoryStore(tmp_path / "mem")
     with pytest.raises(ValueError):

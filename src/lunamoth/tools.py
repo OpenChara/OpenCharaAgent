@@ -223,7 +223,8 @@ class ToolGateway:
                 return "granted, but no memory store is attached."
             limits = self.memory.limits
             new_chars = min(_MAX_MEMORY_CHARS, limits.memory_chars * 2)
-            self.memory.limits = MemoryLimits(memory_chars=new_chars, user_chars=limits.user_chars)
+            # Growing only — set_limits keeps it consistent (no discard on grow).
+            self.memory.set_limits(MemoryLimits(memory_chars=new_chars, user_chars=limits.user_chars))
             return f"granted: memory budget raised to {new_chars} chars."
         return "granted. The operator will act on it."
 
