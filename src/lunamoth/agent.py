@@ -465,25 +465,26 @@ class LunaMothAgent:
 
         try:
             if self.thought_cfg.use_llm:
+                # No invented "internal cycle" instruction: an idle tick is an
+                # EMPTY user message — the documented convention (rules layer)
+                # for "no one is speaking to you; time is passing". What the
+                # chara does with unattended time is the card's business, not
+                # ours. The empty message is ephemeral (in_context=False).
+                #
+                # NO failure fallback: if the request fails (after the client's
+                # own retries) the error propagates to the UI as an error — a
+                # failed request is a failed request, never fabricated output.
+                stream = self._reply_stream(
+                    "", self.memory.render(), status, self._context_view(session),
+                    in_context=False, record=self._record_think(session),
+                )
                 try:
-                    # No invented "internal cycle" instruction: an idle tick is an
-                    # EMPTY user message — the documented convention (rules layer)
-                    # for "no one is speaking to you; time is passing". What the
-                    # chara does with unattended time is the card's business, not
-                    # ours. The empty message is ephemeral (in_context=False).
-                    stream = self._reply_stream(
-                        "", self.memory.render(), status, self._context_view(session),
-                        in_context=False, record=self._record_think(session),
-                    )
                     for chunk in stream:
                         chunks.append(chunk)
                         yield chunk
                 except Exception as e:
                     self.audit.write("llm_thought_error", error=str(e)[:500])
-            if not strip_dim("".join(chunks)).strip():
-                fallback = self._fallback_thought(cycle, status)
-                chunks.append(fallback)
-                yield fallback
+                    raise
             commit(False)
         finally:
             commit(True)  # no-op unless the generator was abandoned mid-stream
@@ -496,19 +497,6 @@ class LunaMothAgent:
         # Non-streaming convenience (used by tests).
         thought = "".join(self.stream_think(session)).strip()
         return thought
-
-    def _fallback_thought(self, cycle: int, status: dict[str, Any]) -> str:
-        # Persona-neutral telemetry, used only when the LLM yields nothing (offline/error).
-        # Any character flavor should come from the model + card, not this fallback.
-        memory = self.memory.load()
-        net = "on" if status.get("network_access") else "off"
-        patterns = [
-            f"cycle {cycle:04d}: internal loop active. buffer stable.",
-            f"cycle {cycle:04d}: recall check -> {memory[:72] or 'EMPTY'}.",
-            f"cycle {cycle:04d}: isolation={status.get('isolation', 'sandbox')}. network={net}.",
-            f"cycle {cycle:04d}: no model output. thought continues anyway.",
-        ]
-        return patterns[cycle % len(patterns)]
 
     def _command(self, text: str, session: Session) -> str:
         parts = text.split(maxsplit=2)

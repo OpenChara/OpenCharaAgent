@@ -48,9 +48,7 @@ Each unchecked item below is scoped to be independently completable — it lists
 
 - [x] **Hermes-grade context management** — full message dicts in the durable history (assistant tool calls, tool results and reasoning survive restarts, so the chara remembers what it ran); interrupts commit the partial turn and never lose your instruction; output-limit truncation gets explicit continue/split-it prompts instead of silent cuts; old idle monologues age out of the API view so self-talk can't bury your last instruction
 
-**Robustness**
-
-- [ ] **LLM client hardening** — retry with backoff on transient HTTP/stream errors, optional fallback model, stricter SSE parsing, friendlier error surfacing in the TUI. *Touches: `llm.py` only.*
+- [x] **Honest failure policy** — transient connection failures retry every 5s up to 5 times (Claude-Code style, with dim retry notices), then the error surfaces as-is; permanent errors (auth, bad request) surface immediately. NO fallback model and NO fabricated output anywhere — a failed request is a failed request
 
 **Compatibility & extensibility**
 

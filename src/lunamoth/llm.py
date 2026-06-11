@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import random
 import re
+import time
 from typing import Any, Callable, Iterator
 
 from .config import LLMConfig
@@ -122,6 +123,42 @@ class LLMClient:
             return {"max_completion_tokens": self.cfg.max_tokens}
         return {"max_tokens": self.cfg.max_tokens}
 
+    # Transient failures worth retrying at the connection phase. Everything else
+    # (auth errors, bad requests) surfaces immediately — a failed request is a
+    # failed request; there is NO fabricated fallback output anywhere.
+    _RETRYABLE_HTTP = {408, 429, 500, 502, 503, 504, 520, 522, 524}
+    _RETRY_LIMIT = 5
+    _RETRY_DELAY = 5.0
+
+    def _connect_with_retry(self, url: str, data: bytes, timeout: float):
+        """Open the streaming request, Claude-Code style on failure: a flat 5s
+        pause, up to 5 retries, then stop and surface the error. Yields dim
+        retry notices to the UI; returns the open response. Only the connection
+        phase retries — a stream that dies mid-flight surfaces immediately (the
+        interrupt-commit machinery already preserves partials)."""
+        import urllib.error
+        import urllib.request
+
+        attempt = 0
+        while True:
+            req = urllib.request.Request(url, data=data, headers=self._headers(), method="POST")
+            try:
+                return urllib.request.urlopen(req, timeout=timeout)
+            except urllib.error.HTTPError as e:
+                detail = e.read().decode("utf-8", errors="replace")[:500]
+                if e.code not in self._RETRYABLE_HTTP:
+                    raise RuntimeError(f"HTTP {e.code}: {detail}") from e
+                err = f"HTTP {e.code}: {detail[:120]}"
+            except urllib.error.URLError as e:
+                err = f"connection failed: {e.reason}"
+            except TimeoutError:
+                err = "connection timed out"
+            attempt += 1
+            if attempt > self._RETRY_LIMIT:
+                raise RuntimeError(f"{err} — gave up after {self._RETRY_LIMIT} retries")
+            yield dim(f"\n⚠ {err} — retry {attempt}/{self._RETRY_LIMIT} in {int(self._RETRY_DELAY)}s\n")
+            time.sleep(self._RETRY_DELAY)
+
     def stream_complete(
         self, user_text: str, memory: str, status: dict[str, Any], context: list[dict],
         in_context: bool = True, reasoning: "str | None" = None,
@@ -226,13 +263,10 @@ class LLMClient:
             **self._max_tokens_param(),
             "stream": True,
         }, override=reasoning)
-        import urllib.request
-        import urllib.error
         data = json.dumps(body).encode("utf-8")
-        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
         flow = ""  # "" | "think" | "speech" — for newline transitions around thinking
-        try:
-            with urllib.request.urlopen(req, timeout=90) as resp:
+        resp = yield from self._connect_with_retry(url, data, timeout=90)
+        with resp:
                 for raw in resp:
                     line = raw.decode("utf-8", errors="replace").strip()
                     if not line:
@@ -262,8 +296,6 @@ class LLMClient:
                             yield think("\n")
                         flow = "speech"
                         yield chunk
-        except urllib.error.HTTPError as e:
-            raise RuntimeError(e.read().decode("utf-8", errors="replace")) from e
 
     # ---- native function-calling agent loop ---------------------------------------
 
@@ -378,9 +410,6 @@ class LLMClient:
         text into `text_out` (caller-owned, so an abandoned generator can still
         read the partial). Returns (tool_calls, reasoning, finish_reason).
         """
-        import urllib.error
-        import urllib.request
-
         body: dict[str, Any] = self._reasoning_body({
             "model": self.cfg.model,
             "messages": messages,
@@ -392,13 +421,12 @@ class LLMClient:
             body["tools"] = tools
             body["tool_choice"] = "auto"
         data = json.dumps(body).encode("utf-8")
-        req = urllib.request.Request(f"{self.cfg.base_url}/chat/completions", data=data, headers=self._headers(), method="POST")
         acc: dict[int, dict[str, str]] = {}
         reasoning_parts: list[str] = []
         finish_reason = ""
         flow = ""  # "" | "think" | "speech" — for newline transitions around thinking
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
+        resp = yield from self._connect_with_retry(f"{self.cfg.base_url}/chat/completions", data, timeout=120)
+        with resp:
                 for raw in resp:
                     line = raw.decode("utf-8", errors="replace").strip()
                     if not line:
@@ -446,8 +474,6 @@ class LLMClient:
                             slot["name"] = fn["name"]
                         if fn.get("arguments"):
                             slot["args"] += fn["arguments"]
-        except urllib.error.HTTPError as e:
-            raise RuntimeError(e.read().decode("utf-8", errors="replace")) from e
         tool_calls: list[dict[str, Any]] = []
         for idx in sorted(acc):
             s = acc[idx]
