@@ -125,3 +125,6 @@ sandbox/presence.json
 sandbox/transcript.db*
 sandbox/goals.json
 sandbox/memory/
+
+# runtime diagnostics (obs/)
+sandbox/logs/
