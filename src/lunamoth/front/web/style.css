@@ -612,14 +612,16 @@ body.dark .md-code{background:rgba(255,255,255,.08)}
 .spine .sname b{font-size:13.5px; font-weight:600}
 .spine .sname .chip{margin-left:auto}
 .spine .sworld{font-size:11.5px; color:var(--text-3); margin-top:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+/* hover acts: whole buttons may wrap to a second row on narrow cards, but a
+   label never breaks mid-word and the row never overflows the face */
 .spine-acts{
-  position:absolute; inset:auto 0 0 0; padding:34px 12px 12px; display:flex; gap:6px; justify-content:center;
-  background:linear-gradient(transparent,rgba(10,20,30,.55)); opacity:0; transition:opacity .15s;
+  position:absolute; inset:auto 0 0 0; padding:30px 10px 10px; display:flex; gap:4px; justify-content:center;
+  flex-wrap:wrap; background:linear-gradient(transparent,rgba(10,20,30,.55)); opacity:0; transition:opacity .15s;
 }
 .spine:hover .spine-acts{opacity:1}
 .spine-acts button{
-  font-size:12px; border:none; cursor:pointer; padding:5px 13px; border-radius:8px;
-  background:rgba(255,255,255,.92); color:var(--text); font-weight:550;
+  font-size:11.5px; border:none; cursor:pointer; padding:4px 10px; border-radius:8px;
+  background:rgba(255,255,255,.92); color:var(--text); font-weight:550; white-space:nowrap;
 }
 .spine-acts button.wake{background:var(--accent); color:#fff}
 body.dragging::after{
@@ -636,6 +638,24 @@ body.dragging::after{
 .cv-block{margin-bottom:13px}
 .cv-block h4{font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.7px;margin-bottom:5px}
 .cv-block .memory-text{max-height:30vh;overflow:auto}
+/* the card editor (the view modal grown up): plaintext-editable sections */
+.cve-text{
+  font-size:13px; line-height:1.7; color:var(--text); white-space:pre-wrap; overflow-wrap:break-word;
+  outline:none; border-radius:8px; max-height:26vh; overflow:auto;
+}
+.cve-text[contenteditable]{
+  background:rgba(20,40,60,.035); padding:8px 11px; min-height:36px;
+  box-shadow:inset 0 0 0 1px var(--hairline-2);
+}
+.cve-text[contenteditable]:focus{box-shadow:inset 0 0 0 1px var(--accent); background:rgba(91,159,212,.05)}
+.cve-text[contenteditable]:empty::before{content:attr(data-ph); color:var(--text-3)}
+.cve-name{font-size:17px; font-weight:650; line-height:1.4; max-height:none}
+.cve-name[contenteditable]{padding:4px 9px; min-height:0}
+.cv-id .tagline.cve-text{font-size:12.5px; color:var(--text-2); margin-top:4px; line-height:1.5}
+.cv-note{
+  font-size:11.5px; color:var(--text-3); background:rgba(20,40,60,.04); border-radius:8px;
+  padding:7px 10px; margin-bottom:13px; line-height:1.55;
+}
 details.cv-raw{margin-top:6px}
 details.cv-raw summary{font-size:11.5px;color:var(--text-3);cursor:pointer;user-select:none}
 details.cv-raw pre{
@@ -736,6 +756,7 @@ details.cv-raw pre{
 
 /* ---------- 唤醒 sheet ---------- */
 .sheet{width:480px}
+.sheet.wide{width:700px; max-width:94%}
 .sheet .field-row{margin-bottom:14px}
 .sheet label{display:block; font-size:12px; color:var(--text-2); margin-bottom:5px; font-weight:550}
 .input-like{
@@ -756,6 +777,16 @@ details.cv-raw pre{
 .iso-seg b{font-size:12.5px; display:flex; align-items:center; gap:5px}
 .iso-seg span{font-size:10.5px; color:var(--text-3); display:block; margin-top:2px; line-height:1.45}
 .amber-note{font-size:11.5px; color:var(--amber); margin-top:6px}
+/* toolpack picker (toolpacks.list): selectable packs above the free-text input */
+.pack-list{display:flex; flex-direction:column; gap:6px; margin-top:8px; max-height:30vh; overflow:auto}
+.pack-option{border:1px solid var(--hairline-2); border-radius:9px; padding:8px 11px; cursor:pointer}
+.pack-option.on{border-color:var(--accent); background:var(--accent-soft); box-shadow:0 0 0 1px var(--accent)}
+.pack-option .pack-head{display:flex; align-items:baseline; gap:8px; min-width:0}
+.pack-option .pack-head b{font-size:12.5px; font-weight:600; flex:none}
+.pack-option .pack-head span{
+  font-size:11px; color:var(--text-3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.pack-option .tool-chips{margin-top:5px}
 .switch-row{display:flex; align-items:center; font-size:13px; padding:2px 0}
 .switch-row small{color:var(--text-3); font-size:11.5px; margin-left:7px}
 
@@ -989,6 +1020,10 @@ body.dark .empty-state{color:var(--text-3)}
 body.dark .check-row{background:rgba(255,255,255,.05)}
 body.dark .check-row.select-all{background:var(--accent-soft)}
 body.dark details.cv-raw pre{background:rgba(255,255,255,.05)}
+body.dark .cve-text[contenteditable]{background:rgba(255,255,255,.05)}
+body.dark .cve-text[contenteditable]:focus{background:rgba(91,159,212,.10)}
+body.dark .cv-note{background:rgba(255,255,255,.05)}
+body.dark .pack-option{border-color:var(--hairline)}
 body.dark .gw-plats button{border-color:var(--hairline)}
 body.dark .gw-plats button.on{border-color:var(--accent)}
 body.dark .gw-chip{background:rgba(255,255,255,.08)}
