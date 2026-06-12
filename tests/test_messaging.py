@@ -53,7 +53,6 @@ class FakeHandle:
         self.present_calls = []
         self.rest_until = 0.0
         self.quiet = 0
-        self.tempo = 1.0
         self.attached = False
 
     def attach(self, present=False):
@@ -79,7 +78,6 @@ class FakeHandle:
             user_present=self.present_calls[-1] if self.present_calls else False,
             rest_until=self.rest_until,
             quiet=self.quiet,
-            tempo=self.tempo,
             patience=600.0,
             embodiment="literal",
             context_tokens=0,
@@ -134,9 +132,8 @@ def test_gateway_idle_speak_delivered_muse_dropped():
     assert adapter.sent == ["spoken idle"]
 
 
-def test_gateway_idle_pause_respects_chara_tempo():
+def test_gateway_idle_pause_is_plain_patience():
     handle = FakeHandle()
-    handle.tempo = 2.0
     adapter = FakeAdapter()
     gateway = MessagingGateway(handle=handle, adapters=[adapter], allowed_senders=["u1"], patience=10)
 
@@ -144,7 +141,7 @@ def test_gateway_idle_pause_respects_chara_tempo():
     assert gateway.tick(timeout=0)
 
     remaining = gateway._next_idle_at - time.monotonic()
-    assert 4.0 <= remaining <= 5.0
+    assert 9.0 <= remaining <= 10.0
 
 
 def test_gateway_command_round_trip():

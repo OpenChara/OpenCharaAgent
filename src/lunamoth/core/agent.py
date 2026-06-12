@@ -37,7 +37,7 @@ from ..tools.toolpacks import ToolPack, load_toolpack
 from ..tools.gateway import ToolGateway
 from .transcript import TranscriptStore
 from ..content.worldinfo import apply_macros
-from ..content.knobs import normalize_embodiment, parse_patience, parse_tempo
+from ..content.knobs import normalize_embodiment, parse_patience
 
 _log = get_logger("agent")
 
@@ -212,17 +212,6 @@ class LunaMothAgent:
             memory_chars=self._effective_limit("memory_chars", 4000),
             user_chars=self._effective_limit("user_chars", 2000),
         )
-
-    def effective_tempo(self) -> float:
-        """Chara time-flow rate: operator override (>0) > card declaration > 1.0."""
-        override = parse_tempo(getattr(self.settings, "tempo", 0.0))
-        if override is not None and override > 0:
-            return override
-        if self.character is not None:
-            card = parse_tempo(self.character.defaults().get("tempo"))
-            if card is not None:
-                return card
-        return 1.0
 
     def effective_patience(self) -> float:
         """Base seconds between spontaneous cycles: operator > card > 600."""

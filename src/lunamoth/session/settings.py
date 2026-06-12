@@ -78,10 +78,7 @@ class Settings:
     # Engagement quiet period, seconds: while you are actively talking the chara
     # sets its own work aside; after this much silence it picks its life back up.
     quiet: int = 300
-    # Chara time-flow rate. 0 means unset: respect the card's tempo, then 1.0.
-    # This scales only spontaneous-cycle pacing, never quiet/rest.
-    tempo: float = 0.0
-    # Base seconds between spontaneous cycles at tempo=1. Card defaults may
+    # Base seconds between spontaneous cycles. Card defaults may
     # supply this; operator commands/env/config persist an override.
     patience: float = 600.0
     # Internal source bit: distinguishes the default 600 from an operator
@@ -153,7 +150,6 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "user_chars": ("LUNAMOTH_USER_CHARS",),
     "mode": ("LUNAMOTH_MODE", "LUNAMOTH_PRESENCE"),
     "reasoning": ("LLM_REASONING",),
-    "tempo": ("LUNAMOTH_TEMPO",),
     "patience": ("LUNAMOTH_PATIENCE",),
     "embodiment_override": ("LUNAMOTH_EMBODIMENT",),
 }
@@ -166,7 +162,7 @@ _FIELD_TYPES = {f.name: f.type for f in fields(Settings)}
 def _coerce(name: str, raw: Any) -> Any:
     if name == "temperature":
         return float(raw)
-    if name in {"tempo", "patience"}:
+    if name == "patience":
         return float(raw)
     if name in _INT_FIELDS:
         return int(raw)

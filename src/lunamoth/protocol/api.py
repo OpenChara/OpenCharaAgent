@@ -77,8 +77,7 @@ class StateSnapshot:
     user_present: bool
     rest_until: float        # epoch the chara chose to rest until (0 = not resting)
     quiet: int               # engagement: silence (s) before it resumes its own work
-    tempo: float             # chara time-flow rate; spontaneous pause = patience / tempo
-    patience: float          # effective base seconds between spontaneous cycles at tempo=1
+    patience: float          # effective base seconds between spontaneous cycles
     embodiment: str          # literal | actor
     context_tokens: int
     context_max: int
@@ -258,7 +257,6 @@ class CharaHandle:
             user_present=bool(status.get("user_present")),
             rest_until=float(status.get("rest_until", 0.0) or 0.0),
             quiet=int(getattr(a.settings, "quiet", 300)),
-            tempo=float(a.effective_tempo()),
             patience=float(a.effective_patience()),
             embodiment=a.effective_embodiment(),
             context_tokens=self._session.context.token_count() if self._session else 0,

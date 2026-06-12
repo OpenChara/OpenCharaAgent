@@ -163,6 +163,28 @@ def test_wake_without_model_config_is_refused():
     assert "no model configured" in err["message"]
 
 
+def test_wake_embodiment_is_a_wake_time_choice_persisted_in_config():
+    set_defaults()
+    entry = result("session.wake", {"card": luna_card_path(), "embodiment": "actor"})
+    meta = S.load_session(entry["name"])
+    cfg = json.loads(meta.config_path.read_text(encoding="utf-8"))
+    assert cfg["embodiment_override"] == "actor"
+
+    # Absent param: no override lands — the chain stays card > literal.
+    plain = result("session.wake", {"card": luna_card_path()})
+    plain_cfg = json.loads(S.load_session(plain["name"]).config_path.read_text(encoding="utf-8"))
+    assert plain_cfg.get("embodiment_override", "") == ""
+
+
+def test_wake_invalid_embodiment_is_clean_rpc_error_and_creates_nothing():
+    set_defaults()
+    before = {m.name for m in S.list_sessions()}
+    err = rpc_error("session.wake", {"card": luna_card_path(), "embodiment": "puppet"})
+    assert err["code"] == -32602
+    assert "embodiment" in err["message"] and "literal|actor" in err["message"]
+    assert {m.name for m in S.list_sessions()} == before  # validated before any disk writes
+
+
 def test_wake_twice_gets_distinct_names_and_freezes_deck_card():
     set_defaults()
     a = result("session.wake", {"card": luna_card_path()})
@@ -221,7 +243,7 @@ def test_card_from_draft_roundtrip():
     assert data["character_book"]["entries"][0]["keys"] == ["长夜图书馆"]
     assert data["extensions"]["lunamoth"]["toolpack"] == "sandbox"
     assert data["extensions"]["lunamoth"]["embodiment"] == "literal"
-    assert data["extensions"]["lunamoth"]["tempo"] == "normal"
+    assert "tempo" not in data["extensions"]["lunamoth"]
     assert data["extensions"]["lunamoth"]["draft"] is True
     assert data["extensions"]["lunamoth"]["origin"] == "深夜图书馆修书人"
     listed = result("cards.list")
@@ -290,7 +312,6 @@ def test_card_save_roundtrips_new_lunamoth_extension_fields():
     card = H.draft_to_card({
         **draft_payload(),
         "embodiment": "actor",
-        "tempo": "quiet",
     }, origin_text="orbital lantern keeper")
     r = result("card.save", {"data": card})
     raw = result("card.read", {"path": r["path"]})["raw"]
@@ -298,7 +319,7 @@ def test_card_save_roundtrips_new_lunamoth_extension_fields():
     assert ext["avatar_svg"].startswith("<svg")
     assert ext["theme_color"] == "#7C5CFF"
     assert ext["embodiment"] == "actor"
-    assert ext["tempo"] == "quiet"
+    assert "tempo" not in ext
     assert ext["tagline"] == "A gentle keeper of orbital lanterns"
     assert ext["goals"] == ["Map the mirror-season drift", "Welcome careful visitors"]
     assert raw["data"]["character_book"]["entries"][0]["keys"] == ["Orbital Garden"]

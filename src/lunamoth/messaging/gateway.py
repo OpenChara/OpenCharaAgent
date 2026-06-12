@@ -242,8 +242,7 @@ class MessagingGateway:
         return max(0, int(self.handle.snapshot().quiet))
 
     def _cycle_pause(self) -> float:
-        tempo = max(0.1, float(getattr(self.handle.snapshot(), "tempo", 1.0) or 1.0))
-        return self.patience / tempo
+        return max(0.0, float(self.patience))
 
     def _resting(self) -> bool:
         return self.handle.snapshot().rest_until > time.time()

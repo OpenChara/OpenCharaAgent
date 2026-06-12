@@ -1,13 +1,12 @@
-"""User/card-facing chara knobs: tempo and embodiment."""
+"""User/card-facing chara knobs: patience and embodiment."""
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 
 import pytest
 
-from lunamoth.content.knobs import parse_patience, parse_tempo
+from lunamoth.content.knobs import parse_patience
 from lunamoth.session.settings import Settings
 
 
@@ -60,55 +59,27 @@ def _blob(blocks: list[str]) -> str:
     return "\n\n".join(blocks)
 
 
-def test_tempo_presets_parse_and_bad_values_reject():
-    assert parse_tempo("swift") == 2.0
-    assert parse_tempo("steady") == 1.0
-    assert parse_tempo("slow") == 0.5
-    assert parse_tempo("glacial") == 0.25
-    assert parse_tempo("2x") == 2.0
-    assert parse_tempo(0) is None
-    assert parse_tempo("garbage") is None
-
-
-def test_card_tempo_precedence_and_tempo_command_persists(agent_factory, tmp_path):
+def test_tempo_knob_is_retired_but_old_cards_still_load(agent_factory, tmp_path):
+    """tempo was removed entirely (owner decision 2026-06-13): a card that still
+    declares `extensions.lunamoth.tempo` loads fine — the key is simply ignored."""
     from lunamoth.core import commands
+    from lunamoth.protocol.api import CharaHandle
 
-    card = _write_card(tmp_path / "tempo.json", {"toolpack": "sandbox", "tempo": "slow"})
+    card = _write_card(tmp_path / "old-tempo.json", {"toolpack": "sandbox", "tempo": "slow", "patience": 42})
     a = agent_factory(card=card)
     s = a.make_session()
-    assert a.effective_tempo() == 0.5
+    assert a.char_name() == "KnobCard"           # the card loaded cleanly
+    assert a.effective_patience() == 42.0        # other knobs still respected
+    assert not hasattr(a, "effective_tempo")
 
-    reply = commands.execute(a, s, "/tempo swift")
-    assert reply.ok and reply.data == {"tempo": 2.0}
-    assert a.settings.tempo == 2.0
-    assert a.effective_tempo() == 2.0  # operator setting > card
-
-    reply = commands.execute(a, s, "/tempo 0")
-    assert not reply.ok and "usage: /tempo" in reply.text
-    reply = commands.execute(a, s, "/tempo nonsense")
-    assert not reply.ok and "usage: /tempo" in reply.text
-
-
-def test_snapshot_tempo_drives_effective_interval(agent_factory, tmp_path):
-    from lunamoth.protocol.api import CharaHandle
-    from lunamoth.front.tui.app import LunaMothTUI
-
-    card = _write_card(tmp_path / "tempo.json", {"toolpack": "sandbox", "tempo": 2.0})
-    a = agent_factory(card=card)
     handle = CharaHandle(agent=a)
     handle.attach(present=False)
     snap = handle.snapshot(fresh=True)
-    assert snap.tempo == 2.0
+    assert not hasattr(snap, "tempo")            # snapshot no longer carries it
 
-    app = object.__new__(LunaMothTUI)
-    app.handle = handle
-    app.base_patience = 8.0
-    assert app._cycle_pause() == 4.0
-    assert snap.quiet == a.settings.quiet  # tempo does not scale engagement quiet
-    until_before = time.time() + 9 * 60
-    a.tools.call("rest", minutes=10)
-    until = a.state.load()["rest_until"]
-    assert until > until_before  # tempo does not shorten the rest tool's explicit decision
+    reply = commands.execute(a, s, "/tempo swift")
+    assert not reply.ok and "unknown command" in reply.text
+    assert all(c.name != "tempo" for c in commands.infos())
 
 
 def test_patience_parses_positive_numerics_only():
@@ -204,28 +175,23 @@ def test_bundled_actor_bridge_uses_card_language_and_macros(agent_factory, tmp_p
     assert "这场化身的后台" in blob
 
 
-def test_embodiment_command_persists_and_explains(agent_factory, monkeypatch):
+def test_embodiment_is_wake_time_only_no_hot_swap_command(agent_factory, tmp_path):
+    """The /embodiment hot swap is gone (owner decision 2026-06-13): identity-layer
+    switches rebuild the stable prefix and destroy the prompt cache. The choice
+    arrives at wake (embodiment_override in the session config) and stays."""
     from lunamoth.core import commands
 
-    # The set-reply explanation follows the card language, and the bundled
-    # default card follows the host locale — pin it so the assert is portable.
-    monkeypatch.setenv("LUNAMOTH_LANG", "en")
     a = agent_factory()
     s = a.make_session()
     reply = commands.execute(a, s, "/embodiment actor")
-    assert reply.ok
-    assert reply.data == {"embodiment": "actor"}
-    assert a.settings.embodiment_override == "actor"
-    assert "operator > card > literal" in reply.text
-    assert "Actor: the model embodies the character" in reply.text
+    assert not reply.ok and "unknown command" in reply.text
+    assert all(c.name != "embodiment" for c in commands.infos())
 
-    help_reply = commands.execute(a, s, "/embodiment")
-    assert help_reply.ok and help_reply.verbose
-    assert "Literal: the character IS a digital being" in help_reply.text
-    assert "演员化身" in help_reply.text
-
-    bad = commands.execute(a, s, "/embodiment puppet")
-    assert not bad.ok and "usage: /embodiment literal|actor" in bad.text
+    # The resolution chain itself is untouched: override > card > literal.
+    card = _write_card(tmp_path / "card-actor.json", {"toolpack": "sandbox", "embodiment": "actor"})
+    assert agent_factory(card=card).effective_embodiment() == "actor"
+    assert agent_factory(card=card, embodiment_override="literal").effective_embodiment() == "literal"
+    assert agent_factory().effective_embodiment() == "literal"
 
 
 def test_hub_daemon_launch_does_not_hardcode_tiny_patience(monkeypatch, tmp_path):

@@ -949,7 +949,7 @@ class ChatController {
     const pane = $("panel-main");
     const sig = JSON.stringify([
       snap && [snap.model, snap.reasoning, snap.context_tokens, snap.memory_chars, snap.net_on,
-               snap.mode, snap.show_thinking, snap.isolation, snap.quiet, snap.tempo, snap.patience, snap.embodiment],
+               snap.mode, snap.show_thinking, snap.isolation, snap.quiet, snap.patience, snap.embodiment],
       entry && entry.gateway && [entry.gateway.state, entry.gateway.platform],
       getLangCode(), isTechnical(),
     ]);
@@ -1023,7 +1023,7 @@ class ChatController {
       click: () => openGatewayModal(this.name),
     }));
     if (isTechnical() && this.life && this.life.next_cycle_at) {
-      const row = this.prow({ label: t("p-tempo"), val: "" });
+      const row = this.prow({ label: t("p-next-cycle"), val: "" });
       row.querySelector(".pval").id = "p-next-cycle-val";
       row.querySelector(".pval").textContent = t("next-cycle-at", { time: fmtClock(this.life.next_cycle_at) });
       st.appendChild(row);
@@ -1032,7 +1032,7 @@ class ChatController {
 
     // —— 设置选单：凡有 /command 的能力，这里都有入口 ——
     const menu = el("div", { class: "pgroup" }, el("h5", null, t("pg-settings")));
-    menu.appendChild(this.prow({ label: t("p-menu-tempo"), chev: true, click: () => this.openPanelPage("tempo") }));
+    menu.appendChild(this.prow({ label: t("p-menu-rhythm"), chev: true, click: () => this.openPanelPage("rhythm") }));
     menu.appendChild(this.prow({ label: t("p-abilities"), chev: true, click: () => this.openPanelPage("abilities") }));
     menu.appendChild(this.prow({ label: t("p-memory"), chev: true, click: () => this.openPanelPage("memory") }));
     menu.appendChild(this.prow({ label: t("p-gateway"), chev: true, click: () => openGatewayModal(this.name) }));
@@ -1061,9 +1061,9 @@ class ChatController {
     page.classList.add("on");
     const body = $("panel-page-body");
     body.innerHTML = "";
-    const titles = { tempo: t("p-menu-tempo"), abilities: t("p-abilities"), memory: t("p-memory") };
+    const titles = { rhythm: t("p-menu-rhythm"), abilities: t("p-abilities"), memory: t("p-memory") };
     $("panel-page-title").textContent = titles[which] || "";
-    if (which === "tempo") this.renderTempoPage(body);
+    if (which === "rhythm") this.renderRhythmPage(body);
     if (which === "abilities") this.renderAbilitiesPage(body);
     if (which === "memory") this.renderMemoryPage(body);
   }
@@ -1087,36 +1087,20 @@ class ChatController {
       el("div", { class: "ctl" }, input, btn)));
   }
 
-  renderTempoPage(body) {
+  renderRhythmPage(body) {
     const snap = this.snap || {};
     // quiet =「等你多久」；patience =「它自己生活的节拍」（owner 的文案语义）
     this.numField(body, "p-quiet", "p-quiet-sub", snap.quiet || 300,
       (v) => this.command(`/quiet ${v}`, false));
     this.numField(body, "p-patience", "p-patience-sub", snap.patience || 600,
       (v) => this.command(`/patience ${v}`, false));
-    const tempoSeg = el("div", { class: "seg" });
-    for (const p of ["swift", "steady", "slow", "glacial"]) {
-      const on = false;
-      tempoSeg.appendChild(el("span", { class: on ? "on" : "", onclick: async (ev) => {
-        await this.command(`/tempo ${p}`, false);
-        tempoSeg.querySelectorAll("span").forEach((s2) => s2.classList.toggle("on", s2 === ev.target));
-      } }, p));
-    }
+    // Embodiment is chosen at wake and never hot-swapped (identity-layer
+    // switches would rebuild the stable prefix and destroy the prompt cache).
+    const stance = snap.embodiment === "actor" ? "actor" : "literal";
     body.appendChild(el("div", { class: "pfield" },
-      el("label", null, t("p-tempo") + ` · ×${snap.tempo || 1}`),
-      el("div", { class: "why" }, t("p-tempo-sub")),
-      el("div", { class: "ctl" }, tempoSeg)));
-    const embSeg = el("div", { class: "seg" });
-    for (const m of ["literal", "actor"]) {
-      embSeg.appendChild(el("span", { class: snap.embodiment === m ? "on" : "", onclick: async (ev) => {
-        await this.command(`/embodiment ${m}`, false);
-        embSeg.querySelectorAll("span").forEach((s2) => s2.classList.toggle("on", s2 === ev.target));
-      } }, m));
-    }
-    body.appendChild(el("div", { class: "pfield" },
-      el("label", null, t("p-embodiment")),
-      el("div", { class: "why" }, t("emb-" + (snap.embodiment === "actor" ? "actor" : "literal"))),
-      el("div", { class: "ctl" }, embSeg)));
+      el("label", null, t("p-embodiment") + " · " + stance),
+      el("div", { class: "why" }, t("emb-" + stance)),
+      el("div", { class: "why" }, t("p-embodiment-wake"))));
   }
 
   async renderAbilitiesPage(body) {

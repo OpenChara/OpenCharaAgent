@@ -22,7 +22,7 @@ def test_idle_gate_quiet_rest_backoff_and_delay():
     mono = {"t": 0.0}
     epoch = {"t": 1000.0}
     gate = IdleGate(monotonic=lambda: mono["t"], epoch=lambda: epoch["t"])
-    snap = {"quiet": 5, "rest_until": 0.0, "patience": 20.0, "tempo": 2.0}
+    snap = {"quiet": 5, "rest_until": 0.0, "patience": 10.0}
     gate.note_user()
     assert gate.life_state(snap).state == "idle_countdown"  # at t=0 no truthy engagement stamp
     mono["t"] = 1.0

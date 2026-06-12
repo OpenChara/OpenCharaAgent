@@ -1,4 +1,4 @@
-"""Card/user-facing chara knobs: tempo, patience and embodiment.
+"""Card/user-facing chara knobs: patience and embodiment.
 
 Pure helpers live in content so core, protocol and frontends can agree on the
 same parsing/formatting without importing each other.
@@ -7,15 +7,6 @@ from __future__ import annotations
 
 import math
 from typing import Any
-
-TEMPO_PRESETS: dict[str, float] = {
-    "swift": 2.0,
-    "steady": 1.0,
-    "slow": 0.5,
-    "glacial": 0.25,
-}
-TEMPO_MIN = 0.1
-TEMPO_MAX = 10.0
 
 EMBODIMENT_STANCES = {"literal", "actor"}
 
@@ -41,41 +32,11 @@ def _lang(lang: str) -> str:
     return "zh" if str(lang).startswith("zh") else "en"
 
 
-def parse_tempo(value: Any) -> float | None:
-    """Parse a card/command tempo value.
-
-    Accepted values are preset names or numeric values in [0.1, 10]. Returns
-    None for missing/invalid input.
-    """
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        tempo = float(value)
-    elif isinstance(value, str):
-        raw = value.strip().lower()
-        if not raw:
-            return None
-        raw = raw.removesuffix("x")
-        if raw in TEMPO_PRESETS:
-            tempo = TEMPO_PRESETS[raw]
-        else:
-            try:
-                tempo = float(raw)
-            except ValueError:
-                return None
-    else:
-        return None
-    if TEMPO_MIN <= tempo <= TEMPO_MAX:
-        return tempo
-    return None
-
-
 def parse_patience(value: Any) -> float | None:
     """Parse a card/command patience value in seconds.
 
     Accepted values are positive numeric values. Returns None for
-    missing/invalid input. No presets: unlike tempo, patience is ordinary wall
-    seconds at tempo=1.
+    missing/invalid input. No presets: patience is ordinary wall seconds.
     """
     if isinstance(value, bool):
         return None
@@ -94,16 +55,6 @@ def parse_patience(value: Any) -> float | None:
     if math.isfinite(patience) and patience > 0:
         return patience
     return None
-
-
-def tempo_label(tempo: float) -> str:
-    """Format tempo for UI/status text, including matching preset when any."""
-    tempo = float(tempo)
-    base = f"{tempo:g}x"
-    for name, value in TEMPO_PRESETS.items():
-        if abs(tempo - value) < 1e-9:
-            return f"{base} ({name})"
-    return base
 
 
 def normalize_embodiment(value: Any) -> str:

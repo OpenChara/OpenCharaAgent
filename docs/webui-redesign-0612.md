@@ -29,13 +29,13 @@
     `session.*`、`card.*`、`cards.draft`、`defaults.*`、`key.test`、
     `models.list`、`open.path`；
   - snapshot（per-chara `snapshot` RPC）字段：mode/model/reasoning/
-    show_thinking/isolation/net_on/user_present/rest_until/quiet/tempo/
+    show_thinking/isolation/net_on/user_present/rest_until/quiet/
     **patience**/embodiment/context_tokens/context_max/memory_chars/
     memory_max/sandbox_root/workspace_root 等（protocol/api.py
     `StateSnapshot`）；
   - 命令注册表（core/commands.py）：/status /memory /files /read /write
-    /logs /goal /skills /mcp /net /allow-dir /mode /quiet /tempo
-    **/patience** /embodiment /thinking /reasoning /compact /reset。
+    /logs /goal /skills /mcp /net /allow-dir /mode /quiet
+    **/patience** /thinking /reasoning /compact /reset。
 
 ## 2. 施工纪律（约束性）
 
@@ -86,7 +86,7 @@
 - 旧"⌘ 命令面板"里的动作（整理记忆、安静一会儿、思考、联网、重新开始）
   全部移进右侧面板对应区；**reset 放设置最底部（危险区样式）**。
   斜杠命令在聊天框仍可用。原则：**凡有 /command 的能力，右侧面板都应有
-  入口**（/quiet /tempo /patience /embodiment /net /mode /reasoning
+  入口**（/quiet /patience /net /mode /reasoning
   /memory /reset…——用 `handle.command()`，命令注册表现成）。
 - **左右栏都可拖动调宽**：拖拽分隔条，宽度持久化 localStorage，各有最小
   宽度与折叠态。
@@ -123,7 +123,7 @@
 
 - **waiting** = 安静窗口（`engaged_until`）= **那根进度条**：倒计时，
   总长 = quiet 秒数，"条走完我就去做自己的事"；用户说话即回满。
-- **idle_countdown** = 它自己两个自发周期之间的间隔（patience÷tempo）=
+- **idle_countdown** = 它自己两个自发周期之间的间隔（patience）=
   **机制不是情绪**（省 token + 与现实时间对齐）。**视觉上与 working 合并**
   为同一 register："在做自己的事"——不渲染倒计时条。`next_cycle_at` 只在
   Technical 模式下作为状态区一行小字（"下一周期 ~HH:MM"）。

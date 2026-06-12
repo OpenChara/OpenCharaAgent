@@ -122,7 +122,7 @@ class LifeState:
 
 
 class IdleGate:
-    """Quiet/rest/backoff/patience÷tempo gate with injectable clocks."""
+    """Quiet/rest/backoff/patience gate with injectable clocks."""
 
     def __init__(
         self,
@@ -140,9 +140,7 @@ class IdleGate:
 
     @staticmethod
     def delay(snapshot: dict[str, Any]) -> float:
-        patience = max(0.0, float(snapshot.get("patience") or 600.0))
-        tempo = max(0.1, float(snapshot.get("tempo") or 1.0))
-        return patience / tempo
+        return max(0.0, float(snapshot.get("patience") or 600.0))
 
     def note_user(self) -> None:
         self.last_user_mono = self.monotonic()
@@ -313,7 +311,7 @@ class CharaChild:
             self.state, self.detail = "running", ""
             self._stdout_task = asyncio.create_task(self._read_stdout(), name=f"chara-{self.name}-stdout")
             self._idle_task = asyncio.create_task(self._idle_loop(), name=f"chara-{self.name}-idle")
-            self._emit_life(self.idle.life_state({"patience": 600.0, "tempo": 1.0, "quiet": 300}))
+            self._emit_life(self.idle.life_state({"patience": 600.0, "quiet": 300}))
             return self.status()
 
     async def stop(self) -> dict[str, Any]:

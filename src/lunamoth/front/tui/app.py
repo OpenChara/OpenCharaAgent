@@ -28,7 +28,7 @@ from textual.widgets import (
     ContentSwitcher, DirectoryTree, Footer, Header, Input, RichLog, Static,
 )
 
-from ...content.knobs import parse_patience, tempo_label
+from ...content.knobs import parse_patience
 from ...content.themes import load_theme
 from ...obs import broker, get_logger
 from ...presence import normalize_mode
@@ -211,8 +211,7 @@ class LunaMothTUI(App):
     def __init__(self, patience: float | None = None, clean_on_exit: bool = False, mode_override: str = ""):
         super().__init__()
         # `patience` = optional dev override for the base pause. When absent,
-        # the chara's effective setting/card hook supplies the value. Tempo
-        # scales this base pause: effective pause = base_patience / tempo.
+        # the chara's effective setting/card hook supplies the value.
         self._patience_override = patience is not None
         self.clean_on_exit = clean_on_exit
         self.settings = load_settings()
@@ -262,9 +261,7 @@ class LunaMothTUI(App):
         self.handle.set_permission_hook(self._permission_request)
 
     def _cycle_pause(self) -> float:
-        snap = self.handle.snapshot()
-        tempo = max(0.1, float(getattr(snap, "tempo", 1.0) or 1.0))
-        return max(0.0, self.base_patience) / tempo
+        return max(0.0, self.base_patience)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -640,11 +637,9 @@ class LunaMothTUI(App):
             activity = f"resting until {time.strftime('%H:%M', time.localtime(snap.rest_until))}"
         else:
             activity = "waiting"
-        tempo = float(getattr(snap, "tempo", 1.0) or 1.0)
-        tempo_part = f" | tempo={tempo:g}x" if abs(tempo - 1.0) > 1e-9 else ""
         self.status.update(
             f"persona={snap.char_name} | mode={self.mode} | {activity} | patience={self.base_patience:.2f}s"
-            f"{tempo_part} | memory={snap.memory_chars} chars | "
+            f" | memory={snap.memory_chars} chars | "
             f"ctx≈{snap.context_tokens}/{snap.context_max} | {snap.provider}:{snap.model}"
         )
         self._render_sidebar(snap)
@@ -709,7 +704,7 @@ class LunaMothTUI(App):
         g.append(f"\n{self._human_bytes(ws_bytes)} · {ws_files} files\n", style="grey70")
         g.append(
             f"isolation {snap.isolation} · net {'ON' if snap.net_on else 'off'} · "
-            f"mode {self.mode} · tempo {tempo_label(float(getattr(snap, 'tempo', 1.0) or 1.0))} · "
+            f"mode {self.mode} · "
             f"{getattr(snap, 'embodiment', 'literal')}\n",
             style="grey50",
         )
@@ -853,7 +848,7 @@ class LunaMothTUI(App):
             if parsed is not None:
                 self.base_patience = parsed
                 self.patience = parsed
-        if "tempo" in data or "patience" in data:
+        if "patience" in data:
             self.next_spont_at = time.monotonic() + self._cycle_pause()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:

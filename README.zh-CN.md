@@ -58,7 +58,7 @@
 - [x] **类型化事件协议** —— 后端流式输出冻结 dataclass 事件（`TextDelta`/`ThinkDelta`/`ToolStart`/`ToolEnd`/`Notice`），带内控制字符已删除；如何渲染（机械输出调暗、thinking 藏在 ✶ 指示器后）由各前端自行决定。`lunamoth run NAME -p "…" --stream-json` 以 JSONL 输出同一事件流——这就是未来所有客户端的线上格式
 - [x] **前后端分离** —— 域子包架构（`core/ protocol/ content/ tools/ obs/ session/ front/`），依赖方向由测试强制；前端只持有 `CharaHandle`（attach / 事件流 / 命令 / 状态快照），无法触及更深处；`/命令` 集中在一份注册表里、TUI 与纯终端共用。（设计已并入 `CLAUDE.md`）
 - [x] **自己的生活：说话信道 · 聊天优先 · 时间感** —— 无人陪伴时的输出属于 chara 自己（`muse` 信道）；`speak` 工具是它**决定**触达你的方式（未来消息前端的基础：Telegram/微信只投递它说出口的话）。你开口聊天时它会放下手头的事，等你安静 `/quiet <秒>`（默认 5 分钟）后再继续自己的生活。它感知真实时间但不污染上下文：自主 tick 只携带一个时钟时间戳（即用即弃）、长时间沉默后只注记一次、日期随环境事实行——它还能用 `rest` 工具给自己定闹钟（1–120 分钟；你一句话就能提前叫醒它）
-- [x] **Chara 旋钮：patience + tempo + embodiment** —— 角色卡可声明自发循环基础耐心（`extensions.lunamoth.patience`，可用 `/patience` 覆盖）、时间流速（`extensions.lunamoth.tempo`，可用 `/tempo` 覆盖）与化身姿态（`literal` 数字生命，或 `actor`：工具在真实后台运作、戏不破；可用 `/embodiment` 覆盖）；旧卡默认保持 literal
+- [x] **Chara 旋钮：patience + embodiment** —— 角色卡可声明自发循环基础耐心（`extensions.lunamoth.patience`，可用 `/patience` 覆盖）与化身姿态（`literal` 数字生命，或 `actor`：工具在真实后台运作、戏不破；唤醒时选定）；旧卡默认保持 literal
 - [x] **三区提示词栈与卡片优先上下文** —— 每次 API 调用显式拼成稳定前缀 / 持久历史 / 易变尾部：前缀在会话内字节稳定、利于 prompt cache；角色卡 PHI 作为最后一个 post-history system 槽；常驻世界书进稳定区，关键词 lore 只浅扫最近尾部、带 sticky 回合和 25% 预算上限；压缩摘要持久写入 transcript，重启后直接从 checkpoint 续上。
 
 **兼容性与可扩展性**
@@ -79,7 +79,7 @@
 <tr><td><b>可组合工具包</b></td><td>能力以 <code>toolpacks/*.json</code> 打包，精确声明角色能用哪些工具。没给包，就没有能力。</td></tr>
 <tr><td><b>沙盒执行</b></td><td><code>terminal</code> 工具在会话隔离下跑 shell 命令（任意语言）——默认 <code>sandbox-exec</code>/<code>bubblewrap</code> 牢笼，可切 Docker 获得更强边界；网络默认关闭，<code>/net on</code> 实时打开。</td></tr>
 <tr><td><b>有界、可审计的记忆</b></td><td>持久记忆是一个有 token 上限的文件，角色通过工具编辑它，而不是无限数据库；所有工具调用写入 <code>sandbox/logs/audit.jsonl</code>。</td></tr>
-<tr><td><b>自己生活</b></td><td><code>live</code> 模式下角色在你的消息间隙持续思考与创作，节奏由角色卡/设置中的 <code>patience ÷ tempo</code> 控制；<code>chat</code> 模式下它只专心陪你。常驻 <code>lunamothd</code> 监督进程负责桌面端/后台生命。</td></tr>
+<tr><td><b>自己生活</b></td><td><code>live</code> 模式下角色在你的消息间隙持续思考与创作，节奏由角色卡/设置中的 <code>patience</code> 控制；<code>chat</code> 模式下它只专心陪你。常驻 <code>lunamothd</code> 监督进程负责桌面端/后台生命。</td></tr>
 <tr><td><b>终端优先 TUI</b></td><td>单终端分屏界面（上方角色输出流 + 下方操作员控制台），支持状态仪表和热切换设置。</td></tr>
 </table>
 
@@ -187,9 +187,9 @@ lunamoth --patience 4     # 开发用覆盖值；默认读取 chara 自己的 pa
 lunamoth --plain          # 旧版纯终端模式
 ```
 
-Patience 默认 600 秒，可由角色卡 `extensions.lunamoth.patience` 声明，可用 `LUNAMOTH_PATIENCE` 注入，也可在会话中 `/patience <秒>` 按 chara 持久化。实际自发循环节奏是 `patience ÷ tempo`；`/quiet` 与 `rest` 不会被 tempo 缩放。
+Patience 默认 600 秒，可由角色卡 `extensions.lunamoth.patience` 声明，可用 `LUNAMOTH_PATIENCE` 注入，也可在会话中 `/patience <秒>` 按 chara 持久化。它只决定自发循环的节奏；`/quiet` 与 `rest` 各自独立。
 
-会话内命令：`/help`、`/goal`、`/skills`、`/mcp`、`/status`、`/memory`、`/files`、`/mode live|chat`、`/tempo`、`/patience`、`/embodiment`、`/reasoning`、`/net on|off`、`/allow-dir <path>`、`/panel`、`/theme`、`/settings`、`/clear`、`/exit` —— 冗长输出会点亮右侧**聚光板**（遥测 / 记忆 / 文件树点击预览 / 操作员终端 / 帮助），控制台始终是干净的聊天记录。`! <cmd>` 以你的身份在 chara 沙盒里跑 shell（同一牢笼，输出进面板）；`Esc` 让面板回到遥测。
+会话内命令：`/help`、`/goal`、`/skills`、`/mcp`、`/status`、`/memory`、`/files`、`/mode live|chat`、`/patience`、`/reasoning`、`/net on|off`、`/allow-dir <path>`、`/panel`、`/theme`、`/settings`、`/clear`、`/exit` —— 冗长输出会点亮右侧**聚光板**（遥测 / 记忆 / 文件树点击预览 / 操作员终端 / 帮助），控制台始终是干净的聊天记录。`! <cmd>` 以你的身份在 chara 沙盒里跑 shell（同一牢笼，输出进面板）；`Esc` 让面板回到遥测。
 
 ## 许可与致谢
 
