@@ -36,8 +36,8 @@ It is the synthesis of three projects — clone them under `reference/`
 (History: began as an SCP-079 fan recreation, long since generalized; SCP is
 mentioned only in license/acknowledgements. The default card is Quinn 小Q,
 the owner-authored digital intern — selected via the card-tag `"default"`
-convention (landing with the cards-one-file wave; until then filename order
-still picks LunaMoth). LunaMoth 月蛾 stays bundled as the flagship example.)
+convention (no character name in src/; without the tag, sorted order wins).
+LunaMoth 月蛾 stays bundled as the flagship example.)
 
 ## Design principles (binding)
 
@@ -131,9 +131,13 @@ zero internal deps; `obs/` imports only `config`.
     + Reply/AttachInfo/StateSnapshot. The ONLY backend surface frontends see.
 - `messaging/` — external chat gateways: WeCom, personal WeChat iLink/ClawBot, and QQ OneBot adapters behind the sync `Adapter` seam.
 - `content/` — SillyTavern compat, pure data: `cards.py` (V2/V3 PNG/JSON; PHI
-  exposed for the post-history slot, never folded into the persona), `worldinfo.py`
-  (two-tier: constant vs keyword entries, shallow scan + sticky + cap),
-  `persona.py`, `rules.py` (the neutral Rules layer), `themes.py` (TUI skins).
+  exposed for the post-history slot, never folded into the persona;
+  `merge_world_into_card` = the world-book IMPORT path), `worldinfo.py`
+  (two-tier: constant vs keyword entries, shallow scan + sticky + cap; the
+  card's embedded `character_book` is the ONE world source), `persona.py`
+  (default card = the localized card carrying the `"default"` tag),
+  `rules.py` (the neutral Rules layer), `themes.py` (built-in TUI theme;
+  theme files are user-supplied — no bundled themes dir).
 - `tools/` — the tool domain: `gateway.py` (`ToolGateway`, allowlisted dispatch,
   `call(name, /)` positional-only), `runner.py` (terminal under dir/sandbox/docker),
   `sandbox.py`, `mcp.py` (stdio JSON-RPC client), `skills.py` (SKILL.md +
@@ -177,7 +181,10 @@ zero internal deps; `obs/` imports only `config`.
     words stay in the card's language. Idle driving is SERVER-SIDE only
     (supervisor.py) — web clients render life.state and must never drive idle.
 
-Content (gitignore-allowlisted): `characters/` `worlds/` `toolpacks/` `themes/`.
+Content (gitignore-allowlisted): `cards/` `toolpacks/`. The card is the ONE
+content file (world embedded as `character_book`); standalone ST world books
+are an IMPORT format only (web upload recognizes them → `card.merge_world`
+folds them into a card), never a runtime source.
 
 ## The prompt stack (the machine that runs a chara — full spec: docs/archive/context-design.md)
 
@@ -198,8 +205,11 @@ Every API request is assembled as **three zones**:
    > bundled rules closer (the latter two only when tools are enabled).
 
 Card override hooks: `extensions.lunamoth.{rules,rules_closer,embodiment,
-embodiment_bridge,tempo,goals,world,toolpack,memory_chars,on_attach,on_detach}`;
-global `~/.lunamoth/rules.md`.
+embodiment_bridge,tempo,goals,toolpack,memory_chars,on_attach,on_detach}`;
+global `~/.lunamoth/rules.md`. (The old `world` path pointer is retired — it
+violated one-file; the embedded `character_book` replaced it, and a session
+config still carrying `world_path` is migrated once at load: entries merged
+into the session's card, key stripped.)
 
 ## Chara life (what already exists — build on it, don't reinvent)
 
