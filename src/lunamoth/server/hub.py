@@ -773,6 +773,43 @@ def _safe_extensions_for_ui(extensions: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def duplicate_card(path: str) -> dict[str, Any]:
+    """Copy a card into the user deck as a clearly distinct sibling.
+
+    The copy gets a language-appropriate name suffix (otherwise it is
+    indistinguishable from a frozen original on the deck — the '锁着的卡片
+    复制之后就解锁了' confusion), loses the "default" tag (a copy must never
+    steal the bundled-default slot), and PNG cards are lifted to JSON via
+    their embedded card data."""
+    p = Path(str(path or ""))
+    if not p.is_file():
+        raise RpcError(-32035, f"no such card: {path}")
+    if p.suffix.lower() == ".png":
+        from ..content.cards import _card_json_from_png
+
+        try:
+            card = _card_json_from_png(p)
+        except Exception as exc:  # noqa: BLE001
+            raise RpcError(-32035, f"could not read the PNG card: {exc}") from exc
+    else:
+        try:
+            card = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RpcError(-32035, f"unreadable card: {exc}") from exc
+    if not isinstance(card, dict) or not isinstance(card.get("data"), dict):
+        raise RpcError(-32602, "card.duplicate expects a V2/V3 card")
+    data = card["data"]
+    name = str(data.get("name") or p.stem).strip() or p.stem
+    lang = detect_language(str(p), str(data.get("description") or "") + str(data.get("name") or ""))
+    suffix = "（副本）" if lang == "zh" else " (copy)"
+    if not name.endswith(suffix):
+        data["name"] = f"{name}{suffix}"
+    tags = data.get("tags")
+    if isinstance(tags, list):
+        data["tags"] = [t for t in tags if str(t).strip().lower() != "default"]
+    return save_card(card)  # user-deck write + sanitization + unique filename
+
+
 def merge_world(card_path: str, world: Any) -> dict[str, Any]:
     """Fold a standalone ST world book into a card's embedded character_book.
 
@@ -1738,6 +1775,8 @@ class HubDispatcher:
             return save_card(p.get("data"), path=str(p.get("path") or ""))
         if method == "card.delete":
             return delete_card(str(p.get("path") or ""))
+        if method == "card.duplicate":
+            return duplicate_card(str(p.get("path") or ""))
         if method == "card.merge_world":
             return merge_world(str(p.get("card_path") or p.get("path") or ""), p.get("world"))
         if method == "cards.draft":

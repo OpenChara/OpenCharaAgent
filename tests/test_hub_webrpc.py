@@ -271,3 +271,24 @@ def test_works_list_visible_under_a_dot_dir_home(tmp_path, monkeypatch):
     works = result("works.list", {"name": meta.name})
     names = [w["name"] for w in works]
     assert "poem.md" in names and ".hidden.md" not in names
+
+
+# ---- card.duplicate ----------------------------------------------------------------
+
+def test_card_duplicate_is_distinct_and_never_default():
+    src = str(H.bundled_cards_dir() / "Quinn.zh.json")
+    out = result("card.duplicate", {"path": src})
+    dup = json.loads(open(out["path"], encoding="utf-8").read())
+    assert dup["data"]["name"].endswith("（副本）")
+    assert "default" not in [t.lower() for t in dup["data"]["tags"]]
+    # original untouched
+    orig = json.loads(open(src, encoding="utf-8").read())
+    assert "default" in orig["data"]["tags"] and not orig["data"]["name"].endswith("（副本）")
+    # an English card gets the English suffix
+    out2 = result("card.duplicate", {"path": str(H.bundled_cards_dir() / "Quinn.en.json")})
+    dup2 = json.loads(open(out2["path"], encoding="utf-8").read())
+    assert dup2["data"]["name"].endswith(" (copy)")
+
+
+def test_card_duplicate_missing_is_an_error():
+    assert rpc_error("card.duplicate", {"path": "/nope/missing.json"})["code"] == -32035
