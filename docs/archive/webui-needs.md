@@ -28,6 +28,10 @@
 - attach 不唤醒 resting chara；无言到访零痕迹；常驻 chara 一生只招呼一次
   （重开页面不再重放招呼）。UI 配合：resting 做沉睡氛围 + "说话会唤醒它"。
 - works.list 的点目录误杀已修（后端修复，前端无需动作）。
+- **辅助模型（#14）**：`defaults.set {aux_models: {draft?|transcribe?|
+  avatar?|compact?}}`（空值=回到主模型，未知任务=报错）；public defaults
+  带 `aux_models`；cards.draft/transcribe.card/card.avatar_draft 未显式
+  传 model 时自动用对应辅助模型。compact 仅存储，core 接线后启用。
 - **多 key（#10，按 UI 契约原样落地）**：`keys.list` →
   `[{label, provider, base_url, model, has_key, active}]`（秘密永不回传）；
   `keys.save {label, provider?, base_url?, api_key?, model?}`（更新省略
@@ -50,20 +54,9 @@
 
 ## 13. gateway.status 增加 state 枚举（学 Hermes 的三 chip tone）
 
-现状 `gateway.status {name}` 只有 running/stopped。Hermes 的连接器页用
-`state: connected|connecting|fatal|startup_failed|pending_restart` 派生
-chip 颜色与"指名修法"的错误文案。建议：supervisor 的 gateway 监督已知
-重试/崩溃状态，把它透出为 `state` + `error_message`；前端 chip 即可从
-"运行中/已停止"升级为可诊断的三色。
-
-## 14. auxiliary models（per-task 辅助模型，Hermes model-settings 同款）
-
-LunaMoth 已有三个天然辅助任务：compaction 摘要、cards.draft 卡片转写、
-card.avatar_draft 头像生成（后两者 RPC 已接受 model 参数！）。缺一个
-持久化的 per-task 默认（desktop.json `aux_models: {transcribe?, avatar?,
-compact?}`）+ defaults RPC 透出，设置·模型 即可渲染 Hermes 式
-"auto · use main model + Change" 行。compaction 的模型选择需要 core 侧
-接线，优先级最低。
+【主管回执】接受。现状已有 running/stopped/backoff + detail；完整枚举
+（connecting/fatal/startup_failed + error_message、backoff 健康重置）与
+审计 #27（chara 自动重启三振熔断）是同一块 supervisor 手术，下一波一起做。
 
 ## v2 / 暂不做（登记免得丢）
 
