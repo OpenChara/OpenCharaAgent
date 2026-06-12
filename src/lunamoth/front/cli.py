@@ -27,6 +27,7 @@ import datetime as _dt
 import json
 import os
 import runpy
+import signal
 import secrets
 import shutil
 import subprocess
@@ -321,6 +322,19 @@ def cmd_serve(args: argparse.Namespace) -> int:
     _activate(meta)
     if getattr(args, "debug", False):
         os.environ["LUNAMOTH_DEBUG"] = "1"
+    old_term = None
+    term_requested = False
+
+    def _handle_sigterm(signum, frame):  # noqa: ARG001 - signal handler signature
+        nonlocal term_requested
+        term_requested = True
+        meta.clear_running()
+        raise SystemExit(143)
+
+    try:
+        old_term = signal.signal(signal.SIGTERM, _handle_sigterm)
+    except (ValueError, OSError):
+        old_term = None
     meta.mark_running()
     try:
         if args.stdio:
@@ -353,6 +367,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
         return 0
     finally:
         meta.clear_running()
+        if old_term is not None and not term_requested:
+            try:
+                signal.signal(signal.SIGTERM, old_term)
+            except (ValueError, OSError):
+                pass
 
 
 def cmd_desktop(args: argparse.Namespace) -> int:

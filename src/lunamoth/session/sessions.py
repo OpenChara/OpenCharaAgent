@@ -117,6 +117,10 @@ class SessionMeta:
         except (OSError, ValueError):
             return None
 
+    def running_marker_stale(self) -> bool:
+        """True when tui.pid exists but does not point at a live process."""
+        return self.pid_path.exists() and self.running_pid() is None
+
     def mark_running(self, pid: int | None = None) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         self.pid_path.write_text(str(pid or os.getpid()), encoding="utf-8")

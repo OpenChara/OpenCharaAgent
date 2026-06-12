@@ -188,7 +188,7 @@ function sessionsSorted() {
 function statusOf(s) {
   // one line per card, exception first (design §3.2)
   if (s.status === "new") return { dot: "off", line: t("st-new"), cls: "" };
-  if (s.error && s.status !== "attached" && s.status !== "running")
+  if (s.error && (s.error_kind === "auth" || (s.status !== "attached" && s.status !== "running")))
     return { dot: "err", line: t("st-error"), cls: "err" };
   if (s.status === "idle") return { dot: "off", line: `${t("st-offline")} · ${timeAgo(s.last_active)}`, cls: "" };
   if (s.preview && s.preview.awaiting)
@@ -236,8 +236,10 @@ function renderBoard() {
           const line = el("div", { class: "status-line " + st.cls }, st.line);
           if (st.cls === "err") {
             line.textContent = "";
-            line.append(s.error ? shortErr(s.error) : t("st-error"), " · ");
+            line.title = s.error_kind === "auth" ? t("board-key-tip") : (s.error || "");
+            line.append(boardErrText(s), " · ");
             line.appendChild(el("a", {
+              title: s.error_kind === "auth" ? t("board-key-tip") : "",
               style: "cursor:pointer;text-decoration:underline",
               onclick: (ev) => { ev.stopPropagation(); show("settings"); },
             }, t("go-settings")));
@@ -258,6 +260,16 @@ function shortErr(line) {
   if (low.includes("401") || low.includes("403") || low.includes("auth")) return t("err-auth");
   if (low.includes("timeout") || low.includes("connect") || low.includes("network") || low.includes("unreachable")) return t("err-network");
   return t("err-provider");
+}
+
+function boardErrText(s) {
+  const kind = s && s.error_kind ? s.error_kind : "";
+  if (kind === "auth") return t("board-key-invalid");
+  if (kind === "credit") return t("err-credit");
+  if (kind === "model") return t("err-model");
+  if (kind === "ratelimit") return t("err-ratelimit");
+  if (kind === "network") return t("err-network");
+  return s && s.error ? shortErr(s.error) : t("st-error");
 }
 
 function cardMenu(ev, s) {
@@ -537,9 +549,12 @@ function setupPane(opts) {
     };
     if (keyInput.value.trim()) payload.api_key = keyInput.value.trim();
     try {
-      await hub.call("defaults.set", payload, 15000);
+      const saved = await hub.call("defaults.set", payload, 15000);
       await refreshHub();
       toast(t("saved"));
+      if (saved && saved.key_update_candidates && saved.key_update_candidates.length) {
+        promptKeyUpdate(saved.key_update_candidates);
+      }
       if (opts.onDone) opts.onDone();
     } catch (e) { toast(e.message, true); }
   } }, t("continue"));
@@ -561,6 +576,60 @@ function renderModelPane() {
   const pane = $("pane-model");
   pane.innerHTML = "";
   pane.appendChild(setupPane({ firstrun: false, onDone: null }));
+}
+
+function promptKeyUpdate(candidates) {
+  const rows = (candidates || []).map((c) => ({ entry: c, checked: true }));
+  if (!rows.length) return;
+  const list = el("div", { class: "key-update-list" });
+  function refreshCount() {
+    const n = rows.filter((r) => r.checked).length;
+    applyBtn.textContent = t("key-update-apply", { n });
+    applyBtn.disabled = n ? false : true;
+  }
+  const allBox = el("input", { type: "checkbox", checked: "" });
+  const applyBtn = el("button", { class: "btn primary big" });
+  allBox.addEventListener("change", () => {
+    rows.forEach((r) => { r.checked = allBox.checked; });
+    list.querySelectorAll("input[type=checkbox]").forEach((box) => { box.checked = allBox.checked; });
+    refreshCount();
+  });
+  for (const row of rows) {
+    const box = el("input", { type: "checkbox", checked: "" });
+    box.addEventListener("change", () => {
+      row.checked = box.checked;
+      allBox.checked = rows.every((r) => r.checked);
+      refreshCount();
+    });
+    list.appendChild(el("label", { class: "check-row" },
+      box,
+      el("span", null, el("b", null, row.entry.char_name || row.entry.name), " ", el("small", null, row.entry.name)),
+      row.entry.model ? el("code", null, row.entry.model) : null));
+  }
+  applyBtn.addEventListener("click", async () => {
+    const names = rows.filter((r) => r.checked).map((r) => r.entry.name);
+    if (!names.length) return;
+    applyBtn.disabled = true;
+    try {
+      const r = await hub.call("defaults.apply_key", { names }, 30000);
+      closeModal();
+      toast(t("key-update-done", { n: (r.updated || []).length }));
+      await refreshHub();
+    } catch (e) {
+      applyBtn.disabled = false;
+      toast(rpcErrText(e), true);
+    }
+  });
+  openModal(el("div", null,
+    el("h2", null, t("key-update-title")),
+    el("div", { class: "sub" }, t("key-update-sub")),
+    el("label", { class: "check-row select-all" }, allBox, el("b", null, t("select-all"))),
+    list,
+    el("div", { class: "acts", style: "margin-top:16px" },
+      el("button", { class: "btn text", onclick: closeModal }, t("later")),
+      el("div", { class: "grow" }),
+      applyBtn)), true);
+  refreshCount();
 }
 
 /* settings interactions */

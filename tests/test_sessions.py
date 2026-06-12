@@ -36,10 +36,19 @@ def test_running_pid_lifecycle():
     assert meta.running_pid() is None
     meta.mark_running()
     assert S.load_session("run").running_pid() is not None
+    assert S.load_session("run").running_marker_stale() is False
     with pytest.raises(RuntimeError):
         S.delete_session("run")
     meta.clear_running()
     S.delete_session("run")
+
+
+def test_stale_running_marker_is_harmless():
+    meta = S.create_session("stale")
+    meta.pid_path.write_text("999999999", encoding="utf-8")
+    assert meta.running_pid() is None
+    assert S.load_session("stale").running_marker_stale() is True
+    assert S.load_session("stale").status() == "new"
 
 
 def test_env_points_at_session():

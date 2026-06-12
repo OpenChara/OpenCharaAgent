@@ -109,6 +109,107 @@ def _public_defaults(data: dict[str, str]) -> dict[str, Any]:
     return out
 
 
+def _provider_id(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _base_url_id(value: Any) -> str:
+    return str(value or "").strip().rstrip("/")
+
+
+def _config_matches_model_route(cfg: dict[str, Any], defaults: dict[str, str]) -> bool:
+    """Same provider/base_url route, ignoring cosmetic case/trailing slashes."""
+    return (
+        _provider_id(cfg.get("provider")) == _provider_id(defaults.get("provider"))
+        and _base_url_id(cfg.get("base_url")) == _base_url_id(defaults.get("base_url"))
+    )
+
+
+def key_update_candidates(defaults: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    """Charas whose frozen per-session key differs from the current default.
+
+    The returned objects are safe for UI display: chara names/model only, never
+    the old or new key value.
+    """
+    defaults = defaults or load_defaults()
+    new_key = defaults.get("api_key", "")
+    if not new_key or not _provider_id(defaults.get("provider")) or not _base_url_id(defaults.get("base_url")):
+        return []
+    out: list[dict[str, Any]] = []
+    for meta in S.list_sessions():
+        cfg = _read_config(meta)
+        if not cfg or not _config_matches_model_route(cfg, defaults):
+            continue
+        if not isinstance(cfg.get("api_key"), str) or cfg.get("api_key") == new_key:
+            continue
+        entry = session_entry(meta)
+        out.append({
+            "name": entry["name"],
+            "char_name": entry["char_name"],
+            "model": entry.get("model", ""),
+        })
+    return out
+
+
+def _atomic_write_json(path: Path, data: dict[str, Any], *, private: bool = False) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        if private:
+            try:
+                tmp.chmod(0o600)
+            except OSError:
+                pass
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
+def apply_default_key(names: list[str], defaults: dict[str, str] | None = None) -> dict[str, Any]:
+    """Copy the current default api_key into selected matching session configs.
+
+    Only sessions on the same provider/base_url route are rewritten. All other
+    config fields are preserved, and writes are atomic because these files hold
+    credentials and are read by independent per-chara processes.
+    """
+    defaults = defaults or load_defaults()
+    new_key = defaults.get("api_key", "")
+    if not new_key:
+        raise RpcError(-32030, "no API key is saved in Settings")
+    unique = []
+    seen = set()
+    for raw in names:
+        name = str(raw or "")
+        if name and name not in seen:
+            unique.append(name)
+            seen.add(name)
+    updated: list[str] = []
+    skipped: list[dict[str, str]] = []
+    for name in unique:
+        meta = S.load_session(name)
+        if meta is None:
+            skipped.append({"name": name, "reason": "missing"})
+            continue
+        cfg = _read_config(meta)
+        if not cfg:
+            skipped.append({"name": name, "reason": "unreadable"})
+            continue
+        if not _config_matches_model_route(cfg, defaults):
+            skipped.append({"name": name, "reason": "provider_base_url_mismatch"})
+            continue
+        if cfg.get("api_key") == new_key:
+            skipped.append({"name": name, "reason": "already_current"})
+            continue
+        cfg["api_key"] = new_key
+        _atomic_write_json(meta.config_path, cfg, private=True)
+        updated.append(name)
+    return {"updated": updated, "skipped": skipped, "candidates": key_update_candidates(defaults)}
+
+
 # ---- provider HTTP (no core/ import; plain OpenAI-compatible calls) ------------
 
 def _http_json(url: str, api_key: str = "", payload: dict | None = None, timeout: float = _HTTP_TIMEOUT) -> Any:
@@ -657,8 +758,30 @@ def _last_error(meta: S.SessionMeta) -> str:
         return ""
 
 
+_HTTP_CODE_RE = re.compile(r"\bHTTP\s+(401|402|403|404|408|429|500|502|503|504|520|522|524)\b", re.IGNORECASE)
+
+
+def board_error_kind(line: str) -> str:
+    """Classify a recent errors.log line for the desktop board chip."""
+    low = line.lower()
+    m = _HTTP_CODE_RE.search(line)
+    code = int(m.group(1)) if m else 0
+    if code in (401, 403) or "auth" in low or "invalid key" in low or "unauthorized" in low:
+        return "auth"
+    if code == 402 or "credit" in low or "balance" in low:
+        return "credit"
+    if code == 404 or "model not found" in low:
+        return "model"
+    if code == 429 or "rate limit" in low or "ratelimit" in low:
+        return "ratelimit"
+    if any(s in low for s in ("timeout", "connect", "network", "unreachable", "connection failed")):
+        return "network"
+    return "provider" if line else ""
+
+
 def session_entry(meta: S.SessionMeta) -> dict[str, Any]:
     cfg = _read_config(meta)
+    last_error = _last_error(meta)
     char_path = (cfg.get("character_path") or "").strip()
     char_name, lang = meta.name, "zh"
     if char_path:
@@ -678,7 +801,8 @@ def session_entry(meta: S.SessionMeta) -> dict[str, Any]:
         "created_at": meta.created_at,
         "last_active": meta.last_active or meta.created_at,
         "preview": _transcript_preview(meta),
-        "error": _last_error(meta),
+        "error": last_error,
+        "error_kind": board_error_kind(last_error),
     }
 
 
@@ -1121,7 +1245,20 @@ class HubDispatcher:
             return _public_defaults(load_defaults())
         if method == "defaults.set":
             updates = {k: v for k, v in p.items() if k in _DEFAULT_FIELDS and isinstance(v, str)}
-            return _public_defaults(save_defaults(updates))
+            before = load_defaults()
+            defaults = save_defaults(updates)
+            public = _public_defaults(defaults)
+            changed_key = "api_key" in updates and updates.get("api_key") != before.get("api_key")
+            if changed_key and defaults.get("api_key"):
+                public["key_update_candidates"] = key_update_candidates(defaults)
+            else:
+                public["key_update_candidates"] = []
+            return public
+        if method == "defaults.apply_key":
+            names = p.get("names")
+            if not isinstance(names, list):
+                raise RpcError(-32602, "defaults.apply_key expects names: [...]")
+            return apply_default_key([str(n) for n in names])
         if method == "key.test":
             defaults = load_defaults()
             return test_key(

@@ -6,6 +6,7 @@ import sys
 import time
 from dataclasses import dataclass
 
+from ..obs import get_logger
 from ..content.themes import LUNAMOTH_BANNER
 from ..presence import normalize_mode
 from ..protocol import Notice, TextDelta, ToolEnd
@@ -19,12 +20,33 @@ BANNER = (
 )
 
 STDIN_ACTIVE = True
+_log = get_logger("terminal")
+
+
+def permanent_model_error(message: str) -> bool:
+    return message.startswith(("HTTP 401", "HTTP 403", "HTTP 404"))
 
 
 @dataclass
 class TerminalState:
     running: bool = True
     eternal: bool = True
+    idle_backoff: float = 0.0
+    idle_blocked_until: float = 0.0
+
+    def reset_idle_backoff(self) -> None:
+        self.idle_backoff = 0.0
+        self.idle_blocked_until = 0.0
+
+    def note_permanent_idle_error(self, now: float | None = None) -> float:
+        now = time.monotonic() if now is None else now
+        self.idle_backoff = 60.0 if self.idle_backoff <= 0 else min(self.idle_backoff * 2.0, 1800.0)
+        self.idle_blocked_until = now + self.idle_backoff
+        return self.idle_backoff
+
+    def idle_delay_remaining(self, now: float | None = None) -> float:
+        now = time.monotonic() if now is None else now
+        return max(0.0, self.idle_blocked_until - now)
 
 
 def _stdin_line_ready() -> bool:
@@ -105,6 +127,53 @@ def _stdin_permission_hook(kind: str, reason: str, detail: str, wait_seconds: in
         time.sleep(0.05)
     print("\n  → denied (no answer)", flush=True)
     return False
+
+
+def _idle_ready(state: TerminalState, handle: CharaHandle, last_user_at: float) -> bool:
+    """Gate spontaneous cycles: live/chat state, quiet engagement, rest, backoff."""
+    if not state.eternal or state.idle_delay_remaining() > 0:
+        return False
+    quiet = max(0, int(getattr(handle.settings, "quiet", 300)))  # live: /quiet re-reads
+    engaged = last_user_at and time.monotonic() < last_user_at + quiet
+    resting = handle.snapshot().rest_until > time.time()
+    return bool(not engaged and not resting)
+
+
+def _run_idle_cycle(
+    state: TerminalState,
+    handle: CharaHandle,
+    think_pfx: str,
+    base_patience: float,
+    *,
+    interactive: bool,
+) -> str | None:
+    print("\n\x1b[2m· idle ·\x1b[0m", flush=True)
+    try:
+        _, interrupt = _stream_with_interrupt(think_pfx, handle.stream_idle(), allow_interrupt=True)
+        state.reset_idle_backoff()
+    except RuntimeError as e:
+        message = str(e)
+        if not permanent_model_error(message):
+            raise
+        delay = state.note_permanent_idle_error()
+        _log.error(
+            "permanent model error during idle; backing off spontaneous cycles for %.0fs: %s",
+            delay,
+            message[:200],
+        )
+        print(
+            f"\n\x1b[31m[model error: {message} — idle cycles back off for {int(delay)}s; "
+            "operator input still tries immediately]\x1b[0m",
+            flush=True,
+        )
+        return None
+    if interrupt is not None:
+        state.reset_idle_backoff()
+        return interrupt
+    pending_line = _cooldown(_cycle_pause(handle, base_patience))
+    if interactive:
+        _prompt()
+    return pending_line
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -209,9 +278,11 @@ def main(argv: list[str] | None = None) -> int:
                     # Backend commands run through the shared registry — same
                     # behavior and help text as every other frontend.
                     print(handle.command(stripped).text, flush=True)
+                    state.reset_idle_backoff()
                     _prompt()
                     continue
                 last_user_at = time.monotonic()
+                state.reset_idle_backoff()
                 _, interrupt = _stream_with_interrupt(reply_pfx, handle.stream_user(line), allow_interrupt=True)
                 if interrupt is not None:
                     pending_line = interrupt
@@ -221,20 +292,11 @@ def main(argv: list[str] | None = None) -> int:
                 continue
 
             # Its own life waits while the operator is engaged or it chose to rest.
-            quiet = max(0, int(getattr(handle.settings, "quiet", 300)))  # live: /quiet re-reads
-            engaged = last_user_at and time.monotonic() < last_user_at + quiet
-            resting = handle.snapshot().rest_until > time.time()
-            if state.eternal and not engaged and not resting:
-                print("\n\x1b[2m· idle ·\x1b[0m", flush=True)
-                _, interrupt = _stream_with_interrupt(think_pfx, handle.stream_idle(), allow_interrupt=True)
-                if interrupt is not None:
-                    pending_line = interrupt
-                    continue
-                pending_line = _cooldown(_cycle_pause(handle, base_patience))
-                if interactive:
-                    _prompt()
+            backoff_remaining = state.idle_delay_remaining()
+            if _idle_ready(state, handle, last_user_at):
+                pending_line = _run_idle_cycle(state, handle, think_pfx, base_patience, interactive=interactive)
             else:
-                pending_line = _cooldown(0.1)
+                pending_line = _cooldown(min(0.1, backoff_remaining) if backoff_remaining > 0 else 0.1)
     except KeyboardInterrupt:
         print('\n[interrupted]')
     finally:

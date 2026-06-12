@@ -122,7 +122,7 @@ class LLMClient:
             except urllib.error.HTTPError as e:
                 detail = e.read().decode("utf-8", errors="replace")[:500]
                 if e.code not in self._RETRYABLE_HTTP:
-                    _log.error("permanent HTTP error from %s: %s %s", url, e.code, detail[:200])
+                    _log.info("permanent HTTP error from %s: %s %s", url, e.code, detail[:200])
                     raise RuntimeError(f"HTTP {e.code}: {detail}") from e
                 err = f"HTTP {e.code}: {detail[:120]}"
             except urllib.error.URLError as e:

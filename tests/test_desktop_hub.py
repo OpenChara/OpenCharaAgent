@@ -97,6 +97,47 @@ def test_defaults_set_ignores_unknown_fields():
     assert "evil" not in r
 
 
+def test_defaults_set_reports_key_rotation_candidates_and_apply_key_rewrites_only_matching_configs():
+    H.save_defaults({"provider": "openrouter", "base_url": "https://example.invalid/v1",
+                     "api_key": "old-key", "model": "test/model"})
+    a = result("session.wake", {"card": luna_card_path(), "name": "same"})
+    b = result("session.wake", {"card": luna_card_path(), "name": "other"})
+    c = result("session.wake", {"card": luna_card_path(), "name": "current"})
+    same = S.load_session(a["name"])
+    other = S.load_session(b["name"])
+    current = S.load_session(c["name"])
+    other_cfg = json.loads(other.config_path.read_text(encoding="utf-8"))
+    other_cfg["base_url"] = "https://elsewhere.invalid/v1"
+    other.config_path.write_text(json.dumps(other_cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    current_cfg = json.loads(current.config_path.read_text(encoding="utf-8"))
+    current_cfg["api_key"] = "new-key"
+    current.config_path.write_text(json.dumps(current_cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    saved = result("defaults.set", {"api_key": "new-key"})
+
+    candidates = saved["key_update_candidates"]
+    assert [x["name"] for x in candidates] == [same.name]
+    assert "api_key" not in json.dumps(candidates)
+
+    applied = result("defaults.apply_key", {"names": [same.name, other.name, current.name, "missing"]})
+    assert applied["updated"] == [same.name]
+    skipped = {x["name"]: x["reason"] for x in applied["skipped"]}
+    assert skipped[other.name] == "provider_base_url_mismatch"
+    assert skipped[current.name] == "already_current"
+    assert skipped["missing"] == "missing"
+
+    assert json.loads(same.config_path.read_text(encoding="utf-8"))["api_key"] == "new-key"
+    assert json.loads(other.config_path.read_text(encoding="utf-8"))["api_key"] == "old-key"
+    assert json.loads(current.config_path.read_text(encoding="utf-8"))["api_key"] == "new-key"
+    # The rewrite preserves unrelated fields from the per-session config.
+    assert json.loads(same.config_path.read_text(encoding="utf-8"))["character_path"].endswith("card.json")
+
+
+def test_apply_key_validates_names_param():
+    err = rpc_error("defaults.apply_key", {"names": "not a list"})
+    assert err["code"] == -32602
+
+
 # ---- wake (instantiation) ------------------------------------------------------
 
 def test_wake_freezes_card_and_writes_config():
@@ -348,6 +389,26 @@ def test_http_error_classification():
     assert H._classify_http_error(500, "Insufficient credits")["kind"] == "credit"
     assert H._classify_http_error(429, "")["kind"] == "ratelimit"
     assert H._classify_http_error(404, "")["kind"] == "model"
+
+
+def test_board_error_kind_classifies_provider_auth_errors():
+    assert H.board_error_kind("2026 ERROR llm: permanent HTTP error: HTTP 401 User not found") == "auth"
+    assert H.board_error_kind("HTTP 403 forbidden") == "auth"
+    assert H.board_error_kind("HTTP 404 model not found") == "model"
+    assert H.board_error_kind("connection failed: timeout") == "network"
+
+
+def test_session_entry_includes_auth_error_kind():
+    set_defaults()
+    entry = result("session.wake", {"card": luna_card_path()})
+    meta = S.load_session(entry["name"])
+    log = meta.sandbox_dir / "logs" / "errors.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("2026-06-12 ERROR [x] lunamoth.terminal: permanent model error: HTTP 401 User not found\n",
+                   encoding="utf-8")
+    row = result("sessions.list")[0]
+    assert row["error_kind"] == "auth"
+    assert "HTTP 401" in row["error"]
 
 
 def test_unknown_method_is_a_clean_rpc_error():

@@ -1,6 +1,10 @@
 import json
 import os
+import signal
+import subprocess
+import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -55,3 +59,41 @@ def test_start_all_only_configured(capsys):
     finally:
         for m in S.list_sessions():
             cli._stop_daemon(m)
+
+
+def test_serve_sigterm_clears_running_marker(tmp_path):
+    home = tmp_path / "home-serve"
+    src = str(Path(__file__).resolve().parents[1] / "src")
+    env = {**os.environ, "LUNAMOTH_HOME": str(home)}
+    env["PYTHONPATH"] = src + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    old_home = os.environ.get("LUNAMOTH_HOME")
+    os.environ["LUNAMOTH_HOME"] = str(home)
+    meta = S.create_session("stdio")
+    _configure(meta)
+    try:
+        with subprocess.Popen(
+            [sys.executable, "-m", "lunamoth.front.cli", "serve", "stdio", "--stdio"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            text=True,
+        ) as proc:
+            try:
+                deadline = time.time() + 5
+                while time.time() < deadline and not meta.pid_path.exists():
+                    time.sleep(0.05)
+                assert meta.pid_path.exists()
+                assert S.load_session("stdio").running_pid() == proc.pid
+                proc.terminate()
+                proc.wait(timeout=5)
+                assert not meta.pid_path.exists()
+            finally:
+                if proc.poll() is None:
+                    proc.send_signal(signal.SIGTERM)
+                    proc.wait(timeout=5)
+    finally:
+        if old_home is None:
+            os.environ.pop("LUNAMOTH_HOME", None)
+        else:
+            os.environ["LUNAMOTH_HOME"] = old_home
