@@ -929,13 +929,6 @@ def _draft_world_entries(draft: dict[str, Any]) -> list[dict[str, Any]]:
             "enabled": True,
             "insertion_order": i,
         })
-    if sum(1 for w in out if w["constant"]) > 1:
-        seen = False
-        for w in out:
-            if w["constant"] and not seen:
-                seen = True
-            elif w["constant"]:
-                w["constant"] = False
     return out
 
 
