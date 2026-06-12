@@ -189,3 +189,4 @@ lunamoth --plain          # 旧版纯终端模式
 ## 路线图状态
 
 - [x] **Remote TUI 网关基础** —— `lunamoth serve NAME --stdio` 现在把已激活会话暴露为换行分隔 JSON-RPC；`lunamoth serve NAME --host 127.0.0.1 --port 8137` 用同一套 dispatch 暴露为带 token 鉴权的 WebSocket。WebSocket 依赖是可选项，用 `uv sync --extra server` 安装。默认只绑定回环地址；是否绑定公网接口由操作者自行决定。
+- [x] **桌面壳（Electron，v1）** —— `apps/desktop/` 用一层薄 Electron 窗口包住 `lunamoth desktop`（沿用官方 Hermes Desktop 的形态：壳自己没有渲染器，界面由后端伺服的 `front/web/` 提供）；窗口未聚焦时 `speak` 走系统通知。`cd apps/desktop && npm i && npm run dev`。

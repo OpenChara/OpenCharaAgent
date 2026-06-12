@@ -189,3 +189,4 @@ This project began as an SCP fan work: an attempt to recreate **SCP-079** in the
 ## Roadmap status
 
 - [x] **Remote TUI gateway foundation** — `lunamoth serve NAME --stdio` now exposes the activated session as newline-delimited JSON-RPC, and `lunamoth serve NAME --host 127.0.0.1 --port 8137` exposes the same dispatch over a token-authenticated WebSocket. Install the optional WebSocket dependency with `uv sync --extra server`. The default bind is loopback; binding to a public interface is an operator decision.
+- [x] **Desktop shell (Electron, v1)** — `apps/desktop/` wraps `lunamoth desktop` in a thin Electron window (official Hermes Desktop's shape: no renderer of its own, the backend serves `front/web/`); system notifications for `speak` while the window is unfocused. `cd apps/desktop && npm i && npm run dev`.

@@ -835,7 +835,7 @@ class ChatController {
     if (ev.type === "text") {
       this.clearThinkingLine();
       if (ev.channel === "muse") this.appendBlock("muse", ev.text);
-      else this.appendCharText(ev.text);
+      else { this.appendCharText(ev.text); this.pendingNotify = (this.pendingNotify || "") + ev.text; }
       this.setStatusWord(t("st-creating"));
     } else if (ev.type === "think") {
       if (this.showThinking) this.appendBlock("think", ev.text);
@@ -917,6 +917,10 @@ class ChatController {
       $("stream-inner").appendChild(stepsBox);
     }
     this.closeCurrent();
+    // Electron shell: surface what was said while the window wasn't watched.
+    if (this.pendingNotify && window.lunamothNative && !document.hasFocus())
+      window.lunamothNative.notify(this.charName, this.pendingNotify.trim().slice(0, 200));
+    this.pendingNotify = "";
     this.setStatusWord(t("st-listening"));
     this.scrollDown();
   }
