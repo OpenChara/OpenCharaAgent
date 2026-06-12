@@ -3,6 +3,7 @@
 Everything runs against a temp LUNAMOTH_HOME; no network, no LLM (provider
 HTTP paths are exercised separately / mocked here)."""
 import json
+from pathlib import Path
 
 import pytest
 
@@ -264,6 +265,40 @@ def test_card_save_roundtrips_new_lunamoth_extension_fields():
     assert mine["avatar_svg"].startswith("<svg")
     assert mine["theme_color"] == "#7C5CFF"
     assert mine["tagline"] == "A gentle keeper of orbital lanterns"
+
+
+def test_card_studio_actor_embodiment_feeds_prompt_bridge(tmp_path, monkeypatch):
+    """Studio-saved `extensions.lunamoth.embodiment=actor` is read by the prompt machine."""
+    card = H.draft_to_card({
+        **draft_payload(),
+        "name": "BridgeCard",
+        "description": "BridgeCard keeps a quiet stage ledger.",
+        "embodiment": "actor",
+    }, origin_text="stage ledger keeper")
+    r = result("card.save", {"data": card})
+
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
+    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
+    from lunamoth.core import agent as agent_mod
+    from lunamoth.tools import skills as skills_mod
+
+    sandbox = tmp_path / "sandbox"
+    monkeypatch.setattr(agent_mod, "SANDBOX_ROOT", sandbox)
+    monkeypatch.setattr(skills_mod, "SANDBOX_ROOT", sandbox)
+
+    from lunamoth.core.agent import LunaMothAgent
+    from lunamoth.session.settings import Settings
+
+    agent = LunaMothAgent(Settings(provider="mock", character_path=r["path"], toolpack="sandbox"))
+    agent.transcript.reset()
+    stable = "\n\n".join(agent._stable_prefix())
+    stable_words = " ".join(stable.split())
+
+    assert Path(r["path"]).read_text(encoding="utf-8").find('\"embodiment\": \"actor\"') >= 0
+    assert agent.effective_embodiment() == "actor"
+    assert "You are giving BridgeCard life" in stable
+    assert "backstage of this embodiment" in stable_words
+    assert stable.index("You are giving BridgeCard life") < stable.index("must be real")
 
 
 def test_builtin_cards_cannot_be_deleted():
