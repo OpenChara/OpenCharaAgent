@@ -1019,6 +1019,8 @@ class ChatController {
         this.appendMuseText(ev.text);
       } else {
         this.appendCharText(ev.text, { superChat: isSuper });
+        // Electron shell: collect say-channel text for a system notification.
+        this.pendingNotify = (this.pendingNotify || "") + ev.text;
       }
       this.setStatusWord(t("st-creating"));
     } else if (ev.type === "think") {
@@ -1238,6 +1240,10 @@ class ChatController {
     this.pendingSuper = false;
     this.turnThink = null;
     this.setWorkState(false);
+    // Electron shell: surface what was said while the window wasn't watched.
+    if (this.pendingNotify && window.lunamothNative && !document.hasFocus())
+      window.lunamothNative.notify(this.charName, this.pendingNotify.trim().slice(0, 200));
+    this.pendingNotify = "";
     this.setStatusWord(t("st-listening"));
     this.scrollDown();
   }

@@ -1,0 +1,49 @@
+{
+  "name": "lunamoth-desktop",
+  "productName": "LunaMoth",
+  "version": "0.1.0",
+  "description": "LunaMoth desktop shell — a thin Electron window around `lunamoth desktop`",
+  "private": true,
+  "license": "MIT",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "electron .",
+    "dist": "electron-builder --mac dmg --arm64",
+    "dist:linux": "electron-builder --linux AppImage"
+  },
+  "devDependencies": {
+    "electron": "^40.9.3",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "app.lunamoth.desktop",
+    "productName": "LunaMoth",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**",
+      "assets/**",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.entertainment",
+      "icon": "assets/icon.png"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "assets/icon.png",
+      "category": "Utility"
+    }
+  }
+}

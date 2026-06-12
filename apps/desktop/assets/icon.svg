@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Placeholder app icon: the moth mark from front/web (board empty state),
+       moonlight-blue palette from docs/desktop/design.md (#5B9FD4 family). -->
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="38%" r="75%">
+      <stop offset="0%" stop-color="#1d3047"/>
+      <stop offset="100%" stop-color="#101a28"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="46%" r="40%">
+      <stop offset="0%" stop-color="#EAFAFF" stop-opacity=".22"/>
+      <stop offset="100%" stop-color="#EAFAFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#bg)"/>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#glow)"/>
+  <g transform="translate(112,112) scale(8)">
+    <ellipse cx="38" cy="44" rx="17" ry="25" transform="rotate(24 38 44)" fill="#6DB3E0" opacity=".55"/>
+    <ellipse cx="62" cy="44" rx="17" ry="25" transform="rotate(-24 62 44)" fill="#6DB3E0" opacity=".55"/>
+    <ellipse cx="50" cy="52" rx="3.4" ry="15" fill="#9FD0EE" opacity=".9"/>
+  </g>
+</svg>

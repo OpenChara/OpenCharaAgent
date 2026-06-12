@@ -193,3 +193,4 @@ lunamoth --plain          # 旧版纯终端模式
 - [x] **桌面端卡片工作室** —— Web 卡册现在可以从一段灵感文字生成可编辑的 SillyTavern V3 角色卡草稿，包含内嵌世界条目、种子目标、存在/演员化身立场、主题色与安全过滤后的 SVG 头像；创作者 review 并保存前不会落盘。
 - [x] **可读的 Web 对话** —— 桌面对话把思考、自语 / muse、系统 / GM 行、Super Chat 发言与工具工作区分成五种视觉样式；流式处理中始终显示当前工作状态，看板也能看到各角色最近的 Super Chat。
 - [x] **Messaging 网关（先接企业微信）** —— `lunamoth gateway NAME` 在一个已激活 chara 后运行 `~/.lunamoth/sessions/NAME/messaging.json`；适配器只投递 `say` 文本（包括 idle 中 `speak` 工具说给用户的话），muse / thinking / tool 事件都不出门。首个适配器是企业微信自建应用；回调加解密用可选依赖 `uv sync --extra messaging`，公网回调地址需要操作者自行用 frp / Tailscale / VPS / HTTPS 暴露，并用 sender user ID 做 allowlist。微信个人号暂不内置：它依赖非官方扫码桥，有封号风险；适配器 seam 保留给未来自愿 opt-in。
+- [x] **桌面壳（Electron，v1）** —— `apps/desktop/` 用一层薄 Electron 窗口包住 `lunamoth desktop`（沿用官方 Hermes Desktop 的形态：壳自己没有渲染器，界面由后端伺服的 `front/web/` 提供）；窗口未聚焦时 `speak` 走系统通知。`cd apps/desktop && npm i && npm run dev`。
