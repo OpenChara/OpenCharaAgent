@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Callable
 
-from ..content.knobs import embodiment_copy, normalize_embodiment, parse_patience
+from ..content.knobs import parse_patience
 from ..presence import normalize_mode
 from ..protocol.api import CommandInfo, Reply
 
@@ -243,36 +243,6 @@ def _patience(agent, session, arg: str) -> Reply:
     )
 
 
-def _embodiment(agent, session, arg: str) -> Reply:
-    want = normalize_embodiment(arg)
-    usage = (
-        "usage: /embodiment literal|actor\n"
-        f"- {embodiment_copy('literal', 'en')}\n"
-        f"- {embodiment_copy('actor', 'en')}\n"
-        f"- {embodiment_copy('literal', 'zh')}\n"
-        f"- {embodiment_copy('actor', 'zh')}"
-    )
-    if arg.strip():
-        if not want:
-            return Reply(False, usage)
-        _persist(agent, embodiment_override=want)
-        agent._invalidate_stable_prefix()
-        return Reply(
-            True,
-            f"embodiment = {want} (persisted override; operator > card > literal)\n"
-            f"{embodiment_copy(want, agent.lang)}",
-            {"embodiment": want},
-        )
-    cur = agent.effective_embodiment() if hasattr(agent, "effective_embodiment") else "literal"
-    return Reply(
-        True,
-        f"embodiment = {cur} (operator > card > literal)\n"
-        f"{embodiment_copy(cur, agent.lang)}\n\n{usage}",
-        {"embodiment": cur},
-        verbose=True,
-    )
-
-
 def _thinking(agent, session, arg: str) -> Reply:
     want = arg.strip().lower()
     if want in {"on", "off"}:
@@ -330,7 +300,6 @@ _REGISTRY: dict[str, Command] = dict([
     _cmd("mode", "/mode live|chat", "live: keeps creating while you watch; chat: replies only", _mode),
     _cmd("quiet", "/quiet <seconds>", "silence before it resumes its own work (default 300)", _quiet),
     _cmd("patience", "/patience <seconds>", "base seconds between spontaneous cycles", _patience),
-    _cmd("embodiment", "/embodiment literal|actor", "how tools relate to the character's fiction", _embodiment),
     _cmd("thinking", "/thinking on|off", "show the thinking text (default: ✶ indicator only)", _thinking),
     _cmd("reasoning", "/reasoning off|low|medium|high", "reasoning effort (default medium)", _reasoning),
     _cmd("compact", "/compact", "fold older turns into a summary now", _compact),

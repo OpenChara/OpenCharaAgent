@@ -1094,17 +1094,13 @@ class ChatController {
       (v) => this.command(`/quiet ${v}`, false));
     this.numField(body, "p-patience", "p-patience-sub", snap.patience || 600,
       (v) => this.command(`/patience ${v}`, false));
-    const embSeg = el("div", { class: "seg" });
-    for (const m of ["literal", "actor"]) {
-      embSeg.appendChild(el("span", { class: snap.embodiment === m ? "on" : "", onclick: async (ev) => {
-        await this.command(`/embodiment ${m}`, false);
-        embSeg.querySelectorAll("span").forEach((s2) => s2.classList.toggle("on", s2 === ev.target));
-      } }, m));
-    }
+    // Embodiment is chosen at wake and never hot-swapped (identity-layer
+    // switches would rebuild the stable prefix and destroy the prompt cache).
+    const stance = snap.embodiment === "actor" ? "actor" : "literal";
     body.appendChild(el("div", { class: "pfield" },
-      el("label", null, t("p-embodiment")),
-      el("div", { class: "why" }, t("emb-" + (snap.embodiment === "actor" ? "actor" : "literal"))),
-      el("div", { class: "ctl" }, embSeg)));
+      el("label", null, t("p-embodiment") + " · " + stance),
+      el("div", { class: "why" }, t("emb-" + stance)),
+      el("div", { class: "why" }, t("p-embodiment-wake"))));
   }
 
   async renderAbilitiesPage(body) {

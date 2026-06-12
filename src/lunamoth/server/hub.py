@@ -34,6 +34,7 @@ from typing import Any, Callable
 from .. import __version__
 from ..config import ROOT
 from ..content.cards import CharacterCard, detect_language, looks_like_world_book, merge_world_into_card
+from ..content.knobs import normalize_embodiment
 from ..session import sessions as S
 from ..session.settings import PRESETS, Settings
 from .dispatch import RpcError, error_response, ok_response, _normalize_request
@@ -1218,12 +1219,20 @@ def session_entry(meta: S.SessionMeta, supervisor: Any | None = None) -> dict[st
 
 
 def wake(card_path: str, name: str = "", isolation: str = "sandbox",
-         model: str = "", toolpack: str = "") -> dict[str, Any]:
+         model: str = "", toolpack: str = "", embodiment: str = "") -> dict[str, Any]:
     """Instantiate a card: create the session, freeze a card copy, write config.
 
     The card describes WHO the chara is; this call decides where it lives
-    (isolation) and what it thinks with (model). The frozen copy means later
-    edits to the deck never drift a living chara's persona."""
+    (isolation), what it thinks with (model) and — once, at wake — how tools
+    relate to its fiction (embodiment). Embodiment is a wake-time choice, never
+    hot-swapped: identity-layer switches would rebuild the stable prefix and
+    destroy the prompt cache. The frozen copy means later edits to the deck
+    never drift a living chara's persona."""
+    stance = ""
+    if embodiment:
+        stance = normalize_embodiment(embodiment)
+        if not stance:
+            raise RpcError(-32602, f"invalid embodiment {embodiment!r} — expected literal|actor")
     card = CharacterCard.load(card_path)  # validates before any disk writes
     defaults = load_defaults()
     if not (defaults.get("base_url") and defaults.get("api_key")) and defaults.get("provider") != "mock":
@@ -1260,6 +1269,10 @@ def wake(card_path: str, name: str = "", isolation: str = "sandbox",
         cfg["toolpack"] = toolpack
     elif isinstance(card_defaults, dict) and card_defaults.get("toolpack"):
         cfg["toolpack"] = str(card_defaults["toolpack"])
+    if stance:
+        # Operator's wake-time choice persists as the override; absent, the
+        # resolution chain stays card declaration > literal.
+        cfg["embodiment_override"] = stance
     meta.config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
     try:
         meta.config_path.chmod(0o600)
@@ -1676,6 +1689,7 @@ class HubDispatcher:
                 isolation=str(p.get("isolation") or "sandbox"),
                 model=str(p.get("model") or ""),
                 toolpack=str(p.get("toolpack") or ""),
+                embodiment=str(p.get("embodiment") or ""),
             )
         if method == "chara.extras":
             return chara_extras(self._meta(p))

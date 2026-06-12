@@ -189,7 +189,7 @@ lunamoth --plain          # 旧版纯终端模式
 
 Patience 默认 600 秒，可由角色卡 `extensions.lunamoth.patience` 声明，可用 `LUNAMOTH_PATIENCE` 注入，也可在会话中 `/patience <秒>` 按 chara 持久化。它只决定自发循环的节奏；`/quiet` 与 `rest` 各自独立。
 
-会话内命令：`/help`、`/goal`、`/skills`、`/mcp`、`/status`、`/memory`、`/files`、`/mode live|chat`、`/patience`、`/embodiment`、`/reasoning`、`/net on|off`、`/allow-dir <path>`、`/panel`、`/theme`、`/settings`、`/clear`、`/exit` —— 冗长输出会点亮右侧**聚光板**（遥测 / 记忆 / 文件树点击预览 / 操作员终端 / 帮助），控制台始终是干净的聊天记录。`! <cmd>` 以你的身份在 chara 沙盒里跑 shell（同一牢笼，输出进面板）；`Esc` 让面板回到遥测。
+会话内命令：`/help`、`/goal`、`/skills`、`/mcp`、`/status`、`/memory`、`/files`、`/mode live|chat`、`/patience`、`/reasoning`、`/net on|off`、`/allow-dir <path>`、`/panel`、`/theme`、`/settings`、`/clear`、`/exit` —— 冗长输出会点亮右侧**聚光板**（遥测 / 记忆 / 文件树点击预览 / 操作员终端 / 帮助），控制台始终是干净的聊天记录。`! <cmd>` 以你的身份在 chara 沙盒里跑 shell（同一牢笼，输出进面板）；`Esc` 让面板回到遥测。
 
 ## 许可与致谢
 

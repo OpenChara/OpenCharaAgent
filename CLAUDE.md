@@ -237,7 +237,12 @@ into the session's card, key stripped.)
 - **Embodiment stance**: `literal` (default) means today's digital-being model;
   `actor` injects a neutral bridge before Rules so tools remain real backstage
   while the fiction stays whole. Precedence is operator override
-  (`Settings.embodiment_override`, `/embodiment`) > card declaration > literal.
+  (`Settings.embodiment_override`) > card declaration > literal. The choice is
+  made at WAKE TIME (wizard/welcome, or `session.wake`'s `embodiment` param
+  writing the override into the session config) and is never hot-swapped:
+  identity-layer switches would rebuild the stable prefix and destroy the
+  prompt cache — embodiment is how the chara was brought to life, not a
+  runtime mood.
 - **Two output registers**: muse (its own life; panoramic frontends only) vs
   say (delivered everywhere — the `speak` tool is how it decides to reach you).
 - **Isolation** per chara: `dir` / `sandbox` (default; sandbox-exec/bwrap) /

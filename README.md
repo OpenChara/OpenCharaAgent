@@ -189,7 +189,7 @@ lunamoth --plain          # legacy plain terminal mode
 
 Patience defaults to 600 seconds, can be declared by cards as `extensions.lunamoth.patience`, can be seeded by `LUNAMOTH_PATIENCE`, and is persisted per chara with `/patience <seconds>`. It paces only the spontaneous cycles; `/quiet` and `rest` are separate.
 
-In-session: `/help`, `/goal`, `/skills`, `/mcp`, `/status`, `/memory`, `/files`, `/mode live|chat`, `/patience`, `/embodiment`, `/reasoning`, `/net on|off`, `/allow-dir <path>`, `/panel`, `/theme`, `/settings`, `/clear`, `/exit` — verbose output lights up the right-side **spotlight panel** (telemetry / memory / file tree with click-to-preview / operator terminal / help), so the console stays a clean chat log. `! <cmd>` runs YOUR shell command in the chara's sandbox (same jail, output in the panel); `Esc` brings the panel home to telemetry.
+In-session: `/help`, `/goal`, `/skills`, `/mcp`, `/status`, `/memory`, `/files`, `/mode live|chat`, `/patience`, `/reasoning`, `/net on|off`, `/allow-dir <path>`, `/panel`, `/theme`, `/settings`, `/clear`, `/exit` — verbose output lights up the right-side **spotlight panel** (telemetry / memory / file tree with click-to-preview / operator terminal / help), so the console stays a clean chat log. `! <cmd>` runs YOUR shell command in the chara's sandbox (same jail, output in the panel); `Esc` brings the panel home to telemetry.
 
 ## License & acknowledgements
 

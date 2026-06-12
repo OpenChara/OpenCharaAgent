@@ -175,28 +175,23 @@ def test_bundled_actor_bridge_uses_card_language_and_macros(agent_factory, tmp_p
     assert "这场化身的后台" in blob
 
 
-def test_embodiment_command_persists_and_explains(agent_factory, monkeypatch):
+def test_embodiment_is_wake_time_only_no_hot_swap_command(agent_factory, tmp_path):
+    """The /embodiment hot swap is gone (owner decision 2026-06-13): identity-layer
+    switches rebuild the stable prefix and destroy the prompt cache. The choice
+    arrives at wake (embodiment_override in the session config) and stays."""
     from lunamoth.core import commands
 
-    # The set-reply explanation follows the card language, and the bundled
-    # default card follows the host locale — pin it so the assert is portable.
-    monkeypatch.setenv("LUNAMOTH_LANG", "en")
     a = agent_factory()
     s = a.make_session()
     reply = commands.execute(a, s, "/embodiment actor")
-    assert reply.ok
-    assert reply.data == {"embodiment": "actor"}
-    assert a.settings.embodiment_override == "actor"
-    assert "operator > card > literal" in reply.text
-    assert "Actor: the model embodies the character" in reply.text
+    assert not reply.ok and "unknown command" in reply.text
+    assert all(c.name != "embodiment" for c in commands.infos())
 
-    help_reply = commands.execute(a, s, "/embodiment")
-    assert help_reply.ok and help_reply.verbose
-    assert "Literal: the character IS a digital being" in help_reply.text
-    assert "演员化身" in help_reply.text
-
-    bad = commands.execute(a, s, "/embodiment puppet")
-    assert not bad.ok and "usage: /embodiment literal|actor" in bad.text
+    # The resolution chain itself is untouched: override > card > literal.
+    card = _write_card(tmp_path / "card-actor.json", {"toolpack": "sandbox", "embodiment": "actor"})
+    assert agent_factory(card=card).effective_embodiment() == "actor"
+    assert agent_factory(card=card, embodiment_override="literal").effective_embodiment() == "literal"
+    assert agent_factory().effective_embodiment() == "literal"
 
 
 def test_hub_daemon_launch_does_not_hardcode_tiny_patience(monkeypatch, tmp_path):

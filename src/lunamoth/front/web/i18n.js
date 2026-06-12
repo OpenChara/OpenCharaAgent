@@ -91,6 +91,7 @@ const I18N = {
   "p-patience-sub": ["两次自发行动之间的基准间隔（秒）", "Base seconds between spontaneous cycles"],
   "p-next-cycle": ["下一次自发周期", "Next cycle"],
   "p-embodiment": ["工具与故事", "Tools & fiction"],
+  "p-embodiment-wake": ["唤醒时选定，之后不再切换", "Chosen at wake; never switched at runtime"],
   "p-quiet-act": ["安静一会儿（10 分钟）", "Quiet for a while (10 min)"],
   "p-reset": ["重新开始这段关系…", "Start this relationship over…"],
   "p-goals": ["目标", "Goals"],

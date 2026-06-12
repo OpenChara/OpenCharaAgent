@@ -163,6 +163,28 @@ def test_wake_without_model_config_is_refused():
     assert "no model configured" in err["message"]
 
 
+def test_wake_embodiment_is_a_wake_time_choice_persisted_in_config():
+    set_defaults()
+    entry = result("session.wake", {"card": luna_card_path(), "embodiment": "actor"})
+    meta = S.load_session(entry["name"])
+    cfg = json.loads(meta.config_path.read_text(encoding="utf-8"))
+    assert cfg["embodiment_override"] == "actor"
+
+    # Absent param: no override lands — the chain stays card > literal.
+    plain = result("session.wake", {"card": luna_card_path()})
+    plain_cfg = json.loads(S.load_session(plain["name"]).config_path.read_text(encoding="utf-8"))
+    assert plain_cfg.get("embodiment_override", "") == ""
+
+
+def test_wake_invalid_embodiment_is_clean_rpc_error_and_creates_nothing():
+    set_defaults()
+    before = {m.name for m in S.list_sessions()}
+    err = rpc_error("session.wake", {"card": luna_card_path(), "embodiment": "puppet"})
+    assert err["code"] == -32602
+    assert "embodiment" in err["message"] and "literal|actor" in err["message"]
+    assert {m.name for m in S.list_sessions()} == before  # validated before any disk writes
+
+
 def test_wake_twice_gets_distinct_names_and_freezes_deck_card():
     set_defaults()
     a = result("session.wake", {"card": luna_card_path()})
