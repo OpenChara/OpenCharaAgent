@@ -1,11 +1,11 @@
 /* LunaMoth Desktop renderer — the chara page: chat stream, the persistent
-   right panel (status zone + settings), works / terminal sibling pages,
-   the avatar editor and the per-chara gateway card.
+   right panel (tabbed: status | abilities | memory | gateway | settings),
+   works / terminal sibling pages and the avatar editor.
    Idle driving is SERVER-SIDE only (supervisor) — this file never calls idle. */
 "use strict";
 
 /* ============================ AVATAR EDITOR ============================
-   点头像即编辑：三条路径 — AI 重新生成（等待后端）、改主题色（纯前端）、
+   点头像即编辑：三条路径 — AI 重新生成（card.avatar_draft）、改主题色（纯前端）、
    直接改 SVG。保存写回卡册原卡 extensions.lunamoth。 */
 function recolorSvg(svg, newColor) {
   const counts = {};
@@ -77,17 +77,60 @@ async function openAvatarEditor(deckCard) {
     }
   });
 
-  openModal(el("div", null,
+  /* AI 重新生成：card.avatar_draft（已落地）。生成可达 30–60s；关掉模态即放弃。
+     零可用候选 = 后端可见错误（by design），原样展示。 */
+  const aiDesc = el("input", { placeholder: t("av-ai-desc-ph") });
+  const aiBtn = el("button", { class: "btn soft" }, t("av-ai-go"));
+  const aiNote = el("div", { class: "av-note", style: "margin-top:6px" });
+  const aiCands = el("div", { class: "av-cands" });
+  // closeModal 只摘掉 open class，内容仍挂着——「还在看」要同时验 class 与归属。
+  const modalLive = () => root.isConnected && $("modal-layer").classList.contains("open");
+  aiBtn.addEventListener("click", async () => {
+    aiBtn.disabled = true;
+    aiNote.className = "av-note";
+    aiNote.textContent = t("av-ai-generating");
+    aiCands.innerHTML = "";
+    let r;
+    try {
+      r = await hub.call("card.avatar_draft",
+        { card_path: deckCard.path, description: aiDesc.value.trim() }, 180000);
+    } catch (e) {
+      if (modalLive()) { aiNote.className = "av-note err"; aiNote.textContent = rpcErrText(e); }
+      aiBtn.disabled = false;
+      return;
+    }
+    aiBtn.disabled = false;
+    if (!modalLive()) return; // 模态已关：放弃这次生成
+    aiNote.textContent = t("av-ai-pick");
+    for (const cand of (r.candidates || []).slice(0, 3)) {
+      const svg = String(cand.avatar_svg || "");
+      if (!safeSvgForPreview(svg)) continue;
+      const color = /^#[0-9a-fA-F]{6}$/.test(String(cand.theme_color || ""))
+        ? String(cand.theme_color).toUpperCase() : work.color;
+      const thumb = el("button", { class: "av-cand", style: `--card-theme:${color}` },
+        el("img", { src: dataUriSvg(svg), alt: "" }));
+      thumb.addEventListener("click", () => {
+        work.svg = svg;
+        work.color = color;
+        svgText.value = svg;
+        colorInput.value = color;
+        refresh();
+      });
+      aiCands.appendChild(thumb);
+    }
+  });
+
+  const root = el("div", null,
     el("h2", null, `${full.name} · ${t("av-title")}`),
     deckCard.builtin ? el("div", { class: "av-note amber", style: "margin-bottom:12px" }, t("av-builtin-note")) : null,
     (!deckCard.builtin && deckCard.frozen) ? el("div", { class: "av-note", style: "margin-bottom:12px" },
       t("av-frozen-note", { names: (deckCard.used_by || []).join("、") })) : null,
     el("div", { class: "av-top" }, preview,
-      el("div", null,
+      el("div", { style: "flex:1;min-width:0" },
         el("div", { class: "av-sec" },
           el("h4", null, t("av-ai")),
-          el("button", { class: "btn soft", disabled: "" }, "✦ " + t("av-ai")),
-          el("div", { class: "av-note", style: "margin-top:5px" }, t("av-ai-wait"))),
+          el("div", { class: "av-ai-row" }, aiDesc, aiBtn),
+          aiNote, aiCands),
         el("div", { class: "av-sec" },
           el("h4", null, t("av-color")),
           colorInput))),
@@ -97,10 +140,12 @@ async function openAvatarEditor(deckCard) {
     el("div", { class: "acts", style: "margin-top:14px" },
       el("button", { class: "btn text", onclick: closeModal }, t("cancel")),
       el("div", { class: "grow" }),
-      saveBtn)), true);
+      saveBtn));
+  openModal(root, true);
 }
 
-/* ============================ GATEWAY CARD（per-chara） ============================ */
+/* ============================ GATEWAY（右侧面板「网关」页） ============================ */
+const GW_MASK = "••••••••"; // hub.py _SECRET_MASK：后端给秘密字段回显的掩码
 const GW_PLATFORMS = {
   wecom: {
     label: "WeCom 企业微信",
@@ -131,151 +176,7 @@ const GW_PLATFORMS = {
   },
 };
 
-async function openGatewayModal(name, displayName) {
-  const shown = displayName || ((state.chat && state.chat.name === name) ? state.chat.charName : name);
-  let cfg = null;          // messaging.get result (null = backend RPC missing)
-  let backendMissing = false;
-  try {
-    cfg = await hub.call("messaging.get", { name }, 15000);
-  } catch (e) {
-    if (e && e.code === -32601) backendMissing = true;
-    else if (e && e.message !== "not connected") backendMissing = true;
-  }
-  let gwStatus = { state: "stopped", platform: "", detail: "" };
-  try { gwStatus = await hub.call("gateway.status", { name }, 15000); } catch (e) { /* keep */ }
-
-  const adapters = (cfg && cfg.adapters) || {};
-  const platKeys = Object.keys(GW_PLATFORMS);
-  let plat = platKeys.find((k) => adapters[k]) || "wecom";
-  let enabled = !!(cfg && cfg.enabled);
-  const inputs = {};      // field -> input element (per render)
-  let allowedInput = null;
-
-  const root = el("div", null);
-
-  function requiredFilled(p) {
-    const spec = GW_PLATFORMS[p];
-    const a = adapters[p] || {};
-    return spec.required.length === 0
-      ? Object.keys(a).length > 0 || p === "weixin"
-      : spec.required.every(([f]) => String(a[f] ?? "").length > 0);
-  }
-
-  function chips() {
-    const run = gwStatus && gwStatus.state === "running";
-    return el("div", { class: "gw-chips" },
-      el("span", { class: "gw-chip " + (enabled ? "ok" : "") }, enabled ? t("gw-enabled") : t("gw-disabled")),
-      el("span", { class: "gw-chip " + (requiredFilled(plat) ? "ok" : "warn") },
-        requiredFilled(plat) ? t("gw-configured") : t("gw-needs-setup")),
-      el("span", { class: "gw-chip " + (run ? "ok" : "") }, run ? t("gw-running") : t("gw-stopped")));
-  }
-
-  function fieldRow(plat2, f, label, secret, why) {
-    const a = adapters[plat2] || {};
-    const input = el("input", {
-      value: a[f] !== undefined && a[f] !== null ? String(a[f]) : "",
-      placeholder: secret ? "••••" : "",
-      type: secret ? "password" : "text",
-    });
-    if (backendMissing) input.disabled = true;
-    inputs[f] = input;
-    return el("div", { class: "gw-field" },
-      el("label", null, label || f),
-      why ? el("div", { class: "why" }, why) : null,
-      input,
-      secret ? el("div", { class: "why" }, t("gw-secret-keep")) : null);
-  }
-
-  function render() {
-    root.innerHTML = "";
-    for (const k of Object.keys(inputs)) delete inputs[k];
-    const spec = GW_PLATFORMS[plat];
-    root.appendChild(el("h2", null, t("gw-title", { name: shown })));
-    root.appendChild(el("div", { class: "sub" }, t("gw-sub")));
-    root.appendChild(el("div", { class: "gw-plats" },
-      ...platKeys.map((k) => el("button", { class: k === plat ? "on" : "", onclick: () => { plat = k; render(); } },
-        GW_PLATFORMS[k].label))));
-    if (backendMissing) root.appendChild(el("div", { class: "gw-banner" }, t("gw-wait-backend")));
-    root.appendChild(chips());
-    root.appendChild(el("div", { class: "gw-blurb" }, t(spec.blurb)));
-
-    if (spec.steps) {
-      root.appendChild(el("div", { class: "gw-sec" },
-        el("h4", null, t("gw-creds")),
-        el("ol", { class: "gw-steps" }, ...spec.steps.map((s) => el("li", null, t(s))))));
-    }
-    if (spec.qr) {
-      root.appendChild(el("div", { class: "gw-qr-box" }, t("gw-weixin-qr")));
-      root.appendChild(el("div", { class: "gw-blurb" }, t(spec.note)));
-    }
-    if (spec.required.length) {
-      root.appendChild(el("div", { class: "gw-sec" },
-        el("h4", null, t("gw-required")),
-        ...spec.required.map(([f, label, secret]) =>
-          fieldRow(plat, f, f === "peer_id" ? t("gw-f-peer-id") : label, secret))));
-    }
-    const recSec = el("div", { class: "gw-sec" }, el("h4", null, t("gw-recommended")));
-    for (const [f, label, secret] of spec.recommended) recSec.appendChild(fieldRow(plat, f, label, secret));
-    // allowed_senders 顶层，带安全理由
-    allowedInput = el("input", { value: (cfg && Array.isArray(cfg.allowed_senders) ? cfg.allowed_senders.join(", ") : "") });
-    if (backendMissing) allowedInput.disabled = true;
-    recSec.appendChild(el("div", { class: "gw-field" },
-      el("label", null, t("gw-f-allowed")),
-      el("div", { class: "why" }, t("gw-allowed-why")),
-      allowedInput));
-    root.appendChild(recSec);
-
-    if (spec.advanced.length) {
-      root.appendChild(el("details", { class: "gw-adv" },
-        el("summary", null, `${t("gw-advanced")} (${spec.advanced.length})`),
-        ...spec.advanced.map(([f, label, secret]) => fieldRow(plat, f, label, secret))));
-    }
-
-    const enableSwitch = el("button", { class: "switch" + (enabled ? " on" : ""), onclick: () => {
-      enabled = !enabled;
-      enableSwitch.classList.toggle("on", enabled);
-    } });
-    if (backendMissing) enableSwitch.disabled = true;
-    const run = gwStatus && gwStatus.state === "running";
-    const runBtn = el("button", { class: "btn soft", onclick: async () => {
-      runBtn.disabled = true;
-      try {
-        gwStatus = await hub.call(run ? "gateway.stop" : "gateway.start", { name }, 30000);
-        render();
-      } catch (e) { runBtn.disabled = false; toast(rpcErrText(e), true); }
-    } }, run ? t("gw-stop") : t("gw-start"));
-    const saveBtn = el("button", { class: "btn primary", onclick: async () => {
-      saveBtn.disabled = true;
-      try {
-        const fields = {};
-        const spec2 = GW_PLATFORMS[plat];
-        for (const [f, , secret] of [...spec2.required, ...spec2.recommended, ...spec2.advanced]) {
-          const v = inputs[f] ? inputs[f].value.trim() : "";
-          if (secret && (v === "" || v === "••••")) continue; // 留空/掩码 = 不修改
-          if (v !== "") fields[f] = v;
-        }
-        const config = {
-          enabled,
-          allowed_senders: allowedInput.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean),
-          adapters: { [plat]: fields },
-        };
-        cfg = await hub.call("messaging.save", { name, config }, 20000);
-        toast(t("saved"));
-        render();
-      } catch (e) {
-        saveBtn.disabled = false;
-        toast(rpcErrText(e), true);
-      }
-    } }, t("gw-save"));
-    if (backendMissing) saveBtn.disabled = true;
-
-    root.appendChild(el("div", { class: "gw-foot" },
-      enableSwitch, el("span", { class: "enable-lbl" }, enabled ? t("gw-enabled") : t("gw-disabled")),
-      el("div", { class: "grow" }), runBtn, saveBtn));
-  }
-  render();
-  openModal(root, true);
-}
+/* The form itself lives on ChatController.renderGatewayPane (panel「网关」tab). */
 
 /* ============================ CHAT CONTROLLER ============================ */
 function lifeAttr(life) {
@@ -313,6 +214,16 @@ class ChatController {
     this.sbTimer = null;
     this.sessionStart = Date.now();
     this._panelSig = "";
+    this.panelTab = "status";
+    this.term = null;          // xterm Terminal（首次进入终端页才建）
+    this.termFit = null;
+    this.termWs = null;
+    this._termCode = null;
+    this._termClosedBar = null;
+    this._termResize = null;
+    this._termThemeObs = null;
+    this._qrTimer = null;      // weixin QR 轮询（离开网关页即停）
+    this._qrBusy = false;
     try {
       this.thinkExpanded = localStorage.getItem("lm-chat-thinking-expanded") === "1";
     } catch (e) {
@@ -374,8 +285,8 @@ class ChatController {
     $("chat-root").removeAttribute("data-life");
     this.refreshIdentity();
     this.bindUI();
+    this.resetPanel();
     this.showPage(page || "chat");
-    this.renderTerm();
     this.startSessionTimer();
     try {
       await this.client.connect();
@@ -413,7 +324,7 @@ class ChatController {
         if (!resting && !hasOpening) this.systemLine(t("st-arrived"), "arrived");
         this.maybeEmptyState();
       });
-      this.renderPanelMain();
+      this.renderStatusPane();
       this.snapTimer = setInterval(() => { if (!document.hidden) this.refreshSnapshot(); }, 6000);
       this.worksTimer = setInterval(() => { if (!document.hidden) this.pollWorks(); }, 45000);
       this.pollWorks();
@@ -431,6 +342,8 @@ class ChatController {
     clearInterval(this.snapTimer);
     clearInterval(this.worksTimer);
     clearInterval(this.sbTimer);
+    this.stopQrPoll();
+    this.disposeTerm();
     $("sb-timer").textContent = "";
     $("chat-root").removeAttribute("data-life");
     const c = this.client;
@@ -453,7 +366,7 @@ class ChatController {
     this.sbTimer = setInterval(tick, 1000);
   }
 
-  /* ---- 对话|作品|终端：常驻不卸载，display 切换 ---- */
+  /* ---- 对话|作品|终端：常驻不卸载，display 切换（终端的滚动缓冲因此存活） ---- */
   showPage(page) {
     this.page = page;
     document.querySelectorAll("#chat-tabs span").forEach((s2) =>
@@ -463,6 +376,10 @@ class ChatController {
     if (page === "works") {
       this.renderWorks();
       this.markWorksSeen();
+    }
+    if (page === "term") {
+      if (!this.term) this.initTerm();
+      requestAnimationFrame(() => this.fitTerm());
     }
   }
 
@@ -906,16 +823,17 @@ class ChatController {
       this.setStatusWord(t("life-resting-until", { time: fmtClock(snap.rest_until) }));
       $("composer-input").placeholder = t("composer-resting-ph");
     }
-    this.renderPanelMain();
+    if (this._termCode && snap.sandbox_root) this._termCode.textContent = snap.sandbox_root;
+    this.renderStatusPane();
   }
 
   onHubState() {
-    this.renderPanelMain();
+    this.renderStatusPane();
   }
 
   onDisplayModeChanged() {
     this._panelSig = "";
-    this.renderPanelMain();
+    this.renderStatusPane();
   }
 
   /* ============================ RIGHT PANEL ============================ */
@@ -942,14 +860,48 @@ class ChatController {
     return row;
   }
 
-  renderPanelMain() {
+  /* 标签页骨架：状态 | 能力 | 记忆 | 网关 | 设置。
+     懒渲染：首次打开才渲染；每次回访都刷新（状态页由 snapshot 循环驱动）。 */
+  resetPanel() {
+    this.stopQrPoll();
+    this._panelSig = "";
+    document.querySelectorAll(".panel-pane").forEach((p) => { p.innerHTML = ""; });
+    this.showPanelTab("status");
+  }
+
+  showPanelTab(which) {
+    if (this.panelTab === "gateway" && which !== "gateway") this.stopQrPoll();
+    this.panelTab = which;
+    document.querySelectorAll("#panel-tabs span").forEach((s2) =>
+      s2.classList.toggle("on", s2.dataset.ptab === which));
+    document.querySelectorAll(".panel-pane").forEach((p) =>
+      p.classList.toggle("on", p.id === `ppane-${which}`));
+    this.renderPanelPane(which);
+  }
+
+  renderPanelPane(which) {
+    if (which === "status") {
+      this._panelSig = "";
+      this.renderStatusPane();
+      return;
+    }
+    const body = $(`ppane-${which}`);
+    body.innerHTML = "";
+    if (which === "abilities") this.renderAbilitiesPage(body);
+    else if (which === "memory") this.renderMemoryPage(body);
+    else if (which === "gateway") this.renderGatewayPane(body);
+    else if (which === "settings") this.renderSettingsPane(body);
+  }
+
+  /* —— 状态页：现有的 prow 行，原样保留 —— */
+  renderStatusPane() {
     if (this.disposed) return;
     const snap = this.snap;
     const entry = this.entry();
-    const pane = $("panel-main");
+    const pane = $("ppane-status");
     const sig = JSON.stringify([
       snap && [snap.model, snap.reasoning, snap.context_tokens, snap.memory_chars, snap.net_on,
-               snap.mode, snap.show_thinking, snap.isolation, snap.quiet, snap.tempo, snap.patience, snap.embodiment],
+               snap.mode, snap.show_thinking, snap.isolation, snap.quiet, snap.patience, snap.embodiment],
       entry && entry.gateway && [entry.gateway.state, entry.gateway.platform],
       getLangCode(), isTechnical(),
     ]);
@@ -958,8 +910,8 @@ class ChatController {
     pane.innerHTML = "";
     if (!snap) return;
 
-    // —— 状态区：高频、温和、一眼可读，点击即改 ——
-    const st = el("div", { class: "pgroup" }, el("h5", null, t("pg-status")));
+    // —— 状态区：高频、温和、一眼可读，点击即改（标签页本身就叫「状态」，不再加组头） ——
+    const st = el("div", { class: "pgroup" });
     st.appendChild(this.prow({
       label: t("p-model"),
       valNode: el("span", { class: "pval" }, el("code", null, snap.model || "—")),
@@ -985,7 +937,7 @@ class ChatController {
       bar: pctMem,
       val: `${snap.memory_chars} / ${snap.memory_max}`,
       chev: true,
-      click: () => this.openPanelPage("memory"),
+      click: () => this.showPanelTab("memory"),
     }));
     st.appendChild(this.prow({
       label: t("p-sandbox"),
@@ -1020,58 +972,15 @@ class ChatController {
       dot: gw && gw.state === "running" ? "live" : "",
       val: gw && gw.state === "running" ? t("gw-running") : t("gw-stopped"),
       chev: true,
-      click: () => openGatewayModal(this.name),
+      click: () => this.showPanelTab("gateway"),
     }));
     if (isTechnical() && this.life && this.life.next_cycle_at) {
-      const row = this.prow({ label: t("p-tempo"), val: "" });
+      const row = this.prow({ label: t("p-next-cycle"), val: "" });
       row.querySelector(".pval").id = "p-next-cycle-val";
       row.querySelector(".pval").textContent = t("next-cycle-at", { time: fmtClock(this.life.next_cycle_at) });
       st.appendChild(row);
     }
     pane.appendChild(st);
-
-    // —— 设置选单：凡有 /command 的能力，这里都有入口 ——
-    const menu = el("div", { class: "pgroup" }, el("h5", null, t("pg-settings")));
-    menu.appendChild(this.prow({ label: t("p-menu-tempo"), chev: true, click: () => this.openPanelPage("tempo") }));
-    menu.appendChild(this.prow({ label: t("p-abilities"), chev: true, click: () => this.openPanelPage("abilities") }));
-    menu.appendChild(this.prow({ label: t("p-memory"), chev: true, click: () => this.openPanelPage("memory") }));
-    menu.appendChild(this.prow({ label: t("p-gateway"), chev: true, click: () => openGatewayModal(this.name) }));
-    menu.appendChild(this.prow({
-      label: t("p-quiet-act"),
-      click: () => { this.command("/quiet 600", false); },
-    }));
-    pane.appendChild(menu);
-
-    // —— 危险区：reset 在最底部 ——
-    const danger = el("div", { class: "pgroup" });
-    danger.appendChild(this.prow({
-      label: t("p-reset"), cls: "danger click",
-      click: () => {
-        if (confirm(t("reset-confirm"))) {
-          this.command("/reset").then(() => { $("stream-inner").innerHTML = ""; this.maybeEmptyState(); });
-        }
-      },
-    }));
-    pane.appendChild(danger);
-  }
-
-  openPanelPage(which) {
-    $("panel-main").classList.remove("on");
-    const page = $("panel-page");
-    page.classList.add("on");
-    const body = $("panel-page-body");
-    body.innerHTML = "";
-    const titles = { tempo: t("p-menu-tempo"), abilities: t("p-abilities"), memory: t("p-memory") };
-    $("panel-page-title").textContent = titles[which] || "";
-    if (which === "tempo") this.renderTempoPage(body);
-    if (which === "abilities") this.renderAbilitiesPage(body);
-    if (which === "memory") this.renderMemoryPage(body);
-  }
-  closePanelPage() {
-    $("panel-page").classList.remove("on");
-    $("panel-main").classList.add("on");
-    this._panelSig = "";
-    this.renderPanelMain();
   }
 
   numField(body, labelKey, whyKey, value, onSave) {
@@ -1087,36 +996,37 @@ class ChatController {
       el("div", { class: "ctl" }, input, btn)));
   }
 
-  renderTempoPage(body) {
+  /* —— 设置页：节奏（quiet/patience）、安静一会儿、embodiment 事实行、reset ——
+     节奏只有 patience：时间流速（tempo）已在产品层移除。
+     embodiment 是唤醒时的一次性选择（保护 prompt cache），这里只陈述事实。 */
+  renderSettingsPane(body) {
     const snap = this.snap || {};
     // quiet =「等你多久」；patience =「它自己生活的节拍」（owner 的文案语义）
     this.numField(body, "p-quiet", "p-quiet-sub", snap.quiet || 300,
       (v) => this.command(`/quiet ${v}`, false));
     this.numField(body, "p-patience", "p-patience-sub", snap.patience || 600,
       (v) => this.command(`/patience ${v}`, false));
-    const tempoSeg = el("div", { class: "seg" });
-    for (const p of ["swift", "steady", "slow", "glacial"]) {
-      const on = false;
-      tempoSeg.appendChild(el("span", { class: on ? "on" : "", onclick: async (ev) => {
-        await this.command(`/tempo ${p}`, false);
-        tempoSeg.querySelectorAll("span").forEach((s2) => s2.classList.toggle("on", s2 === ev.target));
-      } }, p));
-    }
-    body.appendChild(el("div", { class: "pfield" },
-      el("label", null, t("p-tempo") + ` · ×${snap.tempo || 1}`),
-      el("div", { class: "why" }, t("p-tempo-sub")),
-      el("div", { class: "ctl" }, tempoSeg)));
-    const embSeg = el("div", { class: "seg" });
-    for (const m of ["literal", "actor"]) {
-      embSeg.appendChild(el("span", { class: snap.embodiment === m ? "on" : "", onclick: async (ev) => {
-        await this.command(`/embodiment ${m}`, false);
-        embSeg.querySelectorAll("span").forEach((s2) => s2.classList.toggle("on", s2 === ev.target));
-      } }, m));
-    }
-    body.appendChild(el("div", { class: "pfield" },
+    body.appendChild(this.prow({
+      label: t("p-quiet-act"),
+      click: () => { this.command("/quiet 600", false); },
+    }));
+    const emb = snap.embodiment === "actor" ? "actor" : "literal";
+    body.appendChild(el("div", { class: "pfield", style: "margin-top:16px" },
       el("label", null, t("p-embodiment")),
-      el("div", { class: "why" }, t("emb-" + (snap.embodiment === "actor" ? "actor" : "literal"))),
-      el("div", { class: "ctl" }, embSeg)));
+      el("div", { class: "why" }, t("emb-" + emb)),
+      el("div", { class: "ctl" },
+        el("span", { class: "fact" }, emb),
+        el("span", { class: "fact-hint" }, t("emb-fact-hint")))));
+    const danger = el("div", { class: "pgroup", style: "margin-top:22px" });
+    danger.appendChild(this.prow({
+      label: t("p-reset"), cls: "danger click",
+      click: () => {
+        if (confirm(t("reset-confirm"))) {
+          this.command("/reset").then(() => { $("stream-inner").innerHTML = ""; this.maybeEmptyState(); });
+        }
+      },
+    }));
+    body.appendChild(danger);
   }
 
   async renderAbilitiesPage(body) {
@@ -1162,13 +1072,266 @@ class ChatController {
       el("div", { class: "memory-text" }, extras.user_memory || t("d-empty-mem"))));
   }
 
+  /* ============================ GATEWAY PANE（面板「网关」页） ============================ */
+  stopQrPoll() {
+    if (this._qrTimer) clearInterval(this._qrTimer);
+    this._qrTimer = null;
+    this._qrBusy = false;
+  }
+
+  async renderGatewayPane(body) {
+    this.stopQrPoll();
+    const name = this.name;
+    // messaging.get → {config: <masked>, path}；错误原样展示，不做占位回退。
+    let cfg = null;
+    try {
+      const r = await hub.call("messaging.get", { name }, 15000);
+      cfg = (r && r.config) || {};
+    } catch (e) {
+      if (this.disposed || this.panelTab !== "gateway") return;
+      body.appendChild(el("div", { class: "gw-error" }, rpcErrText(e)));
+      return;
+    }
+    let gwStatus = { state: "stopped", platform: "", detail: "" };
+    try { gwStatus = await hub.call("gateway.status", { name }, 15000); } catch (e) { /* keep */ }
+    if (this.disposed || this.panelTab !== "gateway") return;
+
+    const ctrl = this;
+    const platKeys = Object.keys(GW_PLATFORMS);
+    let plat = platKeys.find((k) => (cfg.adapters || {})[k]) || "wecom";
+    let enabled = !!cfg.enabled;
+    const inputs = {};       // field -> input element (per render)
+    const initial = {};      // field -> 渲染时的初值（含掩码），用于字段级合并
+    let allowedInput = null;
+    const root = el("div", null);
+    body.appendChild(root);
+
+    function adaptersOf() { return (cfg && cfg.adapters) || {}; }
+
+    function requiredFilled(p) {
+      const spec = GW_PLATFORMS[p];
+      const a = adaptersOf()[p] || {};
+      return spec.required.length === 0
+        ? Object.keys(a).length > 0 || p === "weixin"
+        : spec.required.every(([f]) => String(a[f] ?? "").length > 0);
+    }
+
+    function chips() {
+      const run = gwStatus && gwStatus.state === "running";
+      return el("div", { class: "gw-chips" },
+        el("span", { class: "gw-chip " + (enabled ? "ok" : "") }, enabled ? t("gw-enabled") : t("gw-disabled")),
+        el("span", { class: "gw-chip " + (requiredFilled(plat) ? "ok" : "warn") },
+          requiredFilled(plat) ? t("gw-configured") : t("gw-needs-setup")),
+        el("span", { class: "gw-chip " + (run ? "ok" : "") }, run ? t("gw-running") : t("gw-stopped")));
+    }
+
+    function fieldRow(plat2, f, label, secret, why) {
+      const a = adaptersOf()[plat2] || {};
+      const value = a[f] !== undefined && a[f] !== null ? String(a[f]) : "";
+      const input = el("input", {
+        value,
+        placeholder: secret ? GW_MASK : "",
+        type: secret ? "password" : "text",
+      });
+      inputs[f] = input;
+      initial[f] = value;
+      return el("div", { class: "gw-field" },
+        el("label", null, label || f),
+        why ? el("div", { class: "why" }, why) : null,
+        input,
+        secret ? el("div", { class: "why" }, t("gw-secret-keep")) : null);
+    }
+
+    /* —— weixin 扫码登录：weixin.qr → 轮询 weixin.qr_status（~2.5s，有上限；
+       离开本页 / 销毁即停） —— */
+    function qrSection() {
+      const box = el("div", { class: "gw-qr-box" });
+      const idle = (msgNode, refetch) => {
+        ctrl.stopQrPoll();
+        box.innerHTML = "";
+        if (msgNode) box.appendChild(msgNode);
+        box.appendChild(el("button", { class: "btn soft", onclick: fetchQr },
+          t(refetch ? "gw-qr-refetch" : "gw-qr-get")));
+      };
+      async function fetchQr() {
+        ctrl.stopQrPoll();
+        box.innerHTML = "";
+        box.appendChild(el("div", { class: "gw-blurb" }, t("gw-qr-fetching")));
+        let qr;
+        try {
+          qr = await hub.call("weixin.qr", { name }, 30000);
+        } catch (e) {
+          if (!box.isConnected) return;
+          idle(el("div", { class: "gw-qr-err" }, rpcErrText(e)), true);
+          return;
+        }
+        if (!box.isConnected || ctrl.disposed || ctrl.panelTab !== "gateway") return;
+        box.innerHTML = "";
+        // img = iLink 返回的 qrcode_img_content（base64 PNG）；没有图就只给备用链接。
+        if (qr.img) box.appendChild(el("img", { class: "gw-qr-img", src: "data:image/png;base64," + qr.img, alt: "QR" }));
+        if (qr.fallback_url) box.appendChild(el("a", {
+          class: "gw-qr-link", href: qr.fallback_url, target: "_blank", rel: "noreferrer",
+        }, t("gw-qr-fallback")));
+        const stLine = el("div", { class: "gw-blurb", style: "margin:4px 0 0" }, t("gw-qr-waiting"));
+        box.appendChild(stLine);
+        let polls = 0;
+        ctrl._qrTimer = setInterval(async () => {
+          if (ctrl.disposed || ctrl.panelTab !== "gateway" || !box.isConnected) { ctrl.stopQrPoll(); return; }
+          if (ctrl._qrBusy) return;
+          if (++polls > 96) { idle(el("div", { class: "gw-qr-err" }, t("gw-qr-timeout")), true); return; }
+          ctrl._qrBusy = true;
+          let r;
+          try {
+            r = await hub.call("weixin.qr_status", { name, qrcode: qr.qrcode }, 10000);
+          } catch (e) {
+            if (box.isConnected) idle(el("div", { class: "gw-qr-err" }, rpcErrText(e)), true);
+            else ctrl.stopQrPoll();
+            return;
+          } finally {
+            ctrl._qrBusy = false;
+          }
+          if (r.status === "confirmed") {
+            ctrl.stopQrPoll();
+            box.innerHTML = "";
+            box.appendChild(el("div", { class: "gw-qr-ok" },
+              t("gw-qr-confirmed", { id: r.account_id || "" })));
+          } else if (r.status === "expired") {
+            idle(el("div", { class: "gw-qr-err" }, t("gw-qr-expired")), true);
+          }
+        }, 2500);
+      }
+      idle(null, false);
+      return box;
+    }
+
+    function render() {
+      ctrl.stopQrPoll();
+      root.innerHTML = "";
+      for (const k of Object.keys(inputs)) delete inputs[k];
+      for (const k of Object.keys(initial)) delete initial[k];
+      const spec = GW_PLATFORMS[plat];
+      root.appendChild(el("div", { class: "sub", style: "margin-bottom:12px" }, t("gw-sub")));
+      root.appendChild(el("div", { class: "gw-plats" },
+        ...platKeys.map((k) => el("button", { class: k === plat ? "on" : "", onclick: () => { plat = k; render(); } },
+          GW_PLATFORMS[k].label))));
+      root.appendChild(chips());
+      root.appendChild(el("div", { class: "gw-blurb" }, t(spec.blurb)));
+
+      if (spec.steps) {
+        root.appendChild(el("div", { class: "gw-sec" },
+          el("h4", null, t("gw-creds")),
+          el("ol", { class: "gw-steps" }, ...spec.steps.map((s) => el("li", null, t(s))))));
+      }
+      if (spec.qr) {
+        root.appendChild(qrSection());
+        root.appendChild(el("div", { class: "gw-blurb" }, t(spec.note)));
+      }
+      if (spec.required.length) {
+        root.appendChild(el("div", { class: "gw-sec" },
+          el("h4", null, t("gw-required")),
+          ...spec.required.map(([f, label, secret]) =>
+            fieldRow(plat, f, f === "peer_id" ? t("gw-f-peer-id") : label, secret))));
+      }
+      const recSec = el("div", { class: "gw-sec" }, el("h4", null, t("gw-recommended")));
+      for (const [f, label, secret] of spec.recommended) recSec.appendChild(fieldRow(plat, f, label, secret));
+      // allowed_senders 顶层，带安全理由
+      allowedInput = el("input", { value: (Array.isArray(cfg.allowed_senders) ? cfg.allowed_senders.join(", ") : "") });
+      recSec.appendChild(el("div", { class: "gw-field" },
+        el("label", null, t("gw-f-allowed")),
+        el("div", { class: "why" }, t("gw-allowed-why")),
+        allowedInput));
+      root.appendChild(recSec);
+
+      if (spec.advanced.length) {
+        root.appendChild(el("details", { class: "gw-adv" },
+          el("summary", null, `${t("gw-advanced")} (${spec.advanced.length})`),
+          ...spec.advanced.map(([f, label, secret]) => fieldRow(plat, f, label, secret))));
+      }
+
+      const enableSwitch = el("button", { class: "switch" + (enabled ? " on" : ""), onclick: () => {
+        enabled = !enabled;
+        enableSwitch.classList.toggle("on", enabled);
+      } });
+      const run = gwStatus && gwStatus.state === "running";
+      const runBtn = el("button", { class: "btn soft", onclick: async () => {
+        runBtn.disabled = true;
+        try {
+          gwStatus = await hub.call(run ? "gateway.stop" : "gateway.start", { name }, 30000);
+          render();
+        } catch (e) { runBtn.disabled = false; toast(rpcErrText(e), true); }
+      } }, run ? t("gw-stop") : t("gw-start"));
+      const saveBtn = el("button", { class: "btn primary", onclick: async () => {
+        saveBtn.disabled = true;
+        try {
+          // 后端按字段合并：没动的字段省略（掩码回显也省略）、清空的发 null 删除。
+          const fields = {};
+          const spec2 = GW_PLATFORMS[plat];
+          for (const [f] of [...spec2.required, ...spec2.recommended, ...spec2.advanced]) {
+            if (!inputs[f]) continue;
+            const v = inputs[f].value.trim();
+            const init = initial[f] ?? "";
+            if (v === init) continue;            // 未改动（含原样的掩码）→ 不发送
+            fields[f] = v === "" ? null : v;     // 显式清空 → null 删除
+          }
+          const config = {
+            enabled,
+            allowed_senders: allowedInput.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean),
+            adapters: { [plat]: fields },
+          };
+          const r = await hub.call("messaging.save", { name, config }, 20000);
+          cfg = (r && r.config) || cfg;
+          toast(t("saved"));
+          render();
+        } catch (e) {
+          saveBtn.disabled = false;
+          toast(rpcErrText(e), true);
+        }
+      } }, t("gw-save"));
+
+      root.appendChild(el("div", { class: "gw-foot" },
+        enableSwitch, el("span", { class: "enable-lbl" }, enabled ? t("gw-enabled") : t("gw-disabled")),
+        el("div", { class: "grow" }), runBtn, saveBtn));
+    }
+    render();
+  }
+
+  /* ============================ MODEL POPOVER ============================ */
   openModelPopover(ev) {
     closePopovers();
     const snap = this.snap || {};
     const pop = el("div", { class: "popover" });
     pop.appendChild(el("h4", null, t("p-model")));
     pop.appendChild(el("div", { class: "model-id" }, snap.model || "—"));
-    pop.appendChild(el("div", { class: "dim-note" }, t("p-hotswap-wait")));
+    // 防御式热切换：/model 落地即点亮；未知命令则显示等待文案，输入框保留。
+    const modelInput = el("input", { value: snap.model || "", list: "model-list", spellcheck: "false" });
+    const applyBtn = el("button", { class: "btn soft" }, t("apply"));
+    const note = el("div", { class: "dim-note" });
+    modelsCached(); // 填充 #model-list datalist（app.js 缓存）
+    applyBtn.addEventListener("click", async () => {
+      const id = modelInput.value.trim();
+      if (!id) return;
+      applyBtn.disabled = true;
+      let reply = null;
+      try {
+        reply = await this.client.command(`/model ${id}`);
+      } catch (e) {
+        note.textContent = e.message;
+        applyBtn.disabled = false;
+        return;
+      }
+      applyBtn.disabled = false;
+      if (reply && reply.ok) {
+        toast(t("saved"));
+        pop.remove();
+        this.refreshSnapshot();
+      } else if (reply && /unknown command/i.test(reply.text || "")) {
+        note.textContent = t("p-hotswap-wait");
+      } else {
+        note.textContent = (reply && reply.text) || t("p-hotswap-wait");
+      }
+    });
+    pop.appendChild(el("div", { class: "model-row" }, modelInput, applyBtn));
+    pop.appendChild(note);
     pop.appendChild(el("h4", { style: "margin-top:12px" }, t("p-effort")));
     const seg = el("div", { class: "seg" });
     for (const lvl of ["off", "low", "medium", "high"]) {
@@ -1180,7 +1343,7 @@ class ChatController {
     pop.appendChild(seg);
     if (!snap.reasoning_supported) pop.appendChild(el("div", { class: "dim-note" }, t("p-effort-ignored")));
     const rect = ev.currentTarget.getBoundingClientRect();
-    pop.style.top = Math.min(rect.top, innerHeight - 240) + "px";
+    pop.style.top = Math.min(rect.top, innerHeight - 300) + "px";
     pop.style.left = Math.max(8, rect.left - 296) + "px";
     document.body.appendChild(pop);
     setTimeout(() => document.addEventListener("click", function close(e2) {
@@ -1240,7 +1403,6 @@ class ChatController {
     if (!filtered.length) {
       listEl.appendChild(el("div", { class: "works-empty" }, t("works-empty")));
     } else {
-      listEl.appendChild(el("div", { class: "works-note" }, t("works-preview-wait")));
       let lastDay = "";
       const icons = { image: "▣", web: "❖", audio: "♪", text: "≣", code: "⌨", file: "▢" };
       for (const w of filtered) {
@@ -1251,7 +1413,7 @@ class ChatController {
           const yest = new Date(Date.now() - 86400000).toLocaleDateString();
           listEl.appendChild(el("div", { class: "day-label" }, day === today ? t("today") : day === yest ? t("yesterday") : day));
         }
-        listEl.appendChild(el("div", { class: "work-row", onclick: () => hub.call("works.open", { path: w.path }).catch((e) => toast(e.message, true)) },
+        listEl.appendChild(el("div", { class: "work-row", onclick: () => this.openWorkPreview(w) },
           el("div", { class: "wicon" }, icons[w.kind] || "▢"),
           el("div", { class: "winfo" },
             el("b", null, w.name),
@@ -1270,23 +1432,153 @@ class ChatController {
     } }, t("open-sandbox")));
   }
 
-  /* ============================ TERMINAL PAGE（等待 PTY 后端的占位形态） ============================ */
-  renderTerm() {
+  /* 应用内预览：works.read（text → <pre>；image → <img>；二进制/超限 → works.open） */
+  async openWorkPreview(w) {
+    let r;
+    try {
+      r = await hub.call("works.read", { name: this.name, rel: w.rel }, 30000);
+    } catch (e) { toast(rpcErrText(e), true); return; }
+    let bodyNode;
+    if (r.kind === "image" && r.data_uri) {
+      bodyNode = el("div", { class: "wp-img" }, el("img", { src: r.data_uri, alt: w.name }));
+    } else if (r.kind === "text") {
+      bodyNode = el("div", null,
+        el("pre", { class: "wp-pre" }, r.content || ""),
+        r.truncated ? el("div", { class: "wp-note" }, t("wp-truncated")) : null);
+    } else {
+      bodyNode = el("div", { class: "wp-note" },
+        r.kind === "image" && r.truncated ? t("wp-too-big") : t("wp-binary"));
+    }
+    openModal(el("div", null,
+      el("div", { class: "wp-head" },
+        el("b", null, w.name),
+        el("span", { class: "wp-meta" }, `${w.rel || ""} · ${fmtSize(r.size)}`)),
+      bodyNode,
+      el("div", { class: "acts", style: "margin-top:14px" },
+        el("button", { class: "btn text", onclick: closeModal }, t("cancel")),
+        el("div", { class: "grow" }),
+        el("button", { class: "btn soft", onclick: (ev2) => {
+          ev2.stopPropagation();
+          hub.call("works.open", { path: w.path }).catch((e) => toast(e.message, true));
+        } }, t("wp-open-system")))), true);
+  }
+
+  /* ============================ TERMINAL PAGE ============================
+     xterm 直通 supervisor 的 /chara/<name>/pty（双向二进制帧；
+     resize = 整条文本帧 \x1b[RESIZE:<cols>;<rows>]）。chara 没在运行也能用。
+     首次进入终端页才创建；之后 display 切换、缓冲常驻。 */
+  termTheme() {
+    const cs = getComputedStyle(document.body);
+    const dark = document.body.classList.contains("dark");
+    return {
+      background: cs.getPropertyValue("--panel").trim() || (dark ? "#232A31" : "#FFFFFF"),
+      foreground: cs.getPropertyValue("--text").trim() || (dark ? "#E9EDF0" : "#1D2730"),
+      cursor: cs.getPropertyValue("--accent").trim() || "#5B9FD4",
+      cursorAccent: cs.getPropertyValue("--panel").trim() || "#FFFFFF",
+      selectionBackground: dark ? "rgba(127,182,222,.32)" : "rgba(91,159,212,.28)",
+    };
+  }
+
+  initTerm() {
+    const head = $("term-head");
     const body = $("term-body");
+    head.innerHTML = "";
     body.innerHTML = "";
-    const path = (this.snap && this.snap.sandbox_root) ||
-      ((state.hub && this.entry()) ? "" : "");
-    const code = el("code", null, path || "…");
-    const copyBtn = el("button", { class: "btn soft", onclick: async () => {
+    const code = el("code", null, (this.snap && this.snap.sandbox_root) || "…");
+    this._termCode = code;
+    head.appendChild(code);
+    head.appendChild(el("button", { class: "btn soft", onclick: async () => {
       try {
         await navigator.clipboard.writeText(code.textContent);
         toast(t("copied-path"));
       } catch (e) { /* clipboard denied */ }
-    } }, t("copy"));
-    body.appendChild(el("div", { class: "term-note" }, t("term-wait")));
-    body.appendChild(el("div", { class: "term-path" }, code, copyBtn));
-    body.appendChild(el("div", { class: "term-note" }, t("term-note")));
-    this._termCode = code;
+    } }, t("copy")));
+    const mount = el("div", { class: "term-mount" });
+    body.appendChild(mount);
+    this._termClosedBar = el("div", { class: "term-closed", hidden: "" });
+    body.appendChild(this._termClosedBar);
+    this.term = new Terminal({
+      fontFamily: getComputedStyle(document.body).getPropertyValue("--mono").trim() || "Menlo, monospace",
+      fontSize: 12.5,
+      scrollback: 5000,
+      cursorBlink: true,
+      theme: this.termTheme(),
+    });
+    this.termFit = new FitAddon.FitAddon();
+    this.term.loadAddon(this.termFit);
+    this.term.open(mount);
+    this.term.onData((d) => {
+      if (this.termWs && this.termWs.readyState === WebSocket.OPEN) this.termWs.send(d);
+    });
+    this._termResize = () => { if (this.page === "term") this.fitTerm(); };
+    window.addEventListener("resize", this._termResize);
+    // 主题切换（body.dark 翻转）→ 终端配色跟着走
+    this._termThemeObs = new MutationObserver(() => {
+      if (this.term) this.term.options.theme = this.termTheme();
+    });
+    this._termThemeObs.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+    this.connectTerm();
+  }
+
+  connectTerm() {
+    if (!this.term || this.disposed) return;
+    const cols = this.term.cols || 80;
+    const rows = this.term.rows || 24;
+    const ws = new WebSocket(
+      wsUrl(`/chara/${encodeURIComponent(this.name)}/pty`) + `&cols=${cols}&rows=${rows}`);
+    ws.binaryType = "arraybuffer";
+    ws.onopen = () => {
+      this._termClosedBar.hidden = true;
+      this.fitTerm();
+      if (this.term) this.term.focus();
+    };
+    ws.onmessage = (ev2) => {
+      if (!this.term) return;
+      if (typeof ev2.data === "string") this.term.write(ev2.data); // 服务端的错误文案原样进终端
+      else this.term.write(new Uint8Array(ev2.data));
+    };
+    ws.onclose = (ev2) => {
+      if (this.disposed || this.termWs !== ws) return;
+      this.showTermClosed((ev2 && ev2.reason) || "");
+    };
+    this.termWs = ws;
+  }
+
+  showTermClosed(reason) {
+    const bar = this._termClosedBar;
+    if (!bar) return;
+    bar.innerHTML = "";
+    bar.appendChild(el("span", null, t("term-closed") + (reason ? ` · ${reason}` : "")));
+    bar.appendChild(el("button", { class: "btn soft", onclick: () => {
+      bar.hidden = true;
+      this.connectTerm();
+    } }, t("term-reconnect")));
+    bar.hidden = false;
+  }
+
+  fitTerm() {
+    if (!this.term || !this.termFit || this.page !== "term") return;
+    try { this.termFit.fit(); } catch (e) { return; } // 容器尚无尺寸
+    if (this.termWs && this.termWs.readyState === WebSocket.OPEN) {
+      this.termWs.send(`\x1b[RESIZE:${this.term.cols};${this.term.rows}]`);
+    }
+  }
+
+  disposeTerm() {
+    if (this._termResize) window.removeEventListener("resize", this._termResize);
+    this._termResize = null;
+    if (this._termThemeObs) this._termThemeObs.disconnect();
+    this._termThemeObs = null;
+    const ws = this.termWs;
+    this.termWs = null;
+    if (ws) { try { ws.close(); } catch (e) { /* gone */ } }
+    if (this.term) { try { this.term.dispose(); } catch (e) { /* already */ } }
+    this.term = null;
+    this.termFit = null;
+    this._termCode = null;
+    this._termClosedBar = null;
+    $("term-head").innerHTML = "";
+    $("term-body").innerHTML = "";
   }
 
   /* ---- permission requests, inline ---- */
@@ -1341,7 +1633,10 @@ class ChatController {
     const panelOpen = localStorage.getItem("lm-panel-open") !== "0";
     $("panel").classList.toggle("collapsed", !panelOpen);
     $("panel-btn").classList.toggle("on", panelOpen);
-    $("panel-page-back").onclick = () => this.closePanelPage();
+    $("panel-tabs").onclick = (ev) => {
+      const s2 = ev.target.closest("span[data-ptab]");
+      if (s2) this.showPanelTab(s2.dataset.ptab);
+    };
     $("net-btn").onclick = () => this.command("/net on");
     document.addEventListener("visibilitychange", this._visHandler = () => {
       if (document.visibilityState === "visible") this.flushSuperReads();
