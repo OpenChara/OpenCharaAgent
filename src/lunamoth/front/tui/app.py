@@ -28,6 +28,7 @@ from textual.widgets import (
     ContentSwitcher, DirectoryTree, Footer, Header, Input, RichLog, Static,
 )
 
+from ...content.knobs import tempo_label
 from ...content.themes import load_theme
 from ...obs import broker, get_logger
 from ...presence import normalize_mode
@@ -210,8 +211,10 @@ class LunaMothTUI(App):
     def __init__(self, patience: float = 2.0, clean_on_exit: bool = False, mode_override: str = ""):
         super().__init__()
         # `patience` = how long the chara waits after a turn before its next
-        # spontaneous cycle (live mode). This is pacing, not model reasoning.
-        self.patience = patience
+        # spontaneous cycle at tempo=1 (live mode). Tempo belongs to the chara
+        # and scales this base pause: effective pause = base_patience / tempo.
+        self.base_patience = patience
+        self.patience = patience  # legacy alias used by tests/old UI code
         self.clean_on_exit = clean_on_exit
         self.settings = load_settings()
         # Interaction mode (live = it keeps living while you watch; chat = it
@@ -255,6 +258,11 @@ class LunaMothTUI(App):
         self._perm_answer = False
         self._perm_event = threading.Event()
         self.handle.set_permission_hook(self._permission_request)
+
+    def _cycle_pause(self) -> float:
+        snap = self.handle.snapshot()
+        tempo = max(0.1, float(getattr(snap, "tempo", 1.0) or 1.0))
+        return max(0.0, self.base_patience) / tempo
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -409,13 +417,13 @@ class LunaMothTUI(App):
         self.char_name = info.char_name
         # Attach grace (live mode): after greeting, leave the operator room for the
         # first word; if they stay silent the chara simply returns to its work.
-        self.grace_until = time.monotonic() + max(30.0, 2 * self.patience)
+        self.grace_until = time.monotonic() + max(30.0, 2 * self._cycle_pause())
         self._update_status()
         self._render_restored_tail(info.char_name, info.restored)
         if info.opening == "greeting":
             self._append_display(f"{self.skin.reply_pfx(info.char_name)}{info.opening_text}\n")
             self.handle.record_greeting(info.opening_text)
-            self.next_spont_at = time.monotonic() + self.patience
+            self.next_spont_at = time.monotonic() + self._cycle_pause()
         elif info.opening == "arrival":
             self._start_stream(StreamJob(kind="event", text=info.opening_text),
                                prefix=self.skin.reply_pfx(info.char_name))
@@ -630,9 +638,11 @@ class LunaMothTUI(App):
             activity = f"resting until {time.strftime('%H:%M', time.localtime(snap.rest_until))}"
         else:
             activity = "waiting"
+        tempo = float(getattr(snap, "tempo", 1.0) or 1.0)
+        tempo_part = f" | tempo={tempo:g}x" if abs(tempo - 1.0) > 1e-9 else ""
         self.status.update(
-            f"persona={snap.char_name} | mode={self.mode} | {activity} | patience={self.patience:.2f}s | "
-            f"memory={snap.memory_chars} chars | "
+            f"persona={snap.char_name} | mode={self.mode} | {activity} | patience={self.base_patience:.2f}s"
+            f"{tempo_part} | memory={snap.memory_chars} chars | "
             f"ctx≈{snap.context_tokens}/{snap.context_max} | {snap.provider}:{snap.model}"
         )
         self._render_sidebar(snap)
@@ -697,7 +707,8 @@ class LunaMothTUI(App):
         g.append(f"\n{self._human_bytes(ws_bytes)} · {ws_files} files\n", style="grey70")
         g.append(
             f"isolation {snap.isolation} · net {'ON' if snap.net_on else 'off'} · "
-            f"mode {self.mode}\n",
+            f"mode {self.mode} · tempo {tempo_label(float(getattr(snap, 'tempo', 1.0) or 1.0))} · "
+            f"{getattr(snap, 'embodiment', 'literal')}\n",
             style="grey50",
         )
         self.gauges.update(g)
@@ -787,7 +798,7 @@ class LunaMothTUI(App):
                 self.termlog.write(Text(text, style="grey85"))
             elif kind == "done":
                 self._append_display(text)
-                self.next_spont_at = time.monotonic() + self.patience
+                self.next_spont_at = time.monotonic() + self._cycle_pause()
         if wrote:
             self._update_status()
 
@@ -831,10 +842,12 @@ class LunaMothTUI(App):
                 self.mode = want
                 self.grace_until = 0.0  # mid-session switch: the operator is clearly here
                 if want == "live":
-                    self.next_spont_at = time.monotonic() + self.patience
+                    self.next_spont_at = time.monotonic() + self._cycle_pause()
         if "show_thinking" in data:
             self.show_thinking = bool(data["show_thinking"])
         self.settings = self.handle.settings  # stay in sync with persisted state
+        if "tempo" in data:
+            self.next_spont_at = time.monotonic() + self._cycle_pause()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
@@ -892,14 +905,15 @@ class LunaMothTUI(App):
             parts = text.split(maxsplit=1)
             if len(parts) == 2:
                 try:
-                    self.patience = max(0.0, float(parts[1]))
-                    self._console(f"patience = {self.patience:.2f}s", "grey50")
-                    self.next_spont_at = time.monotonic() + self.patience
+                    self.base_patience = max(0.0, float(parts[1]))
+                    self.patience = self.base_patience
+                    self._console(f"patience = {self.base_patience:.2f}s", "grey50")
+                    self.next_spont_at = time.monotonic() + self._cycle_pause()
                     self._update_status()
                 except ValueError:
                     self._console("bad patience value", "red")
             else:
-                self._console(f"patience = {self.patience:.2f}s (usage: /patience <sec>)", "grey50")
+                self._console(f"patience = {self.base_patience:.2f}s (usage: /patience <sec>)", "grey50")
             return
         if low.startswith("/theme"):
             self._cmd_theme(text)

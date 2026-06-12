@@ -38,6 +38,7 @@ from ..tools.toolpacks import ToolPack, load_toolpack
 from ..tools.gateway import ToolGateway
 from .transcript import TranscriptStore
 from ..content.worldinfo import Lorebook, apply_macros
+from ..content.knobs import normalize_embodiment, parse_tempo
 
 _log = get_logger("agent")
 
@@ -233,6 +234,28 @@ class LunaMothAgent:
             user_chars=self._effective_limit("user_chars", 2000),
         )
 
+    def effective_tempo(self) -> float:
+        """Chara time-flow rate: operator override (>0) > card declaration > 1.0."""
+        override = parse_tempo(getattr(self.settings, "tempo", 0.0))
+        if override is not None and override > 0:
+            return override
+        if self.character is not None:
+            card = parse_tempo(self.character.defaults().get("tempo"))
+            if card is not None:
+                return card
+        return 1.0
+
+    def effective_embodiment(self) -> str:
+        """Embodiment stance: operator override > card declaration > literal."""
+        override = normalize_embodiment(getattr(self.settings, "embodiment_override", ""))
+        if override:
+            return override
+        if self.character is not None:
+            card = normalize_embodiment(self.character.defaults().get("embodiment"))
+            if card:
+                return card
+        return "literal"
+
     def _freeze_memory(self) -> None:
         """Snapshot memory for the system prompt. Called when a fresh prompt/session
         begins (init, reconfigure, new session, /reset) — NOT per turn, so mid-session
@@ -384,6 +407,7 @@ class LunaMothAgent:
         # rules_closer}. Bundled cards leave these empty — it's just an open hook.
         card_ext = self.character.defaults() if self.character else {}
         card_rules = str(card_ext.get("rules", "") or "")
+        card_bridge = str(card_ext.get("embodiment_bridge", "") or "")
 
         # 1) Who it is — the character card IS the soul. Identity, voice and
         #    autonomy all come from the card; the engine adds no identity of its own.
@@ -396,6 +420,8 @@ class LunaMothAgent:
         #    your sandbox + your work must be real + act through tools). ONLY when
         #    the chara actually has tools; a tool-less chara is free to narrate.
         if tools_on:
+            if self.effective_embodiment() == "actor":
+                msgs.append(apply_macros(rules_layer.embodiment_bridge(self.lang, card_bridge), char, user))
             msgs.append(apply_macros(rules_layer.rules(self.lang, card_rules), char, user))
             # Native tool schemas already describe each tool, so no prose tool spec.
             # Dynamic env facts are volatile and appended after history instead.

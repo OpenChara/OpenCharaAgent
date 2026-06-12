@@ -59,6 +59,8 @@ class DummyHandle:
             user_present=True,
             rest_until=0.0,
             quiet=300,
+            tempo=1.0,
+            embodiment="literal",
             context_tokens=0,
             context_max=100,
             memory_chars=0,

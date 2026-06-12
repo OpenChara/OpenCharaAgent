@@ -17,6 +17,7 @@ from textual.widgets import Button, Footer, Header, Input, Label, Select, Static
 
 from .. import art
 from ...config import ROOT
+from ...content.knobs import embodiment_copy, normalize_embodiment
 from ...content.themes import TuiTheme, load_theme
 from ...protocol.api import test_connection
 from ...session.settings import PRESETS, Settings
@@ -66,6 +67,19 @@ def _preset_for(settings: Settings) -> str:
         if preset.get("provider") == settings.provider and preset.get("base_url", "") == settings.base_url:
             return name
     return "Custom"
+
+
+def _ui_lang(settings: Settings) -> str:
+    from ...content.persona import system_language
+
+    if settings.character_path:
+        try:
+            from ...content.cards import CharacterCard
+
+            return CharacterCard.load(settings.character_path).language
+        except Exception:
+            pass
+    return system_language()
 
 
 class WelcomeScreen(Screen):
@@ -126,6 +140,7 @@ class WelcomeScreen(Screen):
         self.draft = replace(settings)
         self.mid_session = mid_session
         self.skin = load_theme(settings.tui_theme_path)
+        self.ui_lang = _ui_lang(settings)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -176,6 +191,15 @@ class WelcomeScreen(Screen):
             if cur_pack and cur_pack not in {v for _, v in pack_options}:
                 pack_options.append((cur_pack, cur_pack))
             yield Select(pack_options, value=self.draft.toolpack or "", allow_blank=False, id="toolpack")
+            yield Label("Embodiment stance (when the card does not declare one)", classes="field-label", id="embodiment_label")
+            yield Select(
+                [("literal", "literal"), ("actor", "actor")],
+                value=normalize_embodiment(self.draft.embodiment_override) or "literal",
+                allow_blank=False,
+                id="embodiment",
+            )
+            yield Static(embodiment_copy(normalize_embodiment(self.draft.embodiment_override) or "literal", self.ui_lang),
+                         id="embodiment_hint")
             # Context window is the model's real window (read from the provider),
             # not a knob. Only durable-memory size is tunable here.
             yield Label("Memory chars (0 = card default)", classes="field-label")
@@ -201,6 +225,7 @@ class WelcomeScreen(Screen):
 
     def on_mount(self) -> None:
         self._paint_theme(self.skin)
+        self._refresh_embodiment_picker(self._current_card_defaults())
         self.query_one("#base_url", Input).focus()
 
     def _paint_theme(self, t: TuiTheme) -> None:
@@ -228,6 +253,13 @@ class WelcomeScreen(Screen):
         world = self.query_one("#world", Select).value
         theme = self.query_one("#theme", Select).value
         toolpack = self.query_one("#toolpack", Select).value
+        embodiment_picker = self.query_one("#embodiment", Select)
+        embodiment = embodiment_picker.value
+        embodiment_override = (
+            normalize_embodiment(embodiment)
+            if embodiment_picker.display
+            else normalize_embodiment(self.draft.embodiment_override)
+        )
         self.draft = replace(
             self.draft,
             base_url=_txt("base_url"),
@@ -240,6 +272,7 @@ class WelcomeScreen(Screen):
             world_path=world if isinstance(world, str) else "",
             tui_theme_path=theme if isinstance(theme, str) else "",
             toolpack=toolpack if isinstance(toolpack, str) else "",
+            embodiment_override=embodiment_override,
             user_name=_txt("user_name") or self.draft.user_name,
         )
         return self.draft
@@ -251,6 +284,10 @@ class WelcomeScreen(Screen):
             self.skin = load_theme(path)
             self.query_one("#title", Static).update(self.skin.subtitle)
             self._paint_theme(self.skin)
+            return
+        if event.select.id == "embodiment":
+            stance = normalize_embodiment(event.value) or "literal"
+            self.query_one("#embodiment_hint", Static).update(embodiment_copy(stance, self.ui_lang))
             return
         if event.select.id == "character":
             self._prefill_from_character(event.value if isinstance(event.value, str) else "")
@@ -292,6 +329,8 @@ class WelcomeScreen(Screen):
         except Exception:
             return
         defaults = card.defaults()
+        self.ui_lang = card.language
+        self._refresh_embodiment_picker(defaults)
         # World: card's declared default, else same-language bundled world for the default char.
         world = str(defaults.get("world", ""))
         if world and not Path(world).is_absolute():
@@ -307,6 +346,41 @@ class WelcomeScreen(Screen):
         self.query_one("#conn_status", Static).update(
             f"[#9fd9ff]Loaded {card.name}'s defaults · language: {lang_label}. Adjust below if you like.[/]"
         )
+
+    def _current_card_defaults(self) -> dict:
+        from ...content.cards import CharacterCard
+        from ...content.persona import default_character_path
+
+        path = self.draft.character_path or (str(default_character_path() or ""))
+        if not path:
+            return {}
+        try:
+            card = CharacterCard.load(path)
+            self.ui_lang = card.language
+            return card.defaults()
+        except Exception:
+            return {}
+
+    def _refresh_embodiment_picker(self, defaults: dict) -> None:
+        declared = normalize_embodiment(defaults.get("embodiment"))
+        label = self.query_one("#embodiment_label", Label)
+        picker = self.query_one("#embodiment", Select)
+        hint = self.query_one("#embodiment_hint", Static)
+        picker.set_options([
+            ("literal", "literal"),
+            ("actor", "actor"),
+        ])
+        if declared:
+            label.display = False
+            picker.display = False
+            hint.display = False
+            return
+        label.display = True
+        picker.display = True
+        hint.display = True
+        stance = normalize_embodiment(self.draft.embodiment_override) or "literal"
+        picker.value = stance
+        hint.update(embodiment_copy(stance, self.ui_lang))
 
     def _set_select(self, selector: str, value: str) -> None:
         """Set a Select to value; silently ignore if it isn't an available option.

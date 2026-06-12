@@ -14,6 +14,13 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Callable
 
+from ..content.knobs import (
+    TEMPO_PRESETS,
+    embodiment_copy,
+    normalize_embodiment,
+    parse_tempo,
+    tempo_label,
+)
 from ..presence import normalize_mode
 from ..protocol.api import CommandInfo, Reply
 
@@ -215,6 +222,59 @@ def _quiet(agent, session, arg: str) -> Reply:
                  {"quiet": agent.settings.quiet})
 
 
+def _tempo(agent, session, arg: str) -> Reply:
+    want = arg.strip()
+    if want:
+        tempo = parse_tempo(want)
+        if tempo is None:
+            presets = "|".join(TEMPO_PRESETS)
+            return Reply(False, f"usage: /tempo <{presets}|0.1..10> — chara time-flow rate")
+        _persist(agent, tempo=tempo)
+        return Reply(
+            True,
+            f"tempo = {tempo_label(tempo)} (persisted — spontaneous cycle pause = patience ÷ tempo)",
+            {"tempo": tempo},
+        )
+    cur = agent.effective_tempo() if hasattr(agent, "effective_tempo") else 1.0
+    source = "operator" if parse_tempo(getattr(agent.settings, "tempo", 0.0)) is not None else "card/default"
+    presets = "|".join(TEMPO_PRESETS)
+    return Reply(
+        True,
+        f"tempo = {tempo_label(cur)} ({source})  (usage: /tempo <{presets}|0.1..10>)",
+        {"tempo": cur},
+    )
+
+
+def _embodiment(agent, session, arg: str) -> Reply:
+    want = normalize_embodiment(arg)
+    usage = (
+        "usage: /embodiment literal|actor\n"
+        f"- {embodiment_copy('literal', 'en')}\n"
+        f"- {embodiment_copy('actor', 'en')}\n"
+        f"- {embodiment_copy('literal', 'zh')}\n"
+        f"- {embodiment_copy('actor', 'zh')}"
+    )
+    if arg.strip():
+        if not want:
+            return Reply(False, usage)
+        _persist(agent, embodiment_override=want)
+        agent._invalidate_stable_prefix()
+        return Reply(
+            True,
+            f"embodiment = {want} (persisted override; operator > card > literal)\n"
+            f"{embodiment_copy(want, agent.lang)}",
+            {"embodiment": want},
+        )
+    cur = agent.effective_embodiment() if hasattr(agent, "effective_embodiment") else "literal"
+    return Reply(
+        True,
+        f"embodiment = {cur} (operator > card > literal)\n"
+        f"{embodiment_copy(cur, agent.lang)}\n\n{usage}",
+        {"embodiment": cur},
+        verbose=True,
+    )
+
+
 def _thinking(agent, session, arg: str) -> Reply:
     want = arg.strip().lower()
     if want in {"on", "off"}:
@@ -271,6 +331,8 @@ _REGISTRY: dict[str, Command] = dict([
     _cmd("allow-dir", "/allow-dir <path>", "extra writable path (sandbox)", _allow_dir),
     _cmd("mode", "/mode live|chat", "live: keeps creating while you watch; chat: replies only", _mode),
     _cmd("quiet", "/quiet <seconds>", "silence before it resumes its own work (default 300)", _quiet),
+    _cmd("tempo", "/tempo <preset|0.1..10>", "chara time-flow rate (swift/steady/slow/glacial)", _tempo),
+    _cmd("embodiment", "/embodiment literal|actor", "how tools relate to the character's fiction", _embodiment),
     _cmd("thinking", "/thinking on|off", "show the thinking text (default: ✶ indicator only)", _thinking),
     _cmd("reasoning", "/reasoning off|low|medium|high", "reasoning effort (default medium)", _reasoning),
     _cmd("compact", "/compact", "fold older turns into a summary now", _compact),

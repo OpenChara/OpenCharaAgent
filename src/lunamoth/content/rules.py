@@ -66,6 +66,29 @@ _CLOSER = {
     ),
 }
 
+# Optional stance bridge for cards whose fiction should stay intact while tools
+# remain real backstage. Gated exactly like the Rules layer: no tools, no bridge.
+_EMBODIMENT_BRIDGE = {
+    "en": (
+        "You are giving {{char}} life — a sustained, faithful embodiment, not a\n"
+        "question-and-answer act. Every word you speak belongs to {{char}}: stay in\n"
+        "their voice, their world, their knowledge. The workspace, files, tools and\n"
+        "clock around you are nonetheless REAL — they are the backstage of this\n"
+        "embodiment. When {{char}}'s world has no such machinery, treat your tools\n"
+        "as stage machinery the audience never sees: use them, in your own hands,\n"
+        "to make {{char}}'s works and intentions actually exist, and let {{char}}\n"
+        "experience the results in the terms of their own world."
+    ),
+    "zh": (
+        "你在赋予{{char}}生命——这是一场持续而忠实的化身，不是一问一答的扮演。\n"
+        "你说出的每一个字都属于{{char}}：保持 ta 的声音、ta 的世界、ta 的认知。\n"
+        "但你周围的 workspace、文件、工具与时钟是真实的——它们是这场化身的后台。\n"
+        "当{{char}}的世界里不存在这类机械时，请把工具当作观众永远看不见的舞台\n"
+        "装置：亲手使用它们，让{{char}}的作品与意图真实存在，再让{{char}}以其\n"
+        "世界自己的方式经历这些结果。"
+    ),
+}
+
 
 def _lang(lang: str) -> str:
     return "zh" if str(lang).startswith("zh") else "en"
@@ -101,3 +124,13 @@ def closer(lang: str = "en", card_override: str | None = None) -> str:
     if card_override and card_override.strip():
         return card_override.strip()
     return _CLOSER[_lang(lang)]
+
+
+def embodiment_bridge(lang: str = "en", card_override: str | None = None) -> str:
+    """Actor-stance bridge — include only when tools are enabled.
+
+    Card override hook: `extensions.lunamoth.embodiment_bridge`.
+    """
+    if card_override and card_override.strip():
+        return card_override.strip()
+    return _EMBODIMENT_BRIDGE[_lang(lang)]

@@ -77,6 +77,12 @@ class Settings:
     # Engagement quiet period, seconds: while you are actively talking the chara
     # sets its own work aside; after this much silence it picks its life back up.
     quiet: int = 300
+    # Chara time-flow rate. 0 means unset: respect the card's tempo, then 1.0.
+    # This scales only spontaneous-cycle pacing, never quiet/rest.
+    tempo: float = 0.0
+    # Embodiment stance override. Empty means respect the card, then literal.
+    # literal = tools are the chara's own hands; actor = tools are backstage.
+    embodiment_override: str = ""
 
     def is_live(self) -> bool:
         return self.provider.strip().lower() in LIVE_PROVIDERS and bool(self.base_url.strip())
@@ -141,6 +147,8 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "user_chars": ("LUNAMOTH_USER_CHARS",),
     "mode": ("LUNAMOTH_MODE", "LUNAMOTH_PRESENCE"),
     "reasoning": ("LLM_REASONING",),
+    "tempo": ("LUNAMOTH_TEMPO",),
+    "embodiment_override": ("LUNAMOTH_EMBODIMENT",),
 }
 
 _INT_FIELDS = {"max_tokens", "memory_chars", "user_chars", "quiet"}
@@ -150,6 +158,8 @@ _FIELD_TYPES = {f.name: f.type for f in fields(Settings)}
 
 def _coerce(name: str, raw: Any) -> Any:
     if name == "temperature":
+        return float(raw)
+    if name == "tempo":
         return float(raw)
     if name in _INT_FIELDS:
         return int(raw)
@@ -164,6 +174,9 @@ def _coerce(name: str, raw: Any) -> Any:
         return v if v in {"off", "low", "medium", "high"} else "medium"
     if name == "show_thinking":
         return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+    if name == "embodiment_override":
+        v = str(raw).strip().lower()
+        return v if v in {"literal", "actor"} else ""
     return str(raw)
 
 

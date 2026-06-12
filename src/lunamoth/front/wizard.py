@@ -15,6 +15,7 @@ import getpass
 import sys
 
 from ..config import ROOT
+from ..content.knobs import embodiment_copy, normalize_embodiment
 from ..session.settings import PRESETS, Settings, load_settings, save_settings
 
 
@@ -74,6 +75,27 @@ def _choose_character(settings: Settings) -> None:
     settings.toolpack = ""
 
 
+def _choose_embodiment(settings: Settings) -> None:
+    """Imported cards may not know LunaMoth's stance field; ask the operator."""
+    from ..content.cards import CharacterCard
+    from ..content.persona import default_character_path, system_language
+
+    path = settings.character_path or str(default_character_path() or "")
+    if not path:
+        return
+    try:
+        card = CharacterCard.load(path)
+    except Exception:
+        return
+    if normalize_embodiment(card.defaults().get("embodiment")):
+        return
+    lang = card.language or system_language()
+    stances = ["literal", "actor"]
+    default = stances.index(normalize_embodiment(settings.embodiment_override) or "literal")
+    idx = _choose("Embodiment stance:", [embodiment_copy(s, lang) for s in stances], default)
+    settings.embodiment_override = stances[idx]
+
+
 def _test(settings: Settings) -> bool:
     from ..protocol.api import test_connection
 
@@ -127,6 +149,7 @@ def run_wizard(non_interactive_ok: bool = True) -> Settings:
 
     # Meet the chara — a plain numbered menu. World / tools / limits pair from the card.
     _choose_character(settings)
+    _choose_embodiment(settings)
 
     save_settings(settings)
     _say("\nentering the cocoon …")

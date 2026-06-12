@@ -80,6 +80,11 @@ def _cooldown(seconds: float) -> str | None:
     return None
 
 
+def _cycle_pause(handle: CharaHandle, base_patience: float) -> float:
+    tempo = max(0.1, float(getattr(handle.snapshot(), "tempo", 1.0) or 1.0))
+    return max(0.0, base_patience) / tempo
+
+
 def _stdin_permission_hook(kind: str, reason: str, detail: str, wait_seconds: int) -> bool:
     """request_permission hook for the plain terminal: ask on stdout, wait on stdin.
 
@@ -119,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
 
         os.environ['LUNAMOTH_DEBUG'] = '1'  # picked up by setup_logging in the agent
 
-    patience = float(args.patience)
+    base_patience = float(args.patience)
     # Presence: interactive terminal = operator attached; detached daemon
     # (stdin is /dev/null, started by `lunamoth start`) = operator away. The
     # handle does the presence/handoff bookkeeping on attach.
@@ -157,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
         # Attach grace (live mode): leave the operator room for the first word; if
         # they type during the grace this captures it as the first pending line.
         if state.eternal:
-            pending_line = _cooldown(max(30.0, 2 * patience))
+            pending_line = _cooldown(max(30.0, 2 * _cycle_pause(handle, base_patience)))
 
     try:
         while state.running:
@@ -189,8 +194,8 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 if stripped.startswith(('/set_patience ', '/set_cooldown ')):
                     try:
-                        patience = max(0.0, float(stripped.split(maxsplit=1)[1]))
-                        print(f'patience = {patience}s')
+                        base_patience = max(0.0, float(stripped.split(maxsplit=1)[1]))
+                        print(f'patience = {base_patience}s')
                     except Exception as e:
                         print(f'bad patience: {e}')
                     _prompt()
@@ -211,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
                 if interrupt is not None:
                     pending_line = interrupt
                     continue
-                pending_line = _cooldown(patience)
+                pending_line = _cooldown(_cycle_pause(handle, base_patience))
                 _prompt()
                 continue
 
@@ -225,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
                 if interrupt is not None:
                     pending_line = interrupt
                     continue
-                pending_line = _cooldown(patience)
+                pending_line = _cooldown(_cycle_pause(handle, base_patience))
                 if interactive:
                     _prompt()
             else:
