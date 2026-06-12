@@ -401,6 +401,34 @@ class _StallGuard:
 class LLMClient:
     def __init__(self, cfg: LLMConfig):
         self.cfg = cfg
+        # Real token usage from the most recent stream that carried a `usage`
+        # object (audit #8, hermes context_compressor: "defers to recent real
+        # API usage over known-noisy rough estimates"). The real number sees
+        # the WHOLE request — stable prefix, tool schemas, volatile tail —
+        # where the char heuristic sees only the history, and it is exact on
+        # CJK-heavy text where the heuristic drifts. Not requested explicitly
+        # (stream_options is not universal); captured when present.
+        self.last_usage: "dict[str, Any] | None" = None
+        self.last_prompt_tokens: int = 0
+        self.usage_fresh: bool = False
+
+    def _note_usage(self, usage: Any) -> None:
+        """Record a `usage` object seen in a stream payload (typically the
+        final chunk). Only positive prompt_tokens counts — providers send
+        zeroed placeholders mid-stream."""
+        if not isinstance(usage, dict):
+            return
+        prompt = usage.get("prompt_tokens")
+        if isinstance(prompt, (int, float)) and prompt > 0:
+            self.last_usage = dict(usage)
+            self.last_prompt_tokens = int(prompt)
+            self.usage_fresh = True
+
+    def mark_usage_stale(self) -> None:
+        """The window was rewritten (compaction): the captured usage no longer
+        describes it. The numbers stay readable for diagnostics; only the
+        compaction-trigger freshness drops."""
+        self.usage_fresh = False
 
     def is_live(self) -> bool:
         return self.cfg.provider in LIVE_PROVIDERS and bool(self.cfg.base_url)
@@ -667,6 +695,9 @@ class LLMClient:
                         payload = json.loads(line)
                     except json.JSONDecodeError:
                         continue
+                    self._note_usage(payload.get("usage"))  # audit #8
+                    # `or [{}]`: a usage-only final chunk carries "choices": []
+                    # — plain [0] indexing would crash on it.
                     choices = payload.get("choices") or [{}]
                     delta = choices[0].get("delta", {})
                     thinking = delta.get("reasoning_content") or delta.get("reasoning")
@@ -905,7 +936,10 @@ class LLMClient:
                         payload = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    choice = payload.get("choices", [{}])[0]
+                    self._note_usage(payload.get("usage"))  # audit #8
+                    # `or [{}]`: a usage-only final chunk carries "choices": []
+                    # — plain [0] indexing would crash on it.
+                    choice = (payload.get("choices") or [{}])[0]
                     if choice.get("finish_reason"):
                         finish_reason = str(choice["finish_reason"])
                         guard.mark_payload()

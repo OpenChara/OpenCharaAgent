@@ -154,6 +154,48 @@ def test_nothing_to_fold_counts_as_ineffective(clock):
     assert _sc(ctx, 1000, llm) is False  # guard engaged after two no-ops
 
 
+# ---- real usage preferred over the char heuristic (audit #8) ----------------------------
+
+
+class FakeUsageLLM(FakeLLM):
+    def __init__(self, prompt_tokens=0, fresh=True, **kw):
+        super().__init__(**kw)
+        self.last_prompt_tokens = prompt_tokens
+        self.usage_fresh = fresh
+
+    def mark_usage_stale(self):
+        self.usage_fresh = False
+
+
+def test_real_usage_triggers_when_heuristic_undercounts():
+    # History heuristic ~1000 tokens (under a 5000-budget threshold of 3750),
+    # but the provider measured the WHOLE request at 3900: compaction fires.
+    ctx = ContextBuffer(max_tokens=10_000_000)
+    _fill(ctx, 8, 500)
+    assert not _sc(ctx, 5000, FakeUsageLLM(prompt_tokens=0))            # heuristic alone: under
+    assert _sc(ctx, 5000, FakeUsageLLM(prompt_tokens=3900))             # real usage: over
+    assert not _sc(ctx, 5000, FakeUsageLLM(prompt_tokens=3900, fresh=False))  # stale → heuristic
+
+
+def test_implausible_real_usage_is_distrusted_after_reset():
+    # The same client survives /reset: usage captured against the OLD window
+    # must not compact a near-empty buffer (heur·4 < real fails the gate).
+    ctx = ContextBuffer(max_tokens=10_000_000)
+    _fill(ctx, 2, 100)  # ~54 tokens of live history
+    assert not _sc(ctx, 5000, FakeUsageLLM(prompt_tokens=3900))
+
+
+def test_compact_marks_usage_stale():
+    ctx = ContextBuffer(max_tokens=10_000_000)
+    _fill(ctx, 40, 500)
+    llm = FakeUsageLLM(prompt_tokens=100_000, summary="TIGHT")
+    assert _cp(ctx, 4000, llm) is True
+    # The captured usage described the pre-compaction window; after the
+    # rewrite the trigger must fall back to the heuristic until a new stream
+    # carries fresh usage.
+    assert llm.usage_fresh is False
+
+
 def test_effective_compaction_resets_the_guard(clock):
     ctx = ContextBuffer(max_tokens=10_000_000)
     _fill(ctx, 40, 500)

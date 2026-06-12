@@ -191,11 +191,33 @@ def _budget(ctx: ContextBuffer) -> int:
     return max(0, ctx.max_tokens - ctx.trim_buffer_tokens)
 
 
+def _window_tokens(ctx: ContextBuffer, llm) -> int:
+    """Window size for the compaction trigger (audit #8, hermes
+    context_compressor): prefer the provider's REAL prompt_tokens from the
+    most recent stream over the char heuristic. The real number sees the whole
+    request (stable prefix, tool schemas, volatile tail) and is exact on
+    CJK-heavy text; the heuristic sees only the history and drifts both ways
+    (thrash or overflow).
+
+    Plausibility gate: trust the real number only while the live history is a
+    substantial share of the request it measured (heur·4 ≥ real). The same
+    client survives /reset and make_session — without the gate, stale usage
+    from a window that no longer exists would drive compaction of a
+    near-empty buffer."""
+    heur = ctx.token_count()
+    if not getattr(llm, "usage_fresh", False):
+        return heur
+    real = int(getattr(llm, "last_prompt_tokens", 0) or 0)
+    if real > 0 and heur * 4 >= real:
+        return real
+    return heur
+
+
 def should_compact(ctx: ContextBuffer, llm) -> bool:
     budget = _budget(ctx)
     if not (llm and llm.is_live()) or budget <= 0:
         return False
-    tokens = ctx.token_count()
+    tokens = _window_tokens(ctx, llm)
     if tokens < THRESHOLD_RATIO * budget:
         return False
     return _guard(ctx).allows(tokens)
@@ -218,9 +240,13 @@ def compact(ctx: ContextBuffer, lang: str, llm, *, force: bool = False) -> bool:
     if force:
         guard.cooldown_until = 0.0
     else:
-        if tokens_before < THRESHOLD_RATIO * budget:
+        # Trigger on real usage when fresh (audit #8); the shrink measurement
+        # below stays on the heuristic — it is the only measure available for
+        # the just-rewritten window, and before/after must share a scale.
+        trigger_tokens = _window_tokens(ctx, llm)
+        if trigger_tokens < THRESHOLD_RATIO * budget:
             return False
-        if not guard.allows(tokens_before):
+        if not guard.allows(trigger_tokens):
             return False
 
     msgs = ctx.messages
@@ -251,6 +277,9 @@ def compact(ctx: ContextBuffer, lang: str, llm, *, force: bool = False) -> bool:
     summary_msg = {"role": "system", "content": _HEADER[_lang(lang)] + summary, "kind": "summary"}
     tail = [dict(m) for m in msgs[cut:]]
     ctx.messages = [summary_msg] + tail
+    stale = getattr(llm, "mark_usage_stale", None)
+    if callable(stale):
+        stale()  # the captured usage described the pre-compaction window
     tokens_after = ctx.token_count()
     if tokens_before > 0 and (tokens_before - tokens_after) / tokens_before < _MIN_SHRINK:
         guard.record_ineffective(tokens_after)

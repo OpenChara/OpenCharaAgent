@@ -228,3 +228,42 @@ def test_stream_end_args_repair(monkeypatch):
     _events, (tool_calls, _think, finish) = _drive(_client()._stream_turn([], None, out))
     assert finish == "tool_calls"
     assert json.loads(tool_calls[0]["function"]["arguments"]) == {"command": "ls"}
+
+
+# ---- audit #8: real usage capture --------------------------------------------------------
+
+
+def test_usage_captured_from_final_chunk_with_empty_choices(monkeypatch):
+    # OpenAI-style usage chunk: "choices": [] — must be captured, not crash.
+    _patch_stream(monkeypatch, [
+        {"choices": [{"delta": {"content": "hi"}}]},
+        {"choices": [{"finish_reason": "stop", "delta": {}}]},
+        {"choices": [], "usage": {"prompt_tokens": 1234, "completion_tokens": 5, "total_tokens": 1239}},
+    ])
+    c = _client()
+    assert c.last_prompt_tokens == 0 and not c.usage_fresh
+    out: list = []
+    _drive(c._stream_turn([], None, out))
+    assert "".join(out) == "hi"
+    assert c.last_prompt_tokens == 1234
+    assert c.usage_fresh
+    assert c.last_usage["total_tokens"] == 1239
+
+
+def test_usage_captured_on_plain_stream_and_zero_placeholders_ignored(monkeypatch):
+    _patch_stream(monkeypatch, [
+        {"choices": [{"delta": {"content": "a"}}], "usage": {"prompt_tokens": 0}},  # placeholder
+        {"choices": [{"delta": {"content": "b"}}], "usage": {"prompt_tokens": 77}},
+    ])
+    c = _client()
+    list(c._openai_compatible_stream("hi", [], ["sys"], []))
+    assert c.last_prompt_tokens == 77 and c.usage_fresh
+
+
+def test_mark_usage_stale():
+    c = _client()
+    c._note_usage({"prompt_tokens": 50})
+    assert c.usage_fresh
+    c.mark_usage_stale()
+    assert not c.usage_fresh
+    assert c.last_prompt_tokens == 50  # numbers stay readable for diagnostics
