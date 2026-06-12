@@ -531,9 +531,11 @@ function openDeleteModal(s) {
 }
 
 /* ============================ MODALS ============================ */
+/* wide: falsy = narrow, true = sheet, "wide" = sheet + .wide (the card editor) */
 function openModal(content, wide) {
   const box = $("modal-box");
   box.classList.toggle("sheet", !!wide);
+  box.classList.toggle("wide", wide === "wide");
   box.innerHTML = "";
   box.appendChild(content);
   $("modal-layer").classList.add("open");
@@ -545,6 +547,30 @@ document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { closeM
 function closePopovers() { document.querySelectorAll(".popover").forEach((p) => p.remove()); }
 
 /* ============================ DECK ============================ */
+/* Duplicate must NOT shadow the original: the backend dedupes by name+lang and
+   scans the user deck before the bundled one, so a same-name copy would hide a
+   builtin/frozen card and the unlocked copy would take its place. Rename the
+   copy up front (副本 / copy, numbered when taken). */
+function duplicateName(name, lang) {
+  const zh = String(lang || "").toLowerCase().startsWith("zh");
+  const taken = new Set(((state.hub && state.hub.cards) || []).map((c) => c.name));
+  const base = `${name} ${zh ? "副本" : "copy"}`;
+  if (!taken.has(base)) return base;
+  for (let n = 2; ; n++) {
+    if (!taken.has(`${base} ${n}`)) return `${base} ${n}`;
+  }
+}
+
+async function duplicateCard(c) {
+  const full = await hub.call("card.read", { path: c.path }, 20000);
+  if (!full.raw) throw new Error(t("dup-png"));
+  const name = duplicateName(full.name || c.name, full.language || c.lang);
+  if (full.raw.data) full.raw.data.name = name;
+  full.raw.name = name;
+  await hub.call("card.save", { data: full.raw }, 20000);
+  return name;
+}
+
 function renderDeck() {
   if (!state.hub) return;
   const q = ($("deck-search").value || "").toLowerCase();
@@ -562,9 +588,7 @@ function renderDeck() {
       el("button", { onclick: async (ev) => {
         ev.stopPropagation();
         try {
-          const full = await hub.call("card.read", { path: c.path }, 20000);
-          if (!full.raw) { toast("PNG cards: duplicate not supported yet", true); return; }
-          await hub.call("card.save", { data: full.raw }, 20000);
+          await duplicateCard(c);
           toast(t("copied"));
           refreshHub();
         } catch (e) { toast(e.message, true); }
@@ -583,60 +607,144 @@ $("deck-search").addEventListener("input", renderDeck);
 $("deck-new").addEventListener("click", () => ensureModel(openCreateFlow));
 $("deck-import").addEventListener("click", () => $("file-input").click());
 
-/* 卡片视图：渲染成卡片，不再展示原始 JSON（开发者从底部折叠拿） */
+/* 卡片视图 = 卡片编辑器：非内置 JSON 卡每一段都可直接改；内置卡只读（复制副本
+   再编辑）；冻结卡可编辑——改动写回卡册，活着的 chara 保留唤醒时的冻结副本。
+   原始 JSON 收在底部折叠（开发者向）。 */
 async function viewCard(c) {
+  let full;
   try {
-    const full = await hub.call("card.read", { path: c.path }, 20000);
-    const ext = full.extensions && full.extensions.lunamoth ? full.extensions.lunamoth : {};
-    const card = { name: full.name, theme_color: c.theme_color || ext.theme_color || "",
-                   avatar_svg: c.avatar_svg || ext.avatar_svg || "" };
-    const avatar = avatarNode(full.name, card, "avatar-s");
-    avatar.style.cursor = "pointer";
-    avatar.title = t("av-title");
-    avatar.addEventListener("click", () => { closeModal(); openAvatarEditor(c); });
-    const badges = el("div", { class: "cv-badges" },
-      el("span", { class: "chip" }, full.language || c.lang),
-      c.builtin ? el("span", { class: "chip" }, t("deck-builtin")) : null,
-      ext.embodiment ? el("span", { class: "chip" }, ext.embodiment) : null,
-      ext.toolpack ? el("span", { class: "chip" }, `⚒ ${ext.toolpack}`) : null,
-      c.frozen ? el("span", { class: "chip" }, t("card-frozen-by", { names: (c.used_by || []).join("、") })) : null);
-    const book = full.character_book;
-    const bookN = book && Array.isArray(book.entries) ? book.entries.length : 0;
-    const goals = Array.isArray(ext.goals) ? ext.goals : [];
-    const persona = [full.description, full.personality, full.scenario].filter(Boolean).join("\n\n");
-    openModal(el("div", null,
-      el("div", { class: "cv-head" }, avatar,
-        el("div", { class: "cv-id" },
-          el("b", null, full.name),
-          (ext.tagline || c.tagline) ? el("div", { class: "tagline" }, ext.tagline || c.tagline) : null,
-          badges)),
-      persona ? el("div", { class: "cv-block" },
-        el("h4", null, t("cv-persona")),
-        el("div", { class: "memory-text" }, persona)) : null,
-      full.first_mes ? el("div", { class: "cv-block" },
-        el("h4", null, t("cv-first")),
-        el("div", { class: "memory-text" }, full.first_mes)) : null,
-      bookN ? el("div", { class: "cv-block" },
-        el("h4", null, t("cv-world", { n: bookN })),
-        el("div", { class: "tool-chips" },
-          ...book.entries.slice(0, 12).map((e2) =>
-            el("span", { class: "chip" }, (e2.keys || []).slice(0, 2).join(", ") || "•")))) : null,
-      goals.length ? el("div", { class: "cv-block" },
-        el("h4", null, t("cv-goals")),
-        ...goals.slice(0, 6).map((g) => el("div", { class: "goal" }, el("i"), el("span", null, String(g).slice(0, 120))))) : null,
-      full.raw ? el("details", { class: "cv-raw" },
-        el("summary", null, t("cv-raw")),
-        el("pre", null, JSON.stringify(full.raw, null, 2))) : null,
-      el("div", { class: "acts", style: "margin-top:16px" },
-        el("button", { class: "btn text", onclick: closeModal }, t("cancel")),
-        el("div", { class: "grow" }),
-        (!c.builtin && !c.frozen) ? el("button", { class: "btn soft", onclick: async () => {
-          if (!confirm(t("deck-delete-q"))) return;
-          try { await hub.call("card.delete", { path: c.path }, 10000); closeModal(); refreshHub(); }
-          catch (e) { toast(e.message, true); }
-        } }, t("menu-delete")) : null,
-        el("button", { class: "btn primary", onclick: () => { closeModal(); ensureModel(() => openWakeSheet(c)); } }, t("deck-wake")))), true);
-  } catch (e) { toast(e.message, true); }
+    full = await hub.call("card.read", { path: c.path }, 20000);
+  } catch (e) { toast(rpcErrText(e), true); return; }
+  const ext = full.extensions && full.extensions.lunamoth ? full.extensions.lunamoth : {};
+  const isJson = !!full.raw;
+  // builtin cards the backend refuses to save; frozen USER cards stay editable
+  const editable = !c.builtin && isJson;
+  const card = { name: full.name, theme_color: c.theme_color || ext.theme_color || "",
+                 avatar_svg: c.avatar_svg || ext.avatar_svg || "" };
+  const avatar = avatarNode(full.name, card, "avatar-s");
+  avatar.style.cursor = "pointer";
+  avatar.title = t("av-title");
+  avatar.addEventListener("click", () => { closeModal(); openAvatarEditor(c); });
+  const badges = el("div", { class: "cv-badges" },
+    el("span", { class: "chip" }, full.language || c.lang),
+    c.builtin ? el("span", { class: "chip" }, t("deck-builtin")) : null,
+    ext.embodiment ? el("span", { class: "chip" }, ext.embodiment) : null,
+    ext.toolpack ? el("span", { class: "chip" }, `⚒ ${ext.toolpack}`) : null,
+    c.frozen ? el("span", { class: "chip" }, t("card-frozen-by", { names: (c.used_by || []).join("、") })) : null);
+
+  function field(value, phKey) {
+    const div = el("div", { class: "cve-text" }, value || "");
+    if (editable) {
+      div.setAttribute("contenteditable", "plaintext-only");
+      if (phKey) div.dataset.ph = t(phKey);
+    }
+    return div;
+  }
+  const block = (labelKey, node, has) => (editable || has)
+    ? el("div", { class: "cv-block" }, el("h4", null, t(labelKey)), node) : null;
+
+  const nameField = field(full.name);
+  nameField.classList.add("cve-name");
+  const taglineValue = String(ext.tagline || c.tagline || "");
+  const taglineField = field(taglineValue, "sec-tagline");
+  taglineField.classList.add("tagline");
+  const descField = field(full.description);
+  const persField = field(full.personality);
+  const scenField = field(full.scenario);
+  const firstField = field(full.first_mes);
+  const book = full.character_book && Array.isArray(full.character_book.entries) ? full.character_book : null;
+  const worldText = sectionText({
+    world_entries: (book ? book.entries : []).map((e2) => ({
+      keys: e2.keys || [], content: e2.content || "", constant: !!e2.constant })),
+  }, "world_entries");
+  const worldField = field(worldText);
+  const goalsText = (Array.isArray(ext.goals) ? ext.goals : []).map(String).join("\n");
+  const goalsField = field(goalsText);
+  const notesField = field(full.creator_notes);
+
+  const note = c.builtin ? t("cv-builtin-note")
+    : !isJson ? t("cv-png-note")
+    : c.frozen ? t("av-frozen-note", { names: (c.used_by || []).join("、") })
+    : "";
+
+  const dupBtn = (c.builtin && isJson) ? el("button", { class: "btn soft", onclick: async () => {
+    dupBtn.disabled = true;
+    try {
+      await duplicateCard(c);
+      toast(t("copied"));
+      closeModal();
+      refreshHub();
+    } catch (e) { dupBtn.disabled = false; toast(rpcErrText(e), true); }
+  } }, t("deck-copy")) : null;
+
+  const saveBtn = editable ? el("button", { class: "btn primary", onclick: async () => {
+    saveBtn.disabled = true;
+    try {
+      const data = full.raw.data = full.raw.data || {};
+      const newName = nameField.textContent.trim() || full.name;
+      data.name = newName;
+      full.raw.name = newName;
+      data.description = descField.textContent;
+      data.personality = persField.textContent;
+      data.scenario = scenField.textContent;
+      data.first_mes = firstField.textContent;
+      data.creator_notes = notesField.textContent;
+      data.extensions = data.extensions || {};
+      const lm = data.extensions.lunamoth = data.extensions.lunamoth || {};
+      const tagline = taglineField.textContent.trim();
+      if (tagline) lm.tagline = tagline; else delete lm.tagline;
+      const goals = goalsField.textContent.split("\n").map((s) => s.trim()).filter(Boolean);
+      if (goals.length) lm.goals = goals; else delete lm.goals;
+      // world book: rebuild entries from the line format, keep the book's name
+      const tmp = {};
+      putSection(tmp, "world_entries", worldField.textContent);
+      const entries = (tmp.world_entries || []).map((w, i) => ({
+        keys: w.keys, content: w.content, constant: w.constant, enabled: true, insertion_order: i,
+      }));
+      const oldBook = data.character_book;
+      if (entries.length || (oldBook && oldBook.name)) {
+        data.character_book = { name: (oldBook && oldBook.name) || newName, entries };
+      } else {
+        delete data.character_book;
+      }
+      await hub.call("card.save", { data: full.raw, path: c.path }, 20000);
+      toast(t("saved"));
+      closeModal();
+      refreshHub();
+    } catch (e) {
+      saveBtn.disabled = false;
+      toast(rpcErrText(e), true);
+    }
+  } }, t("save")) : null;
+
+  openModal(el("div", null,
+    el("div", { class: "cv-head" }, avatar,
+      el("div", { class: "cv-id" },
+        nameField,
+        (editable || taglineValue) ? taglineField : null,
+        badges)),
+    note ? el("div", { class: "cv-note" }, note) : null,
+    block("cve-description", descField, !!full.description),
+    block("cve-personality", persField, !!full.personality),
+    block("cve-scenario", scenField, !!full.scenario),
+    block("cv-first", firstField, !!full.first_mes),
+    block("cve-world", worldField, !!worldText),
+    block("cve-goals", goalsField, !!goalsText),
+    block("cve-notes", notesField, !!full.creator_notes),
+    full.raw ? el("details", { class: "cv-raw" },
+      el("summary", null, t("cv-raw")),
+      el("pre", null, JSON.stringify(full.raw, null, 2))) : null,
+    el("div", { class: "acts", style: "margin-top:16px" },
+      el("button", { class: "btn text", onclick: closeModal }, t("cancel")),
+      el("div", { class: "grow" }),
+      (!c.builtin && !c.frozen) ? el("button", { class: "btn soft", onclick: async () => {
+        if (!confirm(t("deck-delete-q"))) return;
+        try { await hub.call("card.delete", { path: c.path }, 10000); closeModal(); refreshHub(); }
+        catch (e) { toast(e.message, true); }
+      } }, t("menu-delete")) : null,
+      dupBtn,
+      saveBtn,
+      el("button", { class: "btn primary", onclick: () => { closeModal(); ensureModel(() => openWakeSheet(c)); } }, t("deck-wake")))), "wide");
 }
 
 /* card import: file picker + whole-window drag-drop */
@@ -996,18 +1104,67 @@ async function openWakeSheet(card) {
     netSwitch.classList.toggle("on", wantNet);
   } });
 
-  // toolpack：卡片提的是期望，操作员在此授予（可改；toolpacks.list 在需求单）
+  // toolpack：卡片提的是期望，操作员在此授予（toolpacks.list 缺席时退回 datalist）
   let cardPack = "";
   try {
     const full = await hub.call("card.read", { path: card.path }, 20000);
     const ext = full.raw && full.raw.data && full.raw.data.extensions && full.raw.data.extensions.lunamoth;
     if (ext && ext.toolpack) cardPack = String(ext.toolpack);
   } catch (e) { /* keep default */ }
-  let tpl = $("toolpack-list");
-  if (!tpl) { tpl = el("datalist", { id: "toolpack-list" }); document.body.appendChild(tpl); }
-  tpl.innerHTML = "";
-  for (const v of new Set(["sandbox", cardPack].filter(Boolean))) tpl.appendChild(el("option", { value: v }));
-  const packInput = el("input", { value: cardPack || "sandbox", list: "toolpack-list" });
+  let packs = null;
+  try {
+    packs = await hub.call("toolpacks.list", {}, 15000);
+    if (!Array.isArray(packs)) packs = null;
+  } catch (e) {
+    packs = null;
+    if (e && e.code !== -32601) toast(rpcErrText(e), true);
+  }
+  const packInput = el("input", { value: cardPack || "sandbox" });
+  let packPicker = null;
+  if (packs && packs.length) {
+    packPicker = el("div", { class: "pack-list" });
+    const syncPicked = () => {
+      const v = packInput.value.trim();
+      packPicker.querySelectorAll(".pack-option").forEach((n) =>
+        n.classList.toggle("on", n.dataset.pack === v));
+    };
+    for (const p of packs) {
+      const tools = Array.isArray(p.tools) ? p.tools : [];
+      packPicker.appendChild(el("div", {
+        class: "pack-option", "data-pack": p.name,
+        onclick: () => { packInput.value = p.name; syncPicked(); },
+      },
+        el("div", { class: "pack-head" },
+          el("b", null, p.name),
+          p.description ? el("span", null, p.description) : null),
+        tools.length ? el("div", { class: "tool-chips" },
+          ...tools.slice(0, 10).map((tn) => el("span", { class: "chip" }, String(tn))),
+          tools.length > 10 ? el("span", { class: "chip" }, `+${tools.length - 10}`) : null) : null));
+    }
+    packInput.addEventListener("input", syncPicked);
+    syncPicked();
+  } else {
+    let tpl = $("toolpack-list");
+    if (!tpl) { tpl = el("datalist", { id: "toolpack-list" }); document.body.appendChild(tpl); }
+    tpl.innerHTML = "";
+    for (const v of new Set(["sandbox", cardPack].filter(Boolean))) tpl.appendChild(el("option", { value: v }));
+    packInput.setAttribute("list", "toolpack-list");
+  }
+
+  // embodiment：唤醒时一次定下、整段生命不热切换（保护提示词缓存）；默认随卡
+  let emb = card.embodiment === "actor" ? "actor" : "literal";
+  const embGrid = el("div", { class: "embodiment-grid" },
+    ...["literal", "actor"].map((mode) => {
+      const opt = el("div", { class: "emb-option" + (emb === mode ? " on" : "") },
+        el("b", null, mode),
+        el("span", null, t("emb-" + mode)));
+      opt.addEventListener("click", () => {
+        emb = mode;
+        embGrid.querySelectorAll(".emb-option").forEach((n) => n.classList.remove("on"));
+        opt.classList.add("on");
+      });
+      return opt;
+    }));
 
   const goBtn = el("button", { class: "btn primary big", onclick: async () => {
     goBtn.disabled = true;
@@ -1015,6 +1172,7 @@ async function openWakeSheet(card) {
       const entry = await hub.call("session.wake", {
         card: card.path, name: nameInput.value.trim(), isolation,
         model: modelInput.value.trim(), toolpack: packInput.value.trim() || "sandbox",
+        embodiment: emb,
       }, 60000);
       closeModal();
       await refreshHub();
@@ -1034,7 +1192,9 @@ async function openWakeSheet(card) {
     el("div", { class: "field-row" },
       el("label", null, t("wake-toolpack")),
       el("div", { class: "input-like" }, packInput,
-        cardPack ? el("span", { class: "cue" }, t("wake-toolpack-card", { name: cardPack })) : null)),
+        cardPack ? el("span", { class: "cue" }, t("wake-toolpack-card", { name: cardPack })) : null),
+      packPicker),
+    el("div", { class: "field-row" }, el("label", null, t("wake-emb")), embGrid),
     el("div", { class: "adv" },
       el("div", { class: "adv-head", onclick: (ev) => ev.currentTarget.parentNode.classList.toggle("open") }, t("wake-adv")),
       el("div", { class: "adv-body" },
