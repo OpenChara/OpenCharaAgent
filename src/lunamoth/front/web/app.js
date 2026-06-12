@@ -66,8 +66,30 @@ const glyphOf = (name) => (name || "?").trim().slice(0, 1).toUpperCase();
 function errText(err) {
   const kind = err && err.kind ? err.kind : "provider";
   const key = { auth: "err-auth", credit: "err-credit", network: "err-network",
-                model: "err-model", ratelimit: "err-ratelimit" }[kind] || "err-provider";
+                model: "err-model", ratelimit: "err-ratelimit",
+                draft_json: "err-draft-json", draft_schema: "err-draft-schema" }[kind] || "err-provider";
   return t(key);
+}
+
+function rpcErrText(e) {
+  const data = e && e.data;
+  if (data && data.kind) return errText(data) + (data.detail ? ` · ${data.detail}` : "");
+  return e && e.message ? e.message : t("err-provider");
+}
+
+function dataUriSvg(svg) {
+  return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+}
+
+function cardVisual(c, cls) {
+  const color = c && c.theme_color ? String(c.theme_color) : "";
+  const svg = c && c.avatar_svg ? String(c.avatar_svg) : "";
+  const attrs = { class: cls || "face" };
+  if (color) attrs.style = `--card-theme:${color}`;
+  const children = [];
+  if (svg) children.push(el("img", { class: "avatar-svg", src: dataUriSvg(svg), alt: "" }));
+  else children.push(el("div", { class: "glyph" }, glyphOf(c && c.name)));
+  return el("div", attrs, ...children);
 }
 
 /* ---------- global state ---------- */
@@ -248,7 +270,7 @@ function cardMenu(ev, s) {
         const r = await hub.call("session.export", { name: s.name }, 120000);
         toast(t("exported", { path: r.path }));
         hub.call("open.path", { path: r.path, reveal: true }).catch(() => {});
-      } catch (e) { toast(e.message, true); }
+      } catch (e) { toast(rpcErrText(e), true); }
     } }, t("menu-export")),
     el("div", { class: "row danger", onclick: () => { closeMenus(); openDeleteModal(s); } }, t("menu-delete")));
   menu.dataset.menu = "1";
@@ -342,12 +364,14 @@ function renderDeck() {
           refreshHub();
         } catch (e) { toast(e.message, true); }
       } }, t("deck-copy")));
+    const face = cardVisual(c, `face ${paletteClass(c.name)}`);
+    if (badge) face.appendChild(badge);
+    face.appendChild(acts);
     grid.appendChild(el("div", { class: "spine", onclick: () => viewCard(c) },
-      el("div", { class: `face ${paletteClass(c.name)}` },
-        el("div", { class: "glyph" }, glyphOf(c.name)), badge, acts),
+      face,
       el("div", { class: "sbody" },
         el("div", { class: "sname" }, el("b", null, c.name), el("span", { class: "chip" }, c.lang)),
-        el("div", { class: "sworld" }, [c.world, c.builtin ? t("deck-builtin") : "", ...(c.tags || [])].filter(Boolean).slice(0, 3).join(" · ")))));
+        el("div", { class: "sworld" }, [c.tagline || c.world, c.builtin ? t("deck-builtin") : "", ...(c.tags || [])].filter(Boolean).slice(0, 3).join(" · ")))));
   }
 }
 $("deck-search").addEventListener("input", renderDeck);
@@ -357,9 +381,12 @@ $("deck-import").addEventListener("click", () => $("file-input").click());
 async function viewCard(c) {
   try {
     const full = await hub.call("card.read", { path: c.path }, 20000);
+    const ext = full.extensions && full.extensions.lunamoth ? full.extensions.lunamoth : {};
+    const avatar = ext.avatar_svg ? el("img", { class: "view-avatar", src: dataUriSvg(ext.avatar_svg), alt: "" }) : null;
     openModal(el("div", null,
       el("h2", null, full.name),
-      el("div", { class: "sub" }, c.frozen ? t("card-frozen-by", { names: c.used_by.join("、") }) : (c.world || "")),
+      el("div", { class: "sub" }, c.frozen ? t("card-frozen-by", { names: c.used_by.join("、") }) : (ext.tagline || c.world || "")),
+      avatar,
       el("div", { class: "memory-text", style: "max-height:46vh;overflow:auto" },
         [full.description, full.personality, full.scenario, full.first_mes ? "—\n" + full.first_mes : ""]
           .filter(Boolean).join("\n\n")),
@@ -492,7 +519,7 @@ function setupPane(opts) {
       }
     } catch (e) {
       okline.className = "okline bad";
-      okline.textContent = "✗ " + e.message;
+      okline.textContent = "✗ " + rpcErrText(e);
     } finally {
       testBtn.textContent = t("test");
       testBtn.disabled = false;
@@ -1228,20 +1255,40 @@ class ChatController {
 
 /* ============================ CREATE FLOW ============================ */
 const SECTION_DEFS = [
-  ["appearance", "sec-appearance"],
-  ["personality", "sec-personality"],
-  ["world", "sec-world"],
+  ["name", "sec-name"],
+  ["description", "sec-description"],
   ["first_mes", "sec-first"],
-  ["relationship", "sec-relation"],
-  ["goals", "sec-goals"],
-  ["rules", "sec-rules"],
+  ["world_entries", "sec-world"],
+  ["seed_goals", "sec-goals"],
+  ["tagline", "sec-tagline"],
 ];
+
+function normalizeDraft(d) {
+  const draft = Object.assign({}, d || {});
+  draft.name = String(draft.name || "");
+  draft.description = String(draft.description || draft.appearance || "");
+  draft.first_mes = String(draft.first_mes || "");
+  if (!Array.isArray(draft.world_entries)) {
+    draft.world_entries = (draft.world || []).map((w) => ({
+      keys: w.keys || (w.key ? [w.key] : []),
+      content: w.content || w.desc || "",
+      constant: !!w.constant,
+    }));
+  }
+  if (!Array.isArray(draft.seed_goals)) draft.seed_goals = Array.isArray(draft.goals) ? draft.goals : [];
+  draft.tagline = String(draft.tagline || "");
+  draft.theme_color = /^#[0-9a-fA-F]{6}$/.test(String(draft.theme_color || "")) ? String(draft.theme_color).toUpperCase() : "#5B9FD4";
+  draft.avatar_svg = String(draft.avatar_svg || "");
+  draft.embodiment = draft.embodiment === "actor" ? "actor" : "literal";
+  return draft;
+}
 
 function openCreateFlow() {
   const root = $("flow-root");
   const flow = {
     origin: "",
     draft: null,
+    lastDraftAt: 0,
     versions: {},   // section -> [v0, v1, ...] (strings)
     edited: {},
   };
@@ -1251,7 +1298,7 @@ function openCreateFlow() {
 function closeCreateFlow() { $("overlay-flow").classList.remove("open"); }
 
 function flowSteps(active) {
-  const names = [t("flow-tell"), t("flow-shape"), t("flow-card")];
+  const names = [t("flow-tell"), t("flow-shape")];
   const bar = el("div", { class: "flow-steps" });
   names.forEach((n, i) => {
     if (i) bar.appendChild(el("i"));
@@ -1263,22 +1310,41 @@ function flowSteps(active) {
 }
 
 function sectionText(draft, key) {
-  if (key === "world") return (draft.world || []).map((w) => `${w.key} — ${w.desc}`).join("\n");
-  if (key === "goals") return (draft.goals || []).join(" · ");
-  if (key === "appearance") return draft.appearance || "";
+  if (key === "world_entries") {
+    return (draft.world_entries || []).map((w) =>
+      `${(w.keys || []).join(", ")} — ${w.content || ""}${w.constant ? " [constant]" : ""}`).join("\n");
+  }
+  if (key === "seed_goals") return (draft.seed_goals || []).join("\n");
   return draft[key] || "";
 }
 function putSection(draft, key, text) {
-  if (key === "world") {
-    draft.world = text.split("\n").map((line) => {
-      const m = line.split("—");
-      return m.length > 1 ? { key: m[0].trim(), desc: m.slice(1).join("—").trim(), constant: false } : null;
+  if (key === "world_entries") {
+    draft.world_entries = text.split("\n").map((line) => {
+      const constant = /\[(constant|常驻)\]/i.test(line);
+      const clean = line.replace(/\[(constant|常驻)\]/ig, "").trim();
+      const m = clean.split("—");
+      return m.length > 1 ? {
+        keys: m[0].split(/[,，]/).map((s) => s.trim()).filter(Boolean),
+        content: m.slice(1).join("—").trim(),
+        constant,
+      } : null;
     }).filter(Boolean);
-  } else if (key === "goals") {
-    draft.goals = text.split("·").map((s) => s.trim()).filter(Boolean);
+  } else if (key === "seed_goals") {
+    draft.seed_goals = text.split(/\n|·/).map((s) => s.trim()).filter(Boolean);
   } else {
     draft[key] = text;
+    if (key === "name") draft.name = draft.name.trim();
   }
+}
+
+function safeSvgForPreview(svg) {
+  const s = String(svg || "").trim();
+  const low = s.toLowerCase();
+  return s.length <= 1500 && low.startsWith("<svg") && /\bviewbox\s*=\s*["']0\s+0\s+64\s+64["']/i.test(s) &&
+    !/<\s*\/?\s*script(?:\s|>|\/)/i.test(s) && !/<\s*\/?\s*foreignobject(?:\s|>|\/)/i.test(s) &&
+    !/<\s*\/?\s*text(?:\s|>|\/)/i.test(s) &&
+    !/\son[a-zA-Z0-9_.:-]*\s*=/.test(s) &&
+    !/\b(?:href|xlink:href)\s*=\s*["']\s*(?!#)[^"']+["']|url\(\s*["']?\s*(?!#)[^)]+/i.test(s);
 }
 
 function renderTellStep(root, flow) {
@@ -1298,16 +1364,23 @@ function renderTellStep(root, flow) {
   const goBtn = el("button", { class: "btn primary big", onclick: async () => {
     flow.origin = box.value.trim();
     if (!flow.origin) return;
-    inner.appendChild(el("div", { class: "transcribing" }, el("i"), t("transcribing")));
+    if (flow.lastDraftAt && !confirm(t("draft-overwrite-q"))) return;
+    inner.querySelectorAll(".draft-error,.transcribing").forEach((n) => n.remove());
+    const progress = el("div", { class: "transcribing" }, el("i"), t("transcribing"));
+    inner.appendChild(progress);
     goBtn.disabled = true;
     try {
-      flow.draft = await hub.call("transcribe.card", { text: flow.origin }, 240000);
+      flow.draft = normalizeDraft(await hub.call("cards.draft", { inspiration: flow.origin }, 240000));
+      flow.lastDraftAt = Date.now();
       flow.versions = {};
       for (const [key] of SECTION_DEFS) flow.versions[key] = [sectionText(flow.draft, key)];
       renderShapeStep(root, flow);
     } catch (e) {
-      toast(e.message, true);
-      renderTellStep(root, flow);
+      goBtn.disabled = false;
+      progress.remove();
+      inner.appendChild(el("div", { class: "draft-error" },
+        el("b", null, rpcErrText(e)),
+        el("button", { class: "btn soft", onclick: () => goBtn.click() }, t("retry"))));
     }
   } }, t("tell-go"));
 
@@ -1324,16 +1397,73 @@ function renderShapeStep(root, flow) {
   root.appendChild(flowSteps(1));
   const inner = el("div", { class: "flow-inner" });
 
+  function collect() {
+    inner.querySelectorAll(".sec[data-sec]").forEach((secEl) => {
+      const key = secEl.dataset.sec;
+      const text = secEl.querySelector(".sec-text").textContent;
+      putSection(flow.draft, key, text);
+      flow.versions[key][flow.versions[key].length - 1] = text;
+    });
+  }
+
   // the telling never disappears — that is this step's core reassurance
   const origin = el("div", { class: "origin-panel", onclick: () => origin.classList.toggle("expanded") },
     el("div", { class: "oh" }, t("origin-title"), el("span", { class: "cue" }, t("origin-cue"))),
     el("div", { class: "ox" }, flow.origin));
   inner.appendChild(origin);
 
+  if (flow.draft.notes && flow.draft.notes.length) {
+    inner.appendChild(el("div", { class: "draft-note" }, flow.draft.notes.join(" · ")));
+  }
+
+  const avatarBox = el("div", { class: "avatar-preview" });
+  function refreshAvatarBox() {
+    avatarBox.innerHTML = "";
+    avatarBox.appendChild(safeSvgForPreview(flow.draft.avatar_svg)
+      ? el("img", { src: dataUriSvg(flow.draft.avatar_svg), alt: "" })
+      : el("span", null, glyphOf(flow.draft.name)));
+  }
+  refreshAvatarBox();
+  const svgText = el("textarea", { class: "svg-edit", placeholder: "<svg …" });
+  svgText.value = flow.draft.avatar_svg || "";
+  svgText.addEventListener("input", () => {
+    flow.draft.avatar_svg = svgText.value;
+    refreshAvatarBox();
+  });
+  const themeChip = el("div", { class: "theme-chip", style: `--card-theme:${flow.draft.theme_color || "#5B9FD4"}` }, t("theme-preview"));
+  const colorInput = el("input", { type: "color", value: flow.draft.theme_color || "#5B9FD4" });
+  colorInput.addEventListener("input", () => {
+    flow.draft.theme_color = colorInput.value.toUpperCase();
+    themeChip.style.cssText = `--card-theme:${flow.draft.theme_color}`;
+  });
+  const visualSec = el("div", { class: "sec visual-sec" },
+    el("h3", null, t("sec-visual")),
+    el("div", { class: "visual-row" },
+      avatarBox,
+      el("label", null, t("theme-color"), colorInput),
+      themeChip),
+    el("label", { class: "svg-label" }, t("avatar-svg-field"), svgText));
+  inner.appendChild(visualSec);
+
+  const embodiment = el("div", { class: "sec embodiment-sec" },
+    el("h3", null, t("sec-embodiment")),
+    el("div", { class: "embodiment-grid" },
+      ...["literal", "actor"].map((mode) => {
+        const opt = el("div", { class: "emb-option" + (flow.draft.embodiment === mode ? " on" : "") },
+          el("b", null, mode === "literal" ? "literal" : "actor"),
+          el("span", null, t("emb-" + mode)));
+        opt.addEventListener("click", () => {
+          flow.draft.embodiment = mode;
+          inner.querySelectorAll(".emb-option").forEach((n) => n.classList.remove("on"));
+          opt.classList.add("on");
+        });
+        return opt;
+      })));
+  inner.appendChild(embodiment);
+
   for (const [key, labelKey] of SECTION_DEFS) {
     const versions = flow.versions[key];
     const current = versions[versions.length - 1];
-    if (key === "rules" && !current) continue;
     const verLabel = el("span", { class: "ver" },
       flow.edited[key] ? t("edited") : versions.length > 1 ? t("ai-draft-n", { n: versions.length }) : t("ai-draft"));
     const textDiv = el("div", { class: "sec-text", contenteditable: "plaintext-only" }, current);
@@ -1353,13 +1483,14 @@ function renderShapeStep(root, flow) {
         const note = getLangCode() === "zh"
           ? `\n\n（请只为「${t(labelKey)}」部分换一种写法，其余保持原意；返回完整 JSON。）`
           : `\n\n(Rewrite only the "${t(labelKey)}" part differently; keep everything else; return full JSON.)`;
-        const fresh = await hub.call("transcribe.card", { text: flow.origin + note }, 240000);
+        collect();
+        const fresh = normalizeDraft(await hub.call("cards.draft", { inspiration: flow.origin + note }, 240000));
         putSection(flow.draft, key, sectionText(fresh, key));
         versions.push(sectionText(fresh, key));
         flow.edited[key] = false;
         renderShapeStep(root, flow);
       } catch (e) {
-        toast(e.message, true);
+        toast(rpcErrText(e), true);
         rewriteBtn.disabled = false;
         rewriteBtn.textContent = t("rewrite");
       }
@@ -1367,15 +1498,6 @@ function renderShapeStep(root, flow) {
     inner.appendChild(el("div", { class: "sec", "data-sec": key },
       el("h3", null, t(labelKey), verLabel, revertBtn, rewriteBtn),
       textDiv));
-  }
-
-  function collect() {
-    inner.querySelectorAll(".sec[data-sec]").forEach((secEl) => {
-      const key = secEl.dataset.sec;
-      const text = secEl.querySelector(".sec-text").textContent;
-      putSection(flow.draft, key, text);
-      flow.versions[key][flow.versions[key].length - 1] = text;
-    });
   }
 
   root.appendChild(inner);
@@ -1388,7 +1510,7 @@ function renderShapeStep(root, flow) {
         await hub.call("card.from_draft", { draft: flow.draft, origin: flow.origin, as_draft: true }, 30000);
         toast(t("saved"));
         refreshHub();
-      } catch (e) { toast(e.message, true); }
+      } catch (e) { toast(rpcErrText(e), true); }
     } }, t("save-draft")),
     el("button", { class: "btn primary", onclick: async () => {
       collect();
@@ -1405,7 +1527,7 @@ function renderShapeStep(root, flow) {
             el("button", { class: "btn text", onclick: () => { closeModal(); show("deck"); } }, t("later-deck")),
             el("div", { class: "grow" }),
             el("button", { class: "btn primary big", onclick: () => { closeModal(); openWakeSheet(card); } }, t("deck-wake")))));
-      } catch (e) { toast(e.message, true); }
+      } catch (e) { toast(rpcErrText(e), true); }
     } }, t("next-card"))));
 }
 

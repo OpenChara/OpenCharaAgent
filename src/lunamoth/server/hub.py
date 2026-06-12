@@ -32,7 +32,7 @@ from typing import Any, Callable
 
 from .. import __version__
 from ..config import ROOT
-from ..content.cards import CharacterCard
+from ..content.cards import CharacterCard, detect_language
 from ..session import sessions as S
 from ..session.settings import PRESETS, Settings
 from .dispatch import RpcError, error_response, ok_response, _normalize_request
@@ -46,6 +46,14 @@ _ISOLATION_TO_BACKEND = {"dir": "local", "sandbox": "sandbox", "docker": "docker
 _WRITING_STAR = ("claude", "deepseek-v4", "gpt-5", "gemini-2", "kimi", "grok-4", "qwen3-max")
 
 _HTTP_TIMEOUT = 20.0
+
+
+class HubRpcError(RpcError):
+    """Hub-scoped JSON-RPC error that may carry machine-readable error data."""
+
+    def __init__(self, code: int, message: str, data: dict[str, Any] | None = None):
+        super().__init__(code, message)
+        self.data = data
 
 
 # ---- paths -------------------------------------------------------------------
@@ -195,24 +203,242 @@ def _classify_http_error(code: int, detail: str) -> dict[str, str]:
     return {"kind": "provider", "detail": detail or f"HTTP {code}"}
 
 
+def _http_error_detail(exc: urllib.error.HTTPError) -> str:
+    try:
+        raw = exc.read().decode("utf-8", errors="replace")
+        data = json.loads(raw)
+        err = data.get("error") if isinstance(data, dict) else None
+        if isinstance(err, dict):
+            return str(err.get("message") or "")
+        return raw[:500]
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _complete(defaults: dict[str, str], system: str, user: str, model: str = "",
-              max_tokens: int = 4096, temperature: float = 0.8) -> str:
+              max_tokens: int = 4096, temperature: float = 0.8,
+              response_format: dict[str, Any] | None = None) -> str:
     base = (defaults.get("base_url") or "").rstrip("/")
     if not base:
-        raise RpcError(-32030, "no model configured — set up a provider first")
-    data = _http_json(
-        base + "/chat/completions", defaults.get("api_key", ""),
-        {
-            "model": model or defaults.get("model", ""),
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            "max_tokens": max_tokens, "temperature": temperature,
-        },
-        timeout=180.0,
-    )
+        raise HubRpcError(
+            -32030, "no model configured — set up a provider first",
+            {"kind": "model", "detail": "missing base_url"},
+        )
+    payload: dict[str, Any] = {
+        "model": model or defaults.get("model", ""),
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    if response_format is not None:
+        payload["response_format"] = response_format
+    try:
+        data = _http_json(base + "/chat/completions", defaults.get("api_key", ""), payload, timeout=180.0)
+    except urllib.error.HTTPError as exc:
+        detail = _http_error_detail(exc)
+        classified = _classify_http_error(exc.code, detail)
+        raise HubRpcError(-32037, classified["detail"] or classified["kind"], classified) from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        detail = str(getattr(exc, "reason", exc))
+        raise HubRpcError(-32037, detail or "network error", {"kind": "network", "detail": detail}) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HubRpcError(-32037, str(exc), {"kind": "unknown", "detail": str(exc)}) from exc
+    if isinstance(data, dict) and data.get("error"):
+        err = data["error"] if isinstance(data["error"], dict) else {"message": str(data["error"])}
+        raise HubRpcError(-32037, str(err.get("message", "")), {"kind": "provider", "detail": str(err.get("message", ""))})
     try:
         return (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
     except (AttributeError, IndexError, TypeError):
         return ""
+
+
+# ---- AI-assisted card drafts --------------------------------------------------
+
+_CARD_DRAFT_SYSTEM = """You draft editable SillyTavern/LunaMoth character-card material from a user's inspiration.
+The human is the author: preserve their ideas, names, relationships, tone, taboos, and wording where possible.
+Do not contradict the inspiration. If a detail is missing, choose conservative, editable placeholder-like detail.
+Write the persona and all prose in the SAME LANGUAGE as the user's inspiration.
+
+Reply with STRICT JSON ONLY: one object, no markdown, no comments, no trailing prose.
+The object must have exactly these keys:
+{
+  "name": string,
+  "description": string,
+  "first_mes": string,
+  "world_entries": [{"keys": [string, ...], "content": string, "constant": boolean}],
+  "seed_goals": [string],
+  "tagline": string,
+  "theme_color": string,
+  "avatar_svg": string
+}
+
+Requirements:
+- description: the character persona, 150-400 words when the language uses spaces; for CJK, a similarly rich 2-5 paragraphs.
+- first_mes: an opening message in character.
+- world_entries: 2-4 lorebook entries. keys are short trigger words/names. At most one entry may be constant=true.
+- seed_goals: 1-3 short ongoing pursuits.
+- tagline: one line.
+- theme_color: a hex color like "#5B9FD4".
+- avatar_svg: a SMALL decorative SVG, viewBox "0 0 64 64", <=1500 chars, flat geometric shapes, no text elements,
+  no scripts, no event attributes, no external references, and using the theme color."""
+
+_THEME_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_SVG_MAX_CHARS = 1500
+_SVG_EVENT_ATTR_RE = re.compile(r"\son[a-zA-Z0-9_.:-]*\s*=")
+_SVG_EXTERNAL_REF_RE = re.compile(r"""\b(?:href|xlink:href)\s*=\s*["']\s*(?!#)[^"']+["']|url\(\s*["']?\s*(?!#)[^)]+""",
+                                  re.IGNORECASE)
+_SVG_SCRIPT_RE = re.compile(r"<\s*/?\s*script(?:\s|>|/)", re.IGNORECASE)
+_SVG_FOREIGN_RE = re.compile(r"<\s*/?\s*foreignobject(?:\s|>|/)", re.IGNORECASE)
+_SVG_TEXT_RE = re.compile(r"<\s*/?\s*text(?:\s|>|/)", re.IGNORECASE)
+_SVG_VIEWBOX_RE = re.compile(r"""\bviewbox\s*=\s*["']0\s+0\s+64\s+64["']""", re.IGNORECASE)
+
+
+def _invalid_draft(message: str) -> HubRpcError:
+    return HubRpcError(-32050, f"the model returned an invalid draft: {message}",
+                       {"kind": "draft_schema", "detail": message})
+
+
+def _sanitize_avatar_svg(value: Any) -> tuple[str, str]:
+    """Return (safe_svg, note). Unsafe SVG is dropped, never repaired."""
+    if value is None:
+        return "", "avatar_svg dropped: missing"
+    if not isinstance(value, str):
+        return "", "avatar_svg dropped: not a string"
+    svg = value.strip()
+    low = svg.lower()
+    if not svg:
+        return "", "avatar_svg dropped: empty"
+    if len(svg) > _SVG_MAX_CHARS:
+        return "", "avatar_svg dropped: over 1500 characters"
+    if not low.startswith("<svg"):
+        return "", "avatar_svg dropped: it does not start with <svg"
+    if not _SVG_VIEWBOX_RE.search(svg):
+        return "", "avatar_svg dropped: missing viewBox 0 0 64 64"
+    if _SVG_SCRIPT_RE.search(svg):
+        return "", "avatar_svg dropped: script element"
+    if _SVG_FOREIGN_RE.search(svg):
+        return "", "avatar_svg dropped: foreignObject element"
+    if _SVG_TEXT_RE.search(svg):
+        return "", "avatar_svg dropped: text element"
+    if _SVG_EVENT_ATTR_RE.search(svg):
+        return "", "avatar_svg dropped: event handler attribute"
+    if _SVG_EXTERNAL_REF_RE.search(svg):
+        return "", "avatar_svg dropped: external reference"
+    return svg, ""
+
+
+def _theme_color(value: Any) -> str:
+    if not isinstance(value, str) or not _THEME_RE.match(value.strip()):
+        raise _invalid_draft("theme_color must be a #RRGGBB hex color")
+    return value.strip().upper()
+
+
+def _clean_theme_color(value: Any) -> str:
+    if isinstance(value, str) and _THEME_RE.match(value.strip()):
+        return value.strip().upper()
+    return ""
+
+
+def _string_field(obj: dict[str, Any], key: str) -> str:
+    value = obj.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise _invalid_draft(f"{key} must be a non-empty string")
+    return value.strip()
+
+
+def _validate_world_entries(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or not (2 <= len(value) <= 4):
+        raise _invalid_draft("world_entries must contain 2-4 entries")
+    out: list[dict[str, Any]] = []
+    constants = 0
+    for idx, entry in enumerate(value):
+        if not isinstance(entry, dict):
+            raise _invalid_draft(f"world_entries[{idx}] must be an object")
+        keys = entry.get("keys")
+        if not isinstance(keys, list) or not keys:
+            raise _invalid_draft(f"world_entries[{idx}].keys must be a non-empty array")
+        clean_keys = [str(k).strip() for k in keys if isinstance(k, str) and str(k).strip()]
+        if not clean_keys:
+            raise _invalid_draft(f"world_entries[{idx}].keys must contain strings")
+        content = entry.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise _invalid_draft(f"world_entries[{idx}].content must be a non-empty string")
+        constant = entry.get("constant")
+        if not isinstance(constant, bool):
+            raise _invalid_draft(f"world_entries[{idx}].constant must be boolean")
+        constants += 1 if constant else 0
+        out.append({"keys": clean_keys[:6], "content": content.strip(), "constant": constant})
+    if constants > 1:
+        raise _invalid_draft("world_entries may have at most one constant entry")
+    return out
+
+
+def _validate_seed_goals(value: Any) -> list[str]:
+    if not isinstance(value, list) or not (1 <= len(value) <= 3):
+        raise _invalid_draft("seed_goals must contain 1-3 strings")
+    goals = [str(g).strip() for g in value if isinstance(g, str) and str(g).strip()]
+    if len(goals) != len(value) or not goals:
+        raise _invalid_draft("seed_goals must contain only non-empty strings")
+    return goals[:3]
+
+
+def _parse_card_draft(raw: str) -> dict[str, Any]:
+    try:
+        obj = json.loads(raw.strip())
+    except json.JSONDecodeError as exc:
+        raise HubRpcError(
+            -32050,
+            f"the model did not return strict JSON ({exc.msg} at line {exc.lineno}, column {exc.colno})",
+            {"kind": "draft_json", "detail": str(exc)},
+        ) from exc
+    if not isinstance(obj, dict):
+        raise _invalid_draft("top-level JSON must be an object")
+    expected = {"name", "description", "first_mes", "world_entries", "seed_goals",
+                "tagline", "theme_color", "avatar_svg"}
+    got = set(obj)
+    if got != expected:
+        missing = ", ".join(sorted(expected - got))
+        extra = ", ".join(sorted(got - expected))
+        parts = []
+        if missing:
+            parts.append(f"missing: {missing}")
+        if extra:
+            parts.append(f"unexpected: {extra}")
+        raise _invalid_draft("draft keys must match the requested schema (" + "; ".join(parts) + ")")
+    draft = {
+        "name": _string_field(obj, "name"),
+        "description": _string_field(obj, "description"),
+        "first_mes": _string_field(obj, "first_mes"),
+        "world_entries": _validate_world_entries(obj.get("world_entries")),
+        "seed_goals": _validate_seed_goals(obj.get("seed_goals")),
+        "tagline": _string_field(obj, "tagline"),
+        "theme_color": _theme_color(obj.get("theme_color")),
+        "embodiment": "literal",
+    }
+    svg, note = _sanitize_avatar_svg(obj.get("avatar_svg"))
+    if svg:
+        draft["avatar_svg"] = svg
+    if note:
+        draft["notes"] = [note]
+    return draft
+
+
+def draft_card_from_inspiration(defaults: dict[str, str], inspiration: str, model: str = "") -> dict[str, Any]:
+    text = inspiration.strip()
+    if not text:
+        raise RpcError(-32602, "cards.draft needs inspiration")
+    raw = _complete(
+        defaults,
+        _CARD_DRAFT_SYSTEM,
+        text,
+        model=model,
+        max_tokens=4096,
+        temperature=0.75,
+        response_format={"type": "json_object"},
+    )
+    if not raw.strip():
+        raise HubRpcError(-32050, "the model returned an empty draft", {"kind": "draft_json", "detail": "empty response"})
+    return _parse_card_draft(raw)
 
 
 # ---- cards ---------------------------------------------------------------------
@@ -239,8 +465,16 @@ def _card_entry(path: Path, builtin: bool, refs: dict[str, list[str]]) -> dict[s
         return None
     ext = card.extensions.get("lunamoth", {}) if isinstance(card.extensions, dict) else {}
     world = ""
+    theme_color = ""
+    avatar_svg = ""
+    tagline = ""
+    embodiment = ""
     if isinstance(ext, dict):
         world = str(ext.get("world") or "")
+        theme_color = _clean_theme_color(ext.get("theme_color"))
+        avatar_svg = _sanitize_avatar_svg(ext.get("avatar_svg"))[0]
+        tagline = str(ext.get("tagline") or "")
+        embodiment = str(ext.get("embodiment") or "")
     used_by = refs.get(str(path), [])
     return {
         "path": str(path),
@@ -253,6 +487,10 @@ def _card_entry(path: Path, builtin: bool, refs: dict[str, list[str]]) -> dict[s
         "frozen": bool(used_by),
         "used_by": used_by,
         "creator_notes": (card.creator_notes or "")[:300],
+        "tagline": tagline[:160],
+        "theme_color": theme_color,
+        "avatar_svg": avatar_svg,
+        "embodiment": embodiment if embodiment in ("literal", "actor") else "",
     }
 
 
@@ -309,8 +547,56 @@ def save_card(data: dict[str, Any], path: str = "") -> dict[str, Any]:
     data.setdefault("spec", "chara_card_v3")
     data.setdefault("spec_version", "3.0")
     data["name"] = name
+    _sanitize_card_extensions(data)
     target.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"path": str(target)}
+
+
+def _sanitize_card_extensions(card: dict[str, Any]) -> None:
+    data = card.get("data") if isinstance(card.get("data"), dict) else {}
+    ext_root = data.get("extensions")
+    if not isinstance(ext_root, dict):
+        return
+    lunamoth = ext_root.get("lunamoth")
+    if not isinstance(lunamoth, dict):
+        return
+    svg, _note = _sanitize_avatar_svg(lunamoth.get("avatar_svg"))
+    if svg:
+        lunamoth["avatar_svg"] = svg
+    else:
+        lunamoth.pop("avatar_svg", None)
+    color = _clean_theme_color(lunamoth.get("theme_color"))
+    if color:
+        lunamoth["theme_color"] = color
+    else:
+        lunamoth.pop("theme_color", None)
+    if lunamoth.get("embodiment") not in ("literal", "actor"):
+        lunamoth["embodiment"] = "literal"
+
+
+def _safe_extensions_for_ui(extensions: dict[str, Any]) -> dict[str, Any]:
+    """Copy card extensions with lunamoth visual fields sanitized for rendering."""
+    if not isinstance(extensions, dict):
+        return {}
+    out = dict(extensions)
+    lunamoth = out.get("lunamoth")
+    if not isinstance(lunamoth, dict):
+        return out
+    safe = dict(lunamoth)
+    svg, _note = _sanitize_avatar_svg(safe.get("avatar_svg"))
+    if svg:
+        safe["avatar_svg"] = svg
+    else:
+        safe.pop("avatar_svg", None)
+    color = _clean_theme_color(safe.get("theme_color"))
+    if color:
+        safe["theme_color"] = color
+    else:
+        safe.pop("theme_color", None)
+    if safe.get("embodiment") not in ("literal", "actor"):
+        safe["embodiment"] = ""
+    out["lunamoth"] = safe
+    return out
 
 
 def delete_card(path: str) -> dict[str, Any]:
@@ -536,6 +822,25 @@ def list_works(meta: S.SessionMeta, limit: int = 200) -> list[dict[str, Any]]:
     return out[:limit]
 
 
+def _book_to_dict(book: Any) -> dict[str, Any] | None:
+    if book is None or not hasattr(book, "entries"):
+        return None
+    entries = []
+    for i, e in enumerate(getattr(book, "entries", []) or []):
+        entries.append({
+            "id": getattr(e, "entry_id", i),
+            "keys": list(getattr(e, "keys", []) or []),
+            "secondary_keys": list(getattr(e, "secondary_keys", []) or []),
+            "content": str(getattr(e, "content", "")),
+            "constant": bool(getattr(e, "constant", False)),
+            "selective": bool(getattr(e, "selective", False)),
+            "enabled": bool(getattr(e, "enabled", True)),
+            "insertion_order": int(getattr(e, "order", i) or i),
+            "comment": str(getattr(e, "comment", "")),
+        })
+    return {"name": str(getattr(book, "name", "") or ""), "entries": entries}
+
+
 def _read_optional(path: Path, limit: int = 20000) -> str:
     try:
         return path.read_text(encoding="utf-8")[:limit]
@@ -613,32 +918,69 @@ def transcribe_card(defaults: dict[str, str], text: str, model: str = "") -> dic
     return draft
 
 
-def draft_to_card(draft: dict[str, Any], origin_text: str = "", as_draft: bool = False) -> dict[str, Any]:
-    """Assemble a V3 card object from a (possibly user-edited) draft."""
-    world_entries = []
-    for i, w in enumerate(draft.get("world") or []):
-        if not isinstance(w, dict) or not w.get("key"):
+def _draft_world_entries(draft: dict[str, Any]) -> list[dict[str, Any]]:
+    source = draft.get("world_entries") if isinstance(draft.get("world_entries"), list) else draft.get("world")
+    out: list[dict[str, Any]] = []
+    for i, w in enumerate(source or []):
+        if not isinstance(w, dict):
             continue
-        world_entries.append({
+        raw_keys = w.get("keys")
+        if isinstance(raw_keys, list):
+            keys = [str(k).strip() for k in raw_keys if str(k).strip()]
+        else:
+            key = str(w.get("key") or "").strip()
+            keys = [key] if key else []
+        content = str(w.get("content") if "content" in w else w.get("desc", "")).strip()
+        if not keys or not content:
+            continue
+        out.append({
             "id": i,
-            "keys": [str(w["key"])],
-            "content": str(w.get("desc", "")),
+            "keys": keys[:6],
+            "content": content,
             "constant": bool(w.get("constant")),
             "enabled": True,
             "insertion_order": i,
         })
-    ext: dict[str, Any] = {"origin": origin_text[:8000]}
+    return out
+
+
+def _draft_goals(draft: dict[str, Any]) -> list[str]:
+    goals = draft.get("seed_goals") if isinstance(draft.get("seed_goals"), list) else draft.get("goals")
+    if not isinstance(goals, list):
+        return []
+    return [str(g).strip() for g in goals if str(g).strip()][:5]
+
+
+def draft_to_card(draft: dict[str, Any], origin_text: str = "", as_draft: bool = False) -> dict[str, Any]:
+    """Assemble a V3 card object from a (possibly user-edited) draft."""
+    world_entries = _draft_world_entries(draft)
+    ext: dict[str, Any] = {"origin": origin_text[:8000], "embodiment": "literal", "tempo": "normal"}
     if as_draft:
         ext["draft"] = True
-    if draft.get("goals"):
-        ext["goals"] = [str(g) for g in draft["goals"]][:5]
+    goals = _draft_goals(draft)
+    if goals:
+        ext["goals"] = goals
     if draft.get("rules"):
         ext["rules"] = str(draft["rules"])
     if draft.get("toolpack_hint"):
         ext["toolpack"] = str(draft["toolpack_hint"])
+    if draft.get("tempo"):
+        ext["tempo"] = str(draft["tempo"])
+    if draft.get("tagline"):
+        ext["tagline"] = str(draft["tagline"]).strip()
+    color = _clean_theme_color(draft.get("theme_color"))
+    if color:
+        ext["theme_color"] = color
+    svg, _note = _sanitize_avatar_svg(draft.get("avatar_svg"))
+    if svg:
+        ext["avatar_svg"] = svg
+    embodiment = str(draft.get("embodiment") or "literal")
+    ext["embodiment"] = embodiment if embodiment in ("literal", "actor") else "literal"
+
+    description = str(draft.get("description") if draft.get("description") is not None else draft.get("appearance", ""))
     data: dict[str, Any] = {
         "name": str(draft.get("name", "")),
-        "description": str(draft.get("appearance", "")),
+        "description": description,
         "personality": str(draft.get("personality", "")),
         "scenario": str(draft.get("scenario", "")) + (
             ("\n\n" + str(draft["relationship"])) if draft.get("relationship") else ""),
@@ -647,12 +989,14 @@ def draft_to_card(draft: dict[str, Any], origin_text: str = "", as_draft: bool =
         "system_prompt": "",
         "post_history_instructions": "",
         "alternate_greetings": [str(g) for g in (draft.get("alternate_greetings") or [])][:4],
-        "creator_notes": "",
+        "creator_notes": str(draft.get("tagline", "")),
         "tags": ["original"],
         "extensions": {"lunamoth": ext},
     }
     if world_entries:
         data["character_book"] = {"name": f"{data['name']} world", "entries": world_entries}
+    if detect_language(text=description + " " + data["first_mes"]) == "zh" and "中文" not in data["tags"]:
+        data["tags"].append("中文")
     return {"spec": "chara_card_v3", "spec_version": "3.0", "name": data["name"], "data": data}
 
 
@@ -672,6 +1016,13 @@ class HubDispatcher:
         rid, method, params, wants_response = normalized
         try:
             result = self._handle(method, params)
+        except HubRpcError as exc:
+            if not wants_response:
+                return None
+            error: dict[str, Any] = {"code": exc.code, "message": exc.message}
+            if exc.data:
+                error["data"] = exc.data
+            return {"jsonrpc": "2.0", "id": rid, "error": error}
         except RpcError as exc:
             return error_response(rid, exc.code, exc.message) if wants_response else None
         except Exception as exc:  # noqa: BLE001 - JSON-RPC is the public error boundary
@@ -746,11 +1097,18 @@ class HubDispatcher:
                     "personality": card.personality, "scenario": card.scenario,
                     "first_mes": card.first_mes, "alternate_greetings": card.alternate_greetings,
                     "creator_notes": card.creator_notes, "tags": card.tags,
-                    "language": card.language, "raw": raw}
+                    "language": card.language, "extensions": _safe_extensions_for_ui(card.extensions),
+                    "character_book": _book_to_dict(card.character_book),
+                    "raw": raw}
         if method == "card.save":
             return save_card(p.get("data"), path=str(p.get("path") or ""))
         if method == "card.delete":
             return delete_card(str(p.get("path") or ""))
+        if method == "cards.draft":
+            inspiration = str(p.get("inspiration") or "").strip()
+            if not inspiration:
+                raise RpcError(-32602, "cards.draft needs inspiration")
+            return draft_card_from_inspiration(load_defaults(), inspiration, model=str(p.get("model") or ""))
         if method == "card.from_draft":
             draft = p.get("draft")
             if not isinstance(draft, dict):

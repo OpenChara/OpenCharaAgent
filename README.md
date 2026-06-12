@@ -190,3 +190,4 @@ This project began as an SCP fan work: an attempt to recreate **SCP-079** in the
 ## Roadmap status
 
 - [x] **Remote TUI gateway foundation** — `lunamoth serve NAME --stdio` now exposes the activated session as newline-delimited JSON-RPC, and `lunamoth serve NAME --host 127.0.0.1 --port 8137` exposes the same dispatch over a token-authenticated WebSocket. Install the optional WebSocket dependency with `uv sync --extra server`. The default bind is loopback; binding to a public interface is an operator decision.
+- [x] **Desktop card studio** — the web deck can now draft an editable SillyTavern V3 card from prose inspiration, including embedded world entries, seed goals, an embodiment stance, theme color, and a sanitized SVG avatar; nothing is saved until the creator reviews and saves.

@@ -44,6 +44,32 @@ def set_defaults():
                      "api_key": "sk-test", "model": "test/model"})
 
 
+def draft_payload(svg="<svg viewBox=\"0 0 64 64\"><circle cx=\"32\" cy=\"32\" r=\"20\" fill=\"#7C5CFF\"/></svg>"):
+    return {
+        "name": "Aster",
+        "description": "Aster is a lantern keeper from a quiet orbital garden. "
+        "They speak gently, collect small impossible weather signs, and keep careful notes for visitors.",
+        "first_mes": "The lanterns are awake. Did you bring a question for the dark?",
+        "world_entries": [
+            {"keys": ["Orbital Garden"], "content": "A ring habitat where seasons are tuned by old mirrors.", "constant": True},
+            {"keys": ["Lantern Archive"], "content": "Aster's catalogue of weather, omens, and names.", "constant": False},
+        ],
+        "seed_goals": ["Map the mirror-season drift", "Welcome careful visitors"],
+        "tagline": "A gentle keeper of orbital lanterns",
+        "theme_color": "#7c5cff",
+        "avatar_svg": svg,
+    }
+
+
+def mock_completion(monkeypatch, content, seen=None):
+    def fake_http(url, api_key="", payload=None, timeout=H._HTTP_TIMEOUT):
+        if seen is not None:
+            seen.append({"url": url, "api_key": api_key, "payload": payload, "timeout": timeout})
+        return {"choices": [{"message": {"content": content}}]}
+
+    monkeypatch.setattr(H, "_http_json", fake_http)
+
+
 # ---- hub.state & defaults -----------------------------------------------------
 
 def test_state_first_run_and_cards():
@@ -151,11 +177,93 @@ def test_card_from_draft_roundtrip():
     assert data["first_mes"] == "轻一点关门。"
     assert data["character_book"]["entries"][0]["keys"] == ["长夜图书馆"]
     assert data["extensions"]["lunamoth"]["toolpack"] == "sandbox"
+    assert data["extensions"]["lunamoth"]["embodiment"] == "literal"
+    assert data["extensions"]["lunamoth"]["tempo"] == "normal"
     assert data["extensions"]["lunamoth"]["draft"] is True
     assert data["extensions"]["lunamoth"]["origin"] == "深夜图书馆修书人"
     listed = result("cards.list")
     mine = next(c for c in listed if c["name"] == "白枢")
     assert mine["draft"] is True and mine["builtin"] is False
+
+
+def test_cards_draft_happy_path_uses_default_model(monkeypatch):
+    set_defaults()
+    seen = []
+    mock_completion(monkeypatch, json.dumps(draft_payload()), seen)
+    r = result("cards.draft", {"inspiration": "an orbital lantern keeper"})
+    assert r["name"] == "Aster"
+    assert r["world_entries"][0]["keys"] == ["Orbital Garden"]
+    assert r["seed_goals"] == ["Map the mirror-season drift", "Welcome careful visitors"]
+    assert r["theme_color"] == "#7C5CFF"
+    assert r["avatar_svg"].startswith("<svg")
+    assert r["embodiment"] == "literal"
+    payload = seen[0]["payload"]
+    assert payload["model"] == "test/model"
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["temperature"] == 0.75
+    assert seen[0]["api_key"] == "sk-test"
+
+
+def test_cards_draft_invalid_json_is_clear_error_and_no_save(monkeypatch):
+    set_defaults()
+    mock_completion(monkeypatch, "not json")
+    err = rpc_error("cards.draft", {"inspiration": "keep this exact text"})
+    assert err["code"] == -32050
+    assert "strict JSON" in err["message"]
+    assert err["data"]["kind"] == "draft_json"
+    assert not H.user_cards_dir().exists()
+
+
+def test_cards_draft_rejects_parallel_schema(monkeypatch):
+    set_defaults()
+    bad = draft_payload()
+    bad["extra"] = "nope"
+    mock_completion(monkeypatch, json.dumps(bad))
+    err = rpc_error("cards.draft", {"inspiration": "extra field"})
+    assert err["code"] == -32050
+    assert err["data"]["kind"] == "draft_schema"
+    assert "unexpected: extra" in err["data"]["detail"]
+
+
+@pytest.mark.parametrize(
+    "svg",
+    [
+        "<svg viewBox=\"0 0 64 64\"><script>alert(1)</script></svg>",
+        "<svg onload=\"alert(1)\" viewBox=\"0 0 64 64\"><circle r=\"2\"/></svg>",
+        "<svg viewBox=\"0 0 64 64\"><foreignObject></foreignObject></svg>",
+        "<svg viewBox=\"0 0 64 64\">" + ("<circle/>" * 300) + "</svg>",
+    ],
+)
+def test_cards_draft_svg_sanitizer_drops_unsafe_but_keeps_draft(monkeypatch, svg):
+    set_defaults()
+    mock_completion(monkeypatch, json.dumps(draft_payload(svg)))
+    r = result("cards.draft", {"inspiration": "unsafe svg attempt"})
+    assert r["name"] == "Aster"
+    assert "avatar_svg" not in r
+    assert r["notes"] and "avatar_svg dropped" in r["notes"][0]
+
+
+def test_card_save_roundtrips_new_lunamoth_extension_fields():
+    card = H.draft_to_card({
+        **draft_payload(),
+        "embodiment": "actor",
+        "tempo": "quiet",
+    }, origin_text="orbital lantern keeper")
+    r = result("card.save", {"data": card})
+    raw = result("card.read", {"path": r["path"]})["raw"]
+    ext = raw["data"]["extensions"]["lunamoth"]
+    assert ext["avatar_svg"].startswith("<svg")
+    assert ext["theme_color"] == "#7C5CFF"
+    assert ext["embodiment"] == "actor"
+    assert ext["tempo"] == "quiet"
+    assert ext["tagline"] == "A gentle keeper of orbital lanterns"
+    assert ext["goals"] == ["Map the mirror-season drift", "Welcome careful visitors"]
+    assert raw["data"]["character_book"]["entries"][0]["keys"] == ["Orbital Garden"]
+    listed = result("cards.list")
+    mine = next(c for c in listed if c["path"] == r["path"])
+    assert mine["avatar_svg"].startswith("<svg")
+    assert mine["theme_color"] == "#7C5CFF"
+    assert mine["tagline"] == "A gentle keeper of orbital lanterns"
 
 
 def test_builtin_cards_cannot_be_deleted():

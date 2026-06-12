@@ -56,6 +56,7 @@ class RpcSocket {
     if (frame.error) {
       const err = new Error(frame.error.message || "rpc error");
       err.code = frame.error.code;
+      err.data = frame.error.data || null;
       p.reject(err);
     } else {
       p.resolve(frame.result);
