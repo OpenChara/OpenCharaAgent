@@ -111,3 +111,18 @@ def test_mode_normalization():
     assert normalize_mode("off") == "chat"
     assert normalize_mode("banana") == "live"
     assert normalize_mode("") == "live"
+
+
+def test_attach_never_wakes_a_resting_chara(agent):
+    """Entering the room is presence bookkeeping only while the chara rests:
+    no greeting, no arrival turn — a user MESSAGE is what wakes it."""
+    import time as _time
+
+    from lunamoth.protocol.api import CharaHandle
+
+    a = agent()
+    a.state.set_rest_until(_time.time() + 600)
+    handle = CharaHandle(agent=a)
+    info = handle.attach(present=True)
+    assert info.opening == "none" and info.opening_text == ""
+    assert a.state.load()["user_present"] is True

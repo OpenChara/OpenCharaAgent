@@ -134,6 +134,18 @@ class CharaHandle:
                 m.get("role") == "system" and m.get("content") == handoff for m in recent
             ):
                 self._session.context.add("system", handoff)
+        # Entering the room never wakes a sleeper: while the chara rests
+        # (rest_until in the future), attach is presence bookkeeping only — no
+        # opening turn, no arrival prompt. A user MESSAGE always wakes; when it
+        # wakes on its own it reads user_present from the env facts and decides
+        # for itself whether your visit deserves a word.
+        if present and float(a.state.load().get("rest_until", 0.0) or 0.0) > time.time():
+            a.presence.mark_met()
+            return AttachInfo(
+                char_name=a.char_name(), lang=a.lang, mode=a.settings.mode,
+                show_thinking=bool(a.settings.show_thinking),
+                restored=restored, opening="none", opening_text="",
+            )
         # The greeting decision tree, decided ONCE for every frontend:
         # first meeting gets the card's designed opener (SillyTavern first_mes);
         # a return visit gets the card's on_attach arrival turn; a fresh session
