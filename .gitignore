@@ -132,10 +132,5 @@ sandbox/memory/
 sandbox/logs/
 
 # codex fleet logs
-.codex-fleet/*
-!.codex-fleet/brief-cards-one-file.md
-!.codex-fleet/prompt-webui-fable.md
-!.codex-fleet/hermes-ui-notes.md
-!.codex-fleet/astrbot-gateway-notes.md
-!.codex-fleet/webui-needs.md
+.codex-fleet/
 hermes ui/

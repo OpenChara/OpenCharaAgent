@@ -29,7 +29,7 @@ garbage.
    ClawBot API (QR login, stdlib long-poll, state in 0600
    `weixin_state.json`, errcode −14 visible) + QQ as OneBot v11 forward-WS
    client to user-run NapCat. Research dossier:
-   `.codex-fleet/astrbot-gateway-notes.md`.
+   git history (the messaging adapters embed the findings).
 4. **Attach never wakes a resting chara** (owner decision): presence fact
    only; a user MESSAGE always wakes; see `protocol/api.py attach()`.
 5. **Quinn 小Q is the default card** (owner-authored, `cards… see below`):
@@ -52,10 +52,10 @@ garbage.
 
 You are the planner/integrator. Deterministic coding goes to codex
 (`sc codex exec --dangerously-bypass-approvals-and-sandbox -C <worktree> - <
-brief.md`, tmux-managed, one worktree per branch, briefs under
-`.codex-fleet/`); you design, review, integrate. Queue, in order:
+brief.md`, tmux-managed, one worktree per branch, briefs staged locally under gitignored `.codex-fleet/`;
+travelling copies live as `docs/handover-*.md` — copy back out to dispatch); you design, review, integrate. Queue, in order:
 
-1. **Dispatch `.codex-fleet/brief-cards-one-file.md`** (ready, includes the
+1. **Dispatch `docs/handover-cards-brief.md`** (ready, includes the
    Quinn default-tag section + themes/ retirement). Branch `cards-one-file`.
    It was aborted mid-exploration today, nothing lost.
 2. **After that merges, implement the web-facing RPC batch yourself** (small,
@@ -63,8 +63,8 @@ brief.md`, tmux-managed, one worktree per branch, briefs under
    (sandbox-confined file preview, ~512KB cap), `messaging.get/save {name}`
    (masked secrets), `card.avatar_draft` (2–3 sanitized SVG candidates),
    `weixin.qr {name}` (QR + login-state poll for the web gateway page).
-   Specs: `.codex-fleet/webui-needs.md` (the webui Fable's requirement list —
-   treat it as the contract).
+   Specs: `docs/desktop/webui-needs.md` (the webui track's requirement
+   register — treat it as the contract).
 3. **PTY over WS** (`/chara/<name>/pty`, shell inside the chara's isolation,
    Hermes `/api/pty` shape): write a brief, dispatch to codex. The
    "should the chara know you touched its home" question is a curriculum
@@ -80,54 +80,16 @@ script.
 
 ## Track B — webui successor (front/web + Electron Fable)
 
-Check docs/ for the handover written by your direct predecessor first — it is
-authoritative. The summary below is the orchestrator's record of the same
-agreements (kept in case the other file is missing). Read, in order:
-
-1. `.codex-fleet/prompt-webui-fable.md` — the base task (scope, gateway-page
-   contract, acceptance path).
-2. **The owner-decision overrides** (recorded by your predecessor; binding):
-   - KEEP the current bubble chat style (owner likes it; Hermes's bare-prose
-     look was rejected as 干巴巴). Add: avatar next to bubbles + header,
-     empty state = big avatar+name+tagline, tool verb-chips with duration,
-     collapsed thinking with one-line gray summary.
-   - Right panel = resident, carries the IMPORTANT state (life, model+effort
-     hot-swap, autonomous live on/off, net, isolation, context meter, memory,
-     gateway) + settings menu; bottom bar = unimportant only (version, WS,
-     session timer). Both sidebars drag-resizable, widths in localStorage.
-   - Per-chara tabs: 对话 | 作品 | 终端 (works tab uses `works.list` +
-     pending `works.read`; terminal tab needs the PTY endpoint — placeholder
-     until Track A lands it). Views stay mounted; hash routes
-     `#/chara/<n>{,/works,/term}`. The right-panel「文件」page is CANCELLED —
-     merged into 作品.
-   - Editable avatar modal (blur backdrop): AI regenerate (pending
-     `card.avatar_draft`), theme-color swap (pure frontend), raw SVG textarea.
-     No raster upload v1.
-   - Mood layer: two-layer CSS vars (`--chara-accent` from theme_color; mood
-     states only transform it, color-mix 8–15%, no layout shifts),
-     `data-life` attr on chat root; waiting=breathing glow; working and
-     idle_countdown = ONE register ("doing its own thing"); resting=dimmed
-     room + placeholder "它在休息——说话会唤醒它" (input never looks
-     disabled); backoff=desaturated + detail; prefers-reduced-motion → static.
-   - State semantics: **waiting (quiet window) is THE user-facing progress
-     bar** ("条走完我就去干自己的事"); idle_countdown/patience is mechanism,
-     shown only as a small Technical-mode line. Settings copy: quiet =
-     「等你多久」, patience = 「它自己生活的节拍」.
-   - Remove the 【听着】 posture label (engine asserts no posture; factual
-     labels only). Super Chat read = FADE the bubble, no ✓.
-   - Attach-not-wake is now IMPLEMENTED backend-side: while resting, show the
-     dimmed room, no "它知道你来了" line.
-3. `.codex-fleet/hermes-ui-notes.md` — design-system reference (status-bar
-   anatomy, connectors master-detail formula, model-picker popover, settings
-   row grammar, Product|Technical switch).
-4. `.codex-fleet/webui-needs.md` — what you're waiting on from Track A; build
-   "waiting for backend" placeholder states, never implement backend
-   yourself.
+Read `docs/desktop/webui-redesign-0612.md` — the self-contained,
+owner-revised task book written by your predecessor; it is the ONLY current
+task statement and includes the owner's decision overrides. Companions:
+`docs/desktop/hermes-ui-notes.md` (design-system reference) and
+`docs/desktop/webui-needs.md` (the backend-gap register you append to —
+never implement backend yourself; Track A serves it).
 
 Discipline: branch `webui`, own worktree, only `front/web/` + i18n +
-(if needed) `apps/desktop/`; commit there, no merge, no push; the Track A
-Fable integrates. All five context channels stay visually distinct; chara
-language follows the card; UI chrome bilingual zh/en.
+(if needed) `apps/desktop/`; commit there, no merge, no push; Track A
+integrates.
 
 ## Loose ends register
 
