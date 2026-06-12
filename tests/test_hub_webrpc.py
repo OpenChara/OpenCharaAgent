@@ -363,3 +363,30 @@ def test_user_card_shadows_builtin_with_annotation_but_never_other_user_cards():
     assert len(same_name) == 2
     assert all(not c["builtin"] for c in same_name)
     assert any(c.get("shadows", "").endswith("Quinn.zh.json") for c in same_name)
+
+
+# ---- aux models (webui-needs #14) --------------------------------------------------
+
+def test_aux_models_persist_and_route(monkeypatch):
+    set_defaults()
+    pub = result("defaults.set", {"aux_models": {"avatar": "small/fast", "draft": "big/writer"}})
+    assert pub["aux_models"] == {"avatar": "small/fast", "draft": "big/writer"}
+    # survives an unrelated defaults write (raw-preserving save)
+    pub = result("defaults.set", {"model": "main/model"})
+    assert pub["aux_models"]["avatar"] == "small/fast"
+    # the avatar RPC falls back to the aux model when none is passed
+    seen = {}
+
+    def fake_complete(defaults, system, user, model="", **kw):
+        seen["model"] = model
+        return json.dumps({"candidates": [{"avatar_svg": GOOD_SVG, "theme_color": "#7C5CFF"}]})
+
+    monkeypatch.setattr(H, "_complete", fake_complete)
+    result("card.avatar_draft", {"description": "a moth"})
+    assert seen["model"] == "small/fast"
+    result("card.avatar_draft", {"description": "a moth", "model": "explicit/win"})
+    assert seen["model"] == "explicit/win"
+    # empty value clears back to "use the main model"; unknown task is an error
+    pub = result("defaults.set", {"aux_models": {"avatar": ""}})
+    assert "avatar" not in pub["aux_models"]
+    assert rpc_error("defaults.set", {"aux_models": {"nonsense": "x"}})["code"] == -32602

@@ -116,6 +116,42 @@ def save_defaults(updates: dict[str, str]) -> dict[str, str]:
     return {k: raw[k] for k in _DEFAULT_FIELDS if isinstance(raw.get(k), str)}
 
 
+# ---- per-task auxiliary models (webui-needs #14) ----------------------------------
+
+_AUX_TASKS = ("draft", "transcribe", "avatar", "compact")
+
+
+def aux_models() -> dict[str, str]:
+    raw = _read_desktop_raw().get("aux_models")
+    if not isinstance(raw, dict):
+        return {}
+    return {k: str(v) for k, v in raw.items() if k in _AUX_TASKS and isinstance(v, str) and v}
+
+
+def _aux_model(task: str) -> str:
+    """The persisted helper-model for a task; '' = use the main model."""
+    return aux_models().get(task, "")
+
+
+def save_aux_models(updates: Any) -> dict[str, str]:
+    if not isinstance(updates, dict):
+        raise RpcError(-32602, "aux_models must be an object of task -> model id")
+    unknown = sorted(set(updates) - set(_AUX_TASKS))
+    if unknown:
+        raise RpcError(-32602, f"unknown aux task(s): {', '.join(unknown)} — expected {'/'.join(_AUX_TASKS)}")
+    raw = _read_desktop_raw()
+    cur = raw.get("aux_models") if isinstance(raw.get("aux_models"), dict) else {}
+    merged = dict(cur)
+    for k, v in updates.items():
+        if v is None or v == "":
+            merged.pop(k, None)  # back to "use the main model"
+        else:
+            merged[k] = str(v)
+    raw["aux_models"] = merged
+    _write_desktop_raw(raw)
+    return aux_models()
+
+
 # ---- named key store (webui-needs #10) -------------------------------------------
 
 def _keys_map(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -197,6 +233,7 @@ def _public_defaults(data: dict[str, str]) -> dict[str, Any]:
     """Defaults with the key reduced to its presence (never echo secrets)."""
     out: dict[str, Any] = {k: v for k, v in data.items() if k != "api_key"}
     out["has_key"] = bool(data.get("api_key"))
+    out["aux_models"] = aux_models()  # per-task helper models ('' absent = main model)
     return out
 
 
@@ -1887,7 +1924,7 @@ class HubDispatcher:
         if method == "card.avatar_draft":
             return avatar_draft(load_defaults(), description=str(p.get("description") or ""),
                                 card_path=str(p.get("card_path") or p.get("path") or ""),
-                                model=str(p.get("model") or ""))
+                                model=str(p.get("model") or "") or _aux_model("avatar"))
         if method == "cards.list":
             return list_cards()
         if method == "card.read":
@@ -1921,7 +1958,8 @@ class HubDispatcher:
             inspiration = str(p.get("inspiration") or "").strip()
             if not inspiration:
                 raise RpcError(-32602, "cards.draft needs inspiration")
-            return draft_card_from_inspiration(load_defaults(), inspiration, model=str(p.get("model") or ""))
+            return draft_card_from_inspiration(load_defaults(), inspiration,
+                                               model=str(p.get("model") or "") or _aux_model("draft"))
         if method == "card.from_draft":
             draft = p.get("draft")
             if not isinstance(draft, dict):
@@ -1933,6 +1971,8 @@ class HubDispatcher:
         if method == "defaults.get":
             return _public_defaults(load_defaults())
         if method == "defaults.set":
+            if "aux_models" in p:
+                save_aux_models(p.get("aux_models"))
             updates = {k: v for k, v in p.items() if k in _DEFAULT_FIELDS and isinstance(v, str)}
             before = load_defaults()
             defaults = save_defaults(updates)
@@ -1980,7 +2020,7 @@ class HubDispatcher:
             text = str(p.get("text") or "").strip()
             if not text:
                 raise RpcError(-32602, "transcribe.card needs text")
-            return transcribe_card(load_defaults(), text, model=str(p.get("model") or ""))
+            return transcribe_card(load_defaults(), text, model=str(p.get("model") or "") or _aux_model("transcribe"))
         if method == "open.path":
             return open_path(str(p.get("path") or ""), reveal=bool(p.get("reveal")))
         raise RpcError(-32601, f"unknown method: {method}")
