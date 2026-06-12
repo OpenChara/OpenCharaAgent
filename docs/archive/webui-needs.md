@@ -12,6 +12,9 @@
 > #5 `weixin.qr {name}` → {qrcode, img, fallback_url}；轮询 `weixin.qr_status
 >   {name, qrcode}` → {status[, account_id]}，confirmed 自动持久化登录态；
 > 另补 `messaging.get/save {name}`（秘密掩码读、掩码原样回传即保留原值）。
+> **2026-06-13 增**：tempo 已全移除（前端删 tempo 控件/文案，节拍只剩 patience）；
+> embodiment 改唤醒时一次性选择 —— `session.wake` 已接受 `embodiment:
+> "literal"|"actor"`，**唤醒 sheet 需要把这个参数发上来**（运行中不出现切换 UI）。
 
 ## 1. attach 不唤醒 resting chara（时效性高——supervisor 正在实现 presence，请直接做进去）
 
