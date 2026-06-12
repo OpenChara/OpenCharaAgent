@@ -355,6 +355,40 @@ def cmd_serve(args: argparse.Namespace) -> int:
         meta.clear_running()
 
 
+def cmd_gateway(args: argparse.Namespace) -> int:
+    meta = S.load_session(args.name)
+    if meta is None:
+        print(f"error: no chara named {args.name!r} (see `lunamoth ls`)", file=sys.stderr)
+        return 1
+    if not meta.is_configured():
+        print(f"error: chara {args.name!r} isn't set up yet — `lunamoth setup {args.name}` first", file=sys.stderr)
+        return 1
+    if meta.running_pid():
+        print(f"error: chara {args.name!r} already has an attached frontend/gateway (pid {meta.running_pid()})", file=sys.stderr)
+        return 1
+    if meta.daemon_pid():
+        print(f"error: chara {args.name!r} is running in the background; stop it first", file=sys.stderr)
+        return 1
+    _activate(meta)
+    if getattr(args, "debug", False):
+        os.environ["LUNAMOTH_DEBUG"] = "1"
+    meta.mark_running()
+    try:
+        from ..messaging.gateway import MessagingGateway, load_config
+
+        cfg = load_config()
+        print(f"messaging gateway for {args.name!r}: starting {', '.join(cfg.get('adapters', {}).keys())}", file=sys.stderr)
+        MessagingGateway.from_config(cfg, patience=args.patience).run()
+        return 0
+    except FileNotFoundError:
+        print(f"error: missing messaging config: {meta.root / 'messaging.json'}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        meta.clear_running()
+
+
 def cmd_desktop(args: argparse.Namespace) -> int:
     """The desktop app: hub gateway + web renderer in the default browser.
 
@@ -567,6 +601,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--token", default="", help="WebSocket bearer token (auto-generated if omitted)")
     sp.add_argument("--debug", action="store_true", help="DEBUG-level diagnostics in the chara's sandbox/logs/")
     sp.set_defaults(func=cmd_serve)
+
+    sp = sub.add_parser("gateway", help="run one session's configured messaging adapters")
+    sp.add_argument("name")
+    sp.add_argument("--patience", "--cooldown", dest="patience", type=float, default=2.0,
+                    help="pause between the chara's spontaneous cycles, in seconds")
+    sp.add_argument("--debug", action="store_true", help="DEBUG-level diagnostics in the chara's sandbox/logs/")
+    sp.set_defaults(func=cmd_gateway)
 
     sp = sub.add_parser("desktop", help="open the desktop app (web renderer + hub gateway)")
     sp.add_argument("--port", type=int, default=0, help="HTTP port for the renderer (default: auto)")
