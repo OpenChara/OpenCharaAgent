@@ -14,7 +14,7 @@ def agent(tmp_path, monkeypatch):
 
     def make(**kw):
         kw.setdefault("toolpack", "")
-        return LunaMothAgent(Settings(character_path="", world_path="", **kw))
+        return LunaMothAgent(Settings(character_path="", **kw))
 
     return make
 
@@ -22,7 +22,7 @@ def agent(tmp_path, monkeypatch):
 def test_default_card_declares_presence_prompts(agent):
     a = agent()
     assert a.settings.user_name in a.attach_event_text()
-    assert a.settings.user_name in a.detach_event_text()
+    assert a.detach_event_text().strip()  # the card declares one; wording is its own
 
 
 def test_card_without_prompts_means_no_events():

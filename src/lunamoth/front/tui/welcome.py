@@ -149,7 +149,8 @@ class WelcomeScreen(Screen):
             yield Static(self.skin.subtitle, id="title")
             yield Static(
                 "Pick a model and a character, then enter. Choosing a character fills in its "
-                "world / tools / limits — change them below if you like. Language follows the card.",
+                "tools / limits — change them below if you like. Its world lives inside the "
+                "card; language follows the card.",
                 id="lore",
             )
             yield Label("Provider preset", classes="field-label")
@@ -168,21 +169,13 @@ class WelcomeScreen(Screen):
                 with Vertical():
                     yield Label("Max tokens", classes="field-label")
                     yield Input(str(self.draft.max_tokens), id="max_tokens")
-            chars = _discover("characters", (".png", ".json"))
-            worlds = _discover("worlds", (".json",))
-            yield Label("Character card (persona)", classes="field-label")
+            chars = _discover("cards", (".png", ".json"))
+            yield Label("Character card (persona; its embedded book is the world)", classes="field-label")
             yield Select(
-                _picker_options(chars, self.draft.character_path, "(default · LunaMoth 月蛾)"),
+                _picker_options(chars, self.draft.character_path, "(bundled default)"),
                 value=self.draft.character_path or "",
                 allow_blank=False,
                 id="character",
-            )
-            yield Label("World book (optional)", classes="field-label")
-            yield Select(
-                _picker_options(worlds, self.draft.world_path, "(auto · pairs with default character)"),
-                value=self.draft.world_path or "",
-                allow_blank=False,
-                id="world",
             )
             yield Label("Tool pack (capabilities)", classes="field-label")
             packs = _discover("toolpacks", (".json",))
@@ -250,7 +243,6 @@ class WelcomeScreen(Screen):
         except ValueError:
             memory_chars = self.draft.memory_chars
         character = self.query_one("#character", Select).value
-        world = self.query_one("#world", Select).value
         theme = self.query_one("#theme", Select).value
         toolpack = self.query_one("#toolpack", Select).value
         embodiment_picker = self.query_one("#embodiment", Select)
@@ -269,7 +261,6 @@ class WelcomeScreen(Screen):
             max_tokens=max_tokens,
             memory_chars=memory_chars,
             character_path=character if isinstance(character, str) else "",
-            world_path=world if isinstance(world, str) else "",
             tui_theme_path=theme if isinstance(theme, str) else "",
             toolpack=toolpack if isinstance(toolpack, str) else "",
             embodiment_override=embodiment_override,
@@ -313,13 +304,14 @@ class WelcomeScreen(Screen):
         self.query_one("#model", Input).value = self.draft.model
 
     def _prefill_from_character(self, char_path: str) -> None:
-        """Pick a character → pre-fill its declared world / tool pack / limits.
+        """Pick a character → pre-fill its declared tool pack / limits.
 
         The fields stay editable, so this is "here are the card's defaults, change
         them if you want" rather than a hard binding. Empty path = bundled default.
+        The world is the card's embedded character_book — nothing to pick.
         """
         from ...content.cards import CharacterCard
-        from ...content.persona import default_character_path, default_world_path
+        from ...content.persona import default_character_path
 
         path = char_path or (str(default_character_path() or ""))
         if not path:
@@ -331,14 +323,6 @@ class WelcomeScreen(Screen):
         defaults = card.defaults()
         self.ui_lang = card.language
         self._refresh_embodiment_picker(defaults)
-        # World: card's declared default, else same-language bundled world for the default char.
-        world = str(defaults.get("world", ""))
-        if world and not Path(world).is_absolute():
-            world = str(ROOT / world)
-        if not world and not char_path:
-            dw = default_world_path(card.language)
-            world = str(dw) if dw else ""
-        self._set_select("#world", world)
         self._set_select("#toolpack", str(defaults.get("toolpack", "") or ""))
         if defaults.get("memory_chars"):
             self.query_one("#memory_chars", Input).value = str(int(defaults["memory_chars"]))
@@ -385,7 +369,7 @@ class WelcomeScreen(Screen):
     def _set_select(self, selector: str, value: str) -> None:
         """Set a Select to value; silently ignore if it isn't an available option.
 
-        Bundled cards reference worlds/toolpacks that are already in the scanned
+        Bundled cards reference toolpacks that are already in the scanned
         lists, so this just works. Exotic imported cards can be set manually.
         """
         sel = self.query_one(selector, Select)

@@ -117,7 +117,7 @@ def test_real_mock_handle_streams_protocol_events(tmp_path, monkeypatch):
     from lunamoth.protocol.api import CharaHandle
     from lunamoth.session.settings import Settings
 
-    handle = CharaHandle(Settings(provider="mock", character_path="", world_path="", toolpack=""))
+    handle = CharaHandle(Settings(provider="mock", character_path="", toolpack=""))
     dispatch, frames = make_dispatcher(handle)
     attached = dispatch.dispatch({"jsonrpc": "2.0", "id": 1, "method": "attach", "params": {"present": True}})
     assert attached["result"]["char_name"]

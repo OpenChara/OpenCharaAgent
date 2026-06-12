@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
@@ -49,8 +50,8 @@ class Settings:
     # speaks en). The engine and tools are language-agnostic.
     py_backend: str = "sandbox"  # local (dir-level) | sandbox (OS jail, default) | docker
     # SillyTavern-compatible persona. Empty character_path => built-in default persona.
+    # The card is the ONE external file: its embedded character_book is the world.
     character_path: str = ""
-    world_path: str = ""
     user_name: str = "操作者"
     # Composable tool pack (decoupled from the persona card). Name ('sandbox') or .json path.
     # Empty => no tools (pure roleplay). Any persona can be combined with any pack.
@@ -145,7 +146,6 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "max_tokens": ("LLM_MAX_TOKENS",),
     "py_backend": ("LUNAMOTH_PY_BACKEND", "LUNAMOSS_PY_BACKEND"),
     "character_path": ("LUNAMOTH_CHARACTER", "LUNAMOSS_CHARACTER"),
-    "world_path": ("LUNAMOTH_WORLD", "LUNAMOSS_WORLD"),
     "user_name": ("LUNAMOTH_USER", "LUNAMOSS_USER"),
     "tui_theme_path": ("LUNAMOTH_THEME", "LUNAMOSS_THEME"),
     "toolpack": ("LUNAMOTH_TOOLPACK", "LUNAMOSS_TOOLPACK"),
@@ -187,6 +187,91 @@ def _coerce(name: str, raw: Any) -> Any:
     return str(raw)
 
 
+_log = logging.getLogger("lunamoth.settings")
+
+
+def _unique_target(base_dir: Path, stem: str) -> Path:
+    target = base_dir / f"{stem}.json"
+    n = 2
+    while target.exists():
+        target = base_dir / f"{stem}-{n}.json"
+        n += 1
+    return target
+
+
+def _migrate_legacy_world(file_data: dict[str, Any]) -> None:
+    """ONE-TIME migration for configs written before the world channel retired.
+
+    A non-empty `world_path` pointing at an existing file is merged into the
+    card this session uses (shared/bundled cards get a merged copy inside the
+    config dir, and `character_path` is repointed); the config is then
+    rewritten without `world_path`. A user's world is never dropped silently:
+    if the merge cannot happen, the config is left untouched for a retry.
+    """
+    if "world_path" not in file_data:
+        return
+    world_path = str(file_data.get("world_path") or "").strip()
+    rewrite = dict(file_data)
+    rewrite.pop("world_path", None)
+    if not world_path:
+        # Nothing to merge — just drop the retired key.
+        _rewrite_config(rewrite, file_data)
+        return
+    wp = Path(world_path)
+    if not wp.is_file():
+        _log.warning(
+            "legacy world_path %s no longer exists — nothing to merge; "
+            "dropping the retired world_path key from %s", world_path, CONFIG_PATH,
+        )
+        _rewrite_config(rewrite, file_data)
+        return
+    try:
+        from ..content.cards import _card_json_from_png, merge_world_into_card
+        from ..content.persona import default_character_path
+
+        world = json.loads(wp.read_text(encoding="utf-8"))
+        card_path = str(file_data.get("character_path") or "").strip()
+        if not card_path:
+            default_card = default_character_path()
+            card_path = str(default_card) if default_card else ""
+        if not card_path:
+            raise FileNotFoundError("no character card to merge the world into")
+        cp = Path(card_path)
+        if cp.suffix.lower() == ".png":
+            card = _card_json_from_png(cp)
+        else:
+            card = json.loads(cp.read_text(encoding="utf-8"))
+        added = merge_world_into_card(card, world)
+        # Cards inside the config dir are this session's own frozen copy —
+        # merge in place. Anything else (bundled/shared/PNG) gets a merged
+        # JSON copy in the config dir so other sessions never see the edit.
+        in_place = cp.suffix.lower() == ".json" and CONFIG_DIR in cp.resolve().parents
+        if in_place:
+            target = cp
+        else:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            target = _unique_target(CONFIG_DIR, cp.stem)
+            rewrite["character_path"] = str(target)
+            file_data["character_path"] = str(target)
+        target.write_text(json.dumps(card, ensure_ascii=False, indent=2), encoding="utf-8")
+        _rewrite_config(rewrite, file_data)
+        _log.warning(
+            "migrated legacy world book %s into the card %s (%d entr%s merged); "
+            "config rewritten without world_path — the card is now the one file",
+            world_path, target, added, "y" if added == 1 else "ies",
+        )
+    except Exception as e:  # keep the config untouched so nothing is lost
+        _log.warning("legacy world_path migration failed (%s); config left as-is, will retry next launch", e)
+
+
+def _rewrite_config(rewrite: dict[str, Any], file_data: dict[str, Any]) -> None:
+    try:
+        CONFIG_PATH.write_text(json.dumps(rewrite, ensure_ascii=False, indent=2), encoding="utf-8")
+        file_data.pop("world_path", None)
+    except OSError as e:
+        _log.warning("could not rewrite %s during world_path migration: %s", CONFIG_PATH, e)
+
+
 def load_settings() -> Settings:
     data: dict[str, Any] = {}
     # Seed from environment so existing env-based workflows still work pre-welcome-screen.
@@ -207,6 +292,8 @@ def load_settings() -> Settings:
             # Config written before the presence->mode rename.
             if "mode" not in file_data and file_data.get("presence"):
                 file_data["mode"] = file_data["presence"]
+            # Config written before the standalone world channel retired.
+            _migrate_legacy_world(file_data)
             for k, v in file_data.items():
                 if k in _FIELD_TYPES and v is not None:
                     try:

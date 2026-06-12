@@ -14,7 +14,7 @@ def agent(tmp_path, monkeypatch):
     from lunamoth.core.agent import LunaMothAgent
 
     def make(**kw):
-        return LunaMothAgent(Settings(character_path="", world_path="", toolpack="", **kw))
+        return LunaMothAgent(Settings(character_path="", toolpack="", **kw))
 
     return make
 
@@ -22,12 +22,14 @@ def agent(tmp_path, monkeypatch):
 _FORBIDDEN = ["containment", "收容", "hostility", "敌意", "trust level", "信任度", "scp-079", "scp 079"]
 
 
-def test_default_character_pairs_with_its_own_world(agent):
+def test_default_character_carries_its_own_world(agent):
     a = agent()
     assert a.character is not None
     assert a.char_name() == a.character.name
     assert a.lang == a.character.language  # derived from the card, not a setting
-    assert a.world is not None and "SCP" not in a.world.name  # the moth world, not SCP
+    book = a.character.character_book  # the card's embedded book IS the world
+    assert book is not None and book.entries
+    assert "SCP" not in (book.name or "")
 
 
 def test_no_scp_framing_in_system_prompt(agent):

@@ -67,7 +67,7 @@ def user_cards_dir() -> Path:
 
 
 def bundled_cards_dir() -> Path:
-    return ROOT / "characters"
+    return ROOT / "cards"
 
 
 # ---- global model defaults -----------------------------------------------------
@@ -565,13 +565,13 @@ def _card_entry(path: Path, builtin: bool, refs: dict[str, list[str]]) -> dict[s
         _log.warning("unreadable card: %s", path, exc_info=True)
         return None
     ext = card.extensions.get("lunamoth", {}) if isinstance(card.extensions, dict) else {}
-    world = ""
+    # The world is the card's embedded book; surface its name for the deck label.
+    world = str(card.character_book.name or "") if card.character_book else ""
     theme_color = ""
     avatar_svg = ""
     tagline = ""
     embodiment = ""
     if isinstance(ext, dict):
-        world = str(ext.get("world") or "")
         theme_color = _clean_theme_color(ext.get("theme_color"))
         avatar_svg = _sanitize_avatar_svg(ext.get("avatar_svg"))[0]
         tagline = str(ext.get("tagline") or "")
@@ -582,7 +582,7 @@ def _card_entry(path: Path, builtin: bool, refs: dict[str, list[str]]) -> dict[s
         "name": card.name or path.stem,
         "lang": card.language,
         "tags": list(card.tags or [])[:4],
-        "world": Path(world).stem if world else "",
+        "world": world,
         "builtin": builtin,
         "draft": bool(isinstance(ext, dict) and ext.get("draft")),
         "frozen": bool(used_by),

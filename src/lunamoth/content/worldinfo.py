@@ -74,6 +74,24 @@ class WorldEntry:
         return True
 
 
+def entry_to_book_dict(d: dict[str, Any], entry_id: int = 0) -> dict[str, Any]:
+    """Normalize one entry (standalone-world or character_book shape) to the
+    standard ST V3 `character_book` entry dict. Used when folding a world book
+    into a card — the card is the ONE external file."""
+    e = WorldEntry.from_dict(d, entry_id)
+    return {
+        "id": e.entry_id,
+        "keys": e.keys,
+        "secondary_keys": e.secondary_keys,
+        "comment": e.comment,
+        "content": e.content,
+        "constant": e.constant,
+        "selective": e.selective,
+        "enabled": e.enabled,
+        "insertion_order": e.order,
+    }
+
+
 def _estimate_tokens(text: str) -> int:
     cjk = sum(1 for ch in text if "一" <= ch <= "鿿")
     other = max(0, len(text) - cjk)

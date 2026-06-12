@@ -14,7 +14,7 @@ import json as _json
 from ..obs.audit import AuditLog
 from ..content.cards import CharacterCard
 from ..obs import get_logger, setup_logging
-from ..config import ROOT, SANDBOX_ROOT, ThoughtConfig
+from ..config import SANDBOX_ROOT, ThoughtConfig
 from .context import ContextBuffer, _msg_text, estimate_tokens
 from ..tools.goals import GoalStore
 from .llm import LLMClient
@@ -23,7 +23,6 @@ from ..tools.memory import MemoryLimits, MemoryStore
 from ..content.persona import (
     DEFAULT_NAME,
     default_character_path,
-    default_world_path,
     fallback_persona,
     system_language,
 )
@@ -37,7 +36,7 @@ from .state import EnvState
 from ..tools.toolpacks import ToolPack, load_toolpack
 from ..tools.gateway import ToolGateway
 from .transcript import TranscriptStore
-from ..content.worldinfo import Lorebook, apply_macros
+from ..content.worldinfo import apply_macros
 from ..content.knobs import normalize_embodiment, parse_patience, parse_tempo
 
 _log = get_logger("agent")
@@ -71,7 +70,6 @@ class LunaMothAgent:
         self.audit = AuditLog(SANDBOX_ROOT / "logs" / "audit.jsonl")
         self.state = EnvState(SANDBOX_ROOT / "env_status.json")
         self.character: CharacterCard | None = None
-        self.world: Lorebook | None = None
         self.toolpack: "ToolPack | None" = None
         # Persona/card must load before memory so card-declared limits apply.
         self._load_cards()
@@ -126,7 +124,6 @@ class LunaMothAgent:
             model=settings.model,
             base_url=settings.base_url,
             character=self.char_name(),
-            world=(self.world.name if self.world else None),
             toolpack=(self.toolpack.name if self.toolpack else None),
             context_window=self.context_limit(),
         )
@@ -134,19 +131,16 @@ class LunaMothAgent:
     # ---- persona / tool pack / limits (independent composable layers) -------------
 
     def _load_cards(self) -> None:
-        """Load the persona card + its paired world book.
+        """Load the persona card — the ONE external file.
 
-        An empty character path means the bundled default character. Language is
+        An empty character path means the bundled default card. Language is
         taken from the chosen card (a .zh card speaks zh, a .en card speaks en)
-        — not from a separate toggle. The world book is the card's declared
-        default (extensions.lunamoth.world), then the same-stem convention,
-        unless the operator picked one explicitly.
+        — not from a separate toggle. The world lives INSIDE the card as the
+        embedded `character_book`; there is no standalone world channel.
         """
         self.character = None
-        self.world = None
         path = (self.settings.character_path or "").strip()
-        using_default_character = not path
-        if using_default_character:
+        if not path:
             default_card = default_character_path()
             path = str(default_card) if default_card else ""
         if path:
@@ -155,24 +149,9 @@ class LunaMothAgent:
             except Exception as e:
                 self.audit.write("character_load_error", path=path, error=str(e)[:300])
 
-        # Language follows the card — it is not a setting. Used only to pick the
-        # fallback persona / the default world for the bundled default character.
+        # Language follows the card — it is not a setting. Used only to pick
+        # the fallback persona when no card loads at all.
         self.lang = self.character.language if self.character else system_language()
-
-        wpath = (self.settings.world_path or "").strip()
-        if not wpath and self.character is not None:
-            declared = self.character.defaults().get("world")
-            if declared:
-                cand = (ROOT / declared) if not os.path.isabs(declared) else Path(declared)
-                wpath = str(cand) if cand.exists() else ""
-        if not wpath and using_default_character and self.character is not None:
-            default_world = default_world_path(self.lang)
-            wpath = str(default_world) if default_world else ""
-        if wpath:
-            try:
-                self.world = Lorebook.load(wpath)
-            except Exception as e:
-                self.audit.write("world_load_error", path=wpath, error=str(e)[:300])
 
     def _load_toolpack(self) -> None:
         """Load the tool pack (the 'what it can do' layer) and apply it to the gateway.
@@ -457,11 +436,10 @@ class LunaMothAgent:
                 msgs.append(skills_block)
 
         # Constant world info is stable; keyword world info lives in the volatile tail.
+        # The card's embedded character_book is the ONE world source.
         world_blocks: list[str] = []
         if self.character and self.character.character_book:
             world_blocks += self.character.character_book.constant_blocks(char, user)
-        if self.world:
-            world_blocks += self.world.constant_blocks(char, user)
         if world_blocks:
             msgs.append("[World Info / 世界书]\n" + "\n\n".join(world_blocks))
 
@@ -484,16 +462,10 @@ class LunaMothAgent:
         active: list[tuple[int, int, str]] = []
         seq = 0
         if self.character and self.character.character_book:
+            namespace = f"book:{self.character.name or 'card'}"
             for entry in self.character.character_book.keyword_entries(
-                scan_text, sticky=session.wi_sticky, namespace="card"
+                scan_text, sticky=session.wi_sticky, namespace=namespace
             ):
-                block = apply_macros(entry.content, char, user).strip()
-                if block:
-                    active.append((entry.order, seq, block))
-                    seq += 1
-        if self.world:
-            namespace = f"world:{self.world.name or 'default'}"
-            for entry in self.world.keyword_entries(scan_text, sticky=session.wi_sticky, namespace=namespace):
                 block = apply_macros(entry.content, char, user).strip()
                 if block:
                     active.append((entry.order, seq, block))
