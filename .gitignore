@@ -95,6 +95,8 @@ worlds/*
 !worlds/LICENSE-CC-BY-SA-3.0.md
 !characters/LunaMoth.zh.json
 !characters/LunaMoth.en.json
+!characters/Quinn.zh.json
+!characters/Quinn.en.json
 !worlds/LunaMoth.zh.json
 !worlds/LunaMoth.en.json
 !characters/SCP-079.zh.json
