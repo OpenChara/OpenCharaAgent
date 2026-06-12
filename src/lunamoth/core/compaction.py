@@ -223,6 +223,37 @@ def should_compact(ctx: ContextBuffer, llm) -> bool:
     return _guard(ctx).allows(tokens)
 
 
+def _align_tail_cut(msgs: list[dict], cut: int) -> int:
+    """The tail must not OPEN with orphaned tool results (audit #11, hermes
+    _align_boundary_backward): render() silently drops a role:"tool" message
+    whose declaring assistant got summarized away — the freshest work would
+    vanish from the API view. Pull the cut back to the assistant that made the
+    calls so the whole group stays verbatim. If there is no parent in the
+    window (already orphaned), push forward instead so the orphans fold into
+    the summary rather than stranding at the tail head."""
+    if cut < len(msgs) and msgs[cut].get("role") == "tool":
+        j = cut - 1
+        while j >= 0 and msgs[j].get("role") == "tool":
+            j -= 1
+        if j >= 0 and msgs[j].get("role") == "assistant" and msgs[j].get("tool_calls"):
+            return j
+        while cut < len(msgs) and msgs[cut].get("role") == "tool":
+            cut += 1
+    return cut
+
+
+def _anchor_last_user(msgs: list[dict], cut: int) -> int:
+    """Keep the operator's most recent user message OUT of the summary (audit
+    #11, hermes _ensure_last_user_message_in_tail, scar #10896): a summarized
+    active request effectively disappears — the model stalls on it, repeats
+    finished work, or drops it. A user message is itself a clean boundary (no
+    tool-pair splitting risk), so anchoring is a plain pull-back."""
+    for i in range(len(msgs) - 1, -1, -1):
+        if msgs[i].get("role") == "user":
+            return min(cut, i)
+    return cut
+
+
 def compact(ctx: ContextBuffer, lang: str, llm, *, force: bool = False) -> bool:
     """Replace the old head of the window with one summary message. Returns True
     if it changed anything. Safe to call any time; no-ops when not worth it.
@@ -262,6 +293,10 @@ def compact(ctx: ContextBuffer, lang: str, llm, *, force: bool = False) -> bool:
         if acc >= tail_budget:
             cut = i
             break
+    if cut is not None:
+        # Boundary hygiene (audit #11): the token walk is blind to structure.
+        cut = _align_tail_cut(msgs, cut)
+        cut = _anchor_last_user(msgs, cut)
     if cut is None or cut < 2:   # whole thing fits in the tail → nothing old to fold
         # Over threshold but nothing compactable: without counting this the
         # guard never fires and every turn re-walks a no-op (#40803).
