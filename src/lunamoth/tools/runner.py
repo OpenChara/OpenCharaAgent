@@ -45,6 +45,8 @@ from ..session.isolation import (  # noqa: F401 — backend/os_sandbox_available
 _log = get_logger("runner")
 
 DEFAULT_TIMEOUT = 30
+MIN_TIMEOUT = 1      # audit #17: the model-supplied timeout is clamped to
+MAX_TIMEOUT = 600    # [1, 600] s so `timeout=999999` can't wedge an unattended cycle
 _OUTPUT_CAP = 12000
 _STDERR_CAP = 2000
 _KILL_GRACE = 1.0    # seconds between SIGTERM and SIGKILL on timeout
@@ -197,6 +199,14 @@ def run_terminal(
     workspace = workspace.resolve()
     workspace.mkdir(parents=True, exist_ok=True)
     isolation = (isolation or backend()).lower()
+    # Clamp the (model-supplied) timeout, with a note when clamped — the model
+    # must learn the real bound instead of silently getting a different wait.
+    requested = int(timeout)
+    timeout = max(MIN_TIMEOUT, min(MAX_TIMEOUT, requested))
+    clamp_note = (
+        f"\n[lunamoth: timeout clamped to {timeout}s (requested {requested}s; allowed {MIN_TIMEOUT}-{MAX_TIMEOUT}s)]"
+        if timeout != requested else ""
+    )
     writable = [Path(p).resolve() for p in writable_paths]
     cwd = workspace
     if workdir:
@@ -204,7 +214,7 @@ def run_terminal(
         if isolation == "dir" or cand == workspace or workspace in cand.parents or cand in writable:
             cwd = cand
 
-    note = ""
+    note = clamp_note
     if isolation == "docker" and shutil.which("docker"):
         cmd: list[str] = _docker(command, workspace, allow_network, image, memory_mb, cpus)
         run_cwd = None
@@ -213,7 +223,7 @@ def run_terminal(
         run_cwd = str(cwd) if sys.platform == "darwin" else None  # bwrap sets its own chdir
     else:
         if isolation != "dir":
-            note = f"\n[lunamoth: '{isolation}' jail unavailable, ran with directory trust]"
+            note += f"\n[lunamoth: '{isolation}' jail unavailable, ran with directory trust]"
         cmd = ["/bin/bash", "-c", command]
         run_cwd = str(cwd)
 

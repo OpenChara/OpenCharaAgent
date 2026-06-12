@@ -47,6 +47,27 @@ def test_timeout_with_pipe_holding_grandchild_returns_and_kills_group(tmp_path):
     assert not alive
 
 
+def test_huge_timeout_is_clamped_with_a_note(tmp_path):
+    # Audit #17: timeout=999999 must not be able to wedge an unattended cycle.
+    ws = tmp_path / "workspace"
+    out = run_terminal("echo ok", ws, isolation="dir", timeout=999999)
+    assert "ok" in out and "exit=0" in out
+    assert "timeout clamped to 600s (requested 999999s" in out
+
+
+def test_tiny_timeout_is_clamped_up_with_a_note(tmp_path):
+    ws = tmp_path / "workspace"
+    out = run_terminal("sleep 30", ws, isolation="dir", timeout=-5)
+    assert "timed out after 1s" in out                    # clamped to the 1 s floor
+    assert "timeout clamped to 1s (requested -5s" in out  # and the model is told
+
+
+def test_in_range_timeout_gets_no_note(tmp_path):
+    ws = tmp_path / "workspace"
+    out = run_terminal("echo ok", ws, isolation="dir", timeout=30)
+    assert "clamped" not in out
+
+
 def test_timeout_keeps_partial_output(tmp_path):
     ws = tmp_path / "workspace"
     out = run_terminal("echo 早期输出; echo oops >&2; sleep 60", ws, isolation="dir", timeout=1)

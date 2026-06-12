@@ -287,7 +287,7 @@ class ToolGateway:
                     "type": "object",
                     "properties": {
                         "command": {"type": "string", "description": "The shell command to execute."},
-                        "timeout": {"type": "integer", "description": "Max seconds to wait (default 30)."},
+                        "timeout": {"type": "integer", "description": "Max seconds to wait (default 30, clamped to 1-600)."},
                         "workdir": {"type": "string", "description": "Working directory (relative to the workspace)."},
                     },
                     "required": ["command"],
