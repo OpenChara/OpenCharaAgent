@@ -15,6 +15,13 @@
 > **2026-06-13 增**：tempo 已全移除（前端删 tempo 控件/文案，节拍只剩 patience）；
 > embodiment 改唤醒时一次性选择 —— `session.wake` 已接受 `embodiment:
 > "literal"|"actor"`，**唤醒 sheet 需要把这个参数发上来**（运行中不出现切换 UI）。
+> #6 `/model` 已落地（命令注册表；session 范围不写回默认；空参回显；
+>   Reply.data 带 {model, context_max}）—— 弹层可接线。多 key 管理：后端设计中，下一波。
+> 问题单 #7（作品看不到）已修：works.list 的隐藏文件过滤误杀了 ~/.lunamoth
+>   下的一切 —— 后端修复，前端无需动作。
+> 问题单 #1（复制卡）：新 RPC `card.duplicate {path}` —— 副本带「（副本）/ (copy)」
+>   名称后缀、剥掉 default tag、PNG 卡自动提为 JSON。**复制按钮请从
+>   card.read+card.save 切到它**。
 
 ## 1. attach 不唤醒 resting chara（时效性高——supervisor 正在实现 presence，请直接做进去）
 
