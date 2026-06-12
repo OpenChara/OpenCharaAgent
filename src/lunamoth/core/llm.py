@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import queue
 import random
+import re
 import threading
 import time
 from typing import Any, Iterator, NoReturn
@@ -31,6 +32,282 @@ _REASONING_PREFIXES = (
     "deepseek/", "anthropic/", "openai/", "x-ai/", "google/gemini-2", "google/gemma-4",
     "qwen/qwen3", "tencent/hy3-preview", "xiaomi/", "nousresearch/",
 )
+
+
+# ---- lone-surrogate sanitization (audit #7, hermes message_sanitization) ---------------
+# Lone surrogate code points (U+D800–DFFF) are invalid outside UTF-16 pairs.
+# Byte-level models (Ollama Kimi/GLM/Qwen — the hermes scar) emit them as
+# unpaired \udXXX JSON escapes; json.loads happily materializes them, and any
+# later ensure_ascii=False json.dumps (the protocol codec, messaging adapters)
+# raises UnicodeEncodeError at .encode("utf-8"). Scrub to U+FFFD before model
+# text/reasoning/args enter the context or the live event stream.
+_SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
+_SURROGATE_PAIR_RE = re.compile(r"[\ud800-\udbff][\udc00-\udfff]")
+
+
+def _combine_pair(m: "re.Match[str]") -> str:
+    s = m.group(0)
+    return chr(0x10000 + ((ord(s[0]) - 0xD800) << 10) + (ord(s[1]) - 0xDC00))
+
+
+def _scrub_surrogates(text: str) -> str:
+    """Replace lone surrogates with U+FFFD; fast no-op when there are none.
+
+    Adjacent high+low surrogates are first recombined into the real astral
+    char: json.loads combines a \\uD83D\\uDE00 escape pair inside ONE delta,
+    but halves rejoined across delta boundaries (_SurrogateJoiner) arrive as
+    two raw code points that Python never auto-combines."""
+    if not _SURROGATE_RE.search(text):
+        return text
+    text = _SURROGATE_PAIR_RE.sub(_combine_pair, text)
+    return _SURROGATE_RE.sub("�", text)
+
+
+class _SurrogateJoiner:
+    """Per-delta surrogate scrubbing that does NOT destroy real astral chars.
+
+    Providers can split one emoji's \\ud83d\\ude00 escape pair across two SSE
+    deltas; scrubbing each delta alone would turn that legal pair into two
+    U+FFFD. So a trailing HIGH surrogate is held back and rejoined with the
+    next chunk — everything emitted is surrogate-free (safe for the
+    ensure_ascii=False codec on the live event path) while split pairs come
+    out whole. flush() releases a dangling held char at stream end.
+    """
+
+    def __init__(self) -> None:
+        self._held = ""
+
+    def feed(self, text: str) -> str:
+        text = self._held + text
+        self._held = ""
+        if text and "\ud800" <= text[-1] <= "\udbff":
+            self._held = text[-1]
+            text = text[:-1]
+        return _scrub_surrogates(text)
+
+    def flush(self) -> str:
+        held, self._held = self._held, ""
+        return _scrub_surrogates(held)
+
+
+# ---- tool-call argument repair (audit #2, hermes message_sanitization) -----------------
+# Local/aggregated models (GLM via Ollama, hermes #12068) emit truncated JSON,
+# trailing commas, Python None, literal control chars. Before this, a parse
+# failure became `{}` → the gateway's missing-required-args error — a fair
+# model-visible error, but REPAIRABLE calls were needlessly failed, and broken
+# args persisted into history were replayed broken on every later request.
+
+
+def _escape_control_chars_in_strings(raw: str) -> str:
+    """Escape unescaped control chars (0x00-0x1F) inside JSON string values;
+    pass-through outside strings (hermes _escape_invalid_chars_in_json_strings,
+    #12093 — catches what strict=False alone can't when other malformations
+    are present too)."""
+    out: list[str] = []
+    in_string = False
+    i, n = 0, len(raw)
+    while i < n:
+        ch = raw[i]
+        if in_string:
+            if ch == "\\" and i + 1 < n:
+                out.append(ch)
+                out.append(raw[i + 1])
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+                out.append(ch)
+            elif ord(ch) < 0x20:
+                out.append(f"\\u{ord(ch):04x}")
+            else:
+                out.append(ch)
+        else:
+            if ch == '"':
+                in_string = True
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _repair_tool_args(raw_args: str, tool_name: str = "?") -> str:
+    """Repair malformed tool_call argument JSON (hermes
+    message_sanitization._repair_tool_call_arguments, four passes).
+
+    Already-valid JSON returns BYTE-IDENTICAL (no re-serialization) so replayed
+    history stays byte-stable for prompt caching. Then: (0) strict=False
+    reparse + re-serialize (literal control chars — the most common local-model
+    case); (1) strip trailing commas, close unclosed braces/brackets; (2) pop
+    excess closers, bounded; (3) escape raw control chars inside strings. Last
+    resort "{}": the gateway then reports the real missing-args failure to the
+    model — an honest error, far better than a crashed turn (the GLM-via-Ollama
+    scar). Every repair is logged at WARNING.
+    """
+    raw_stripped = raw_args.strip() if isinstance(raw_args, str) else ""
+    if not raw_stripped:
+        return "{}"
+    try:
+        json.loads(raw_stripped)
+        return raw_stripped  # valid — keep the model's exact bytes
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+
+    if raw_stripped == "None":  # Python-literal None
+        _log.warning("repaired Python-None tool_call arguments for %s", tool_name)
+        return "{}"
+
+    # Pass 0: strict=False accepts literal control chars inside strings and
+    # lets us re-serialize into wire-valid JSON without string surgery.
+    try:
+        parsed = json.loads(raw_stripped, strict=False)
+        fixed = json.dumps(parsed, ensure_ascii=False, separators=(",", ":"))
+        _log.warning("repaired unescaped control chars in tool_call arguments for %s", tool_name)
+        return fixed
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+
+    fixed = raw_stripped
+    # Pass 1: strip trailing commas (before a closer, or dangling at the cut
+    # point of a truncated stream), then close unclosed structures. Hermes
+    # counts braces and appends `}` before `]`, which mis-orders the closers
+    # for `{"a": [1, 2`; a string-aware stack walk closes in nesting order
+    # and also terminates an unclosed string.
+    fixed = re.sub(r",\s*([}\]])", r"\1", fixed)
+    fixed = re.sub(r",\s*$", "", fixed)
+    stack: list[str] = []
+    in_string = False
+    i = 0
+    while i < len(fixed):
+        ch = fixed[i]
+        if in_string:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch in "{[":
+            stack.append(ch)
+        elif ch in "}]" and stack and stack[-1] == ("{" if ch == "}" else "["):
+            stack.pop()
+        i += 1
+    if in_string:
+        fixed += '"'
+    for opener in reversed(stack):
+        fixed += "}" if opener == "{" else "]"
+    # Pass 2: pop excess closing braces/brackets (bounded).
+    for _ in range(50):
+        try:
+            json.loads(fixed)
+            break
+        except json.JSONDecodeError:
+            if fixed.endswith("}") and fixed.count("}") > fixed.count("{"):
+                fixed = fixed[:-1]
+            elif fixed.endswith("]") and fixed.count("]") > fixed.count("["):
+                fixed = fixed[:-1]
+            else:
+                break
+    try:
+        json.loads(fixed)
+        _log.warning("repaired malformed tool_call arguments for %s: %s -> %s",
+                     tool_name, raw_stripped[:80], fixed[:80])
+        return fixed
+    except json.JSONDecodeError:
+        pass
+
+    # Pass 3: escape raw control chars inside strings, then retry — catches
+    # control chars combined with the structural damage passes 1-2 fixed.
+    try:
+        escaped = _escape_control_chars_in_strings(fixed)
+        if escaped != fixed:
+            json.loads(escaped)
+            _log.warning("repaired control-char-laced tool_call arguments for %s: %s -> %s",
+                         tool_name, raw_stripped[:80], escaped[:80])
+            return escaped
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+
+    _log.warning("unrepairable tool_call arguments for %s — replaced with {} (was: %s)",
+                 tool_name, raw_stripped[:80])
+    return "{}"
+
+
+def _preflight_history_tool_calls(msg: dict) -> dict:
+    """Repair unparseable tool_call arguments on a REPLAYED history message
+    (hermes conversation_loop pre-flight): one bad turn persisted to the
+    transcript must not be replayed broken on every later request forever.
+    Valid arguments pass through byte-identical; the durable history is never
+    mutated (copy-on-repair, this is a per-request view only)."""
+    tcs = msg.get("tool_calls")
+    if not tcs:
+        return msg
+    fixed: "list[Any] | None" = None
+    for i, tc in enumerate(tcs):
+        if not isinstance(tc, dict):
+            continue
+        fn = tc.get("function")
+        if not isinstance(fn, dict):
+            continue
+        raw = fn.get("arguments")
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        try:
+            json.loads(raw)
+            continue
+        except (json.JSONDecodeError, ValueError):
+            pass
+        if fixed is None:
+            fixed = list(tcs)
+        fixed[i] = {**tc, "function": {**fn, "arguments": _repair_tool_args(raw, str(fn.get("name") or "?"))}}
+    if fixed is None:
+        return msg
+    return {**msg, "tool_calls": fixed}
+
+
+# ---- jittered retry backoff (audit #5, hermes retry_utils) ------------------------------
+# A flat 5s×5 burned the whole retry budget inside a single 60s provider rate
+# window. Exponential + jitter spreads the five attempts over ~2.5 minutes and
+# decorrelates concurrent charas retrying against the same provider. The retry
+# COUNT and the no-fallback policy are untouched: after the budget, the error
+# is VISIBLE — never papered over.
+_RETRY_BASE_DELAY = 5.0
+_RETRY_MAX_DELAY = 120.0
+_RETRY_JITTER_RATIO = 0.5
+
+
+def _retry_delay(attempt: int, retry_after: "float | None" = None) -> float:
+    """min(base·2^(n−1), 120) + U(0, 0.5·delay), hermes jittered_backoff.
+
+    A provider-sent Retry-After wins outright — it is the provider's own
+    schedule, no jitter needed — but is capped at the same 120s so a hostile
+    header can't wedge an unattended cycle."""
+    if retry_after is not None and retry_after > 0:
+        return min(retry_after, _RETRY_MAX_DELAY)
+    delay = min(_RETRY_BASE_DELAY * (2 ** max(0, attempt - 1)), _RETRY_MAX_DELAY)
+    return delay + random.uniform(0.0, _RETRY_JITTER_RATIO * delay)
+
+
+def _parse_retry_after(headers) -> "float | None":
+    """Retry-After from a 429: delta-seconds or an HTTP-date. None when absent
+    or unparseable — the jittered backoff is then the schedule."""
+    if headers is None:
+        return None
+    try:
+        value = headers.get("Retry-After")
+    except Exception:
+        return None
+    if not value:
+        return None
+    s = str(value).strip()
+    try:
+        return max(0.0, float(s))
+    except ValueError:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        return max(0.0, parsedate_to_datetime(s).timestamp() - time.time())
+    except Exception:
+        return None
 
 
 # ---- stream stall watchdog (audit #1, hermes chat_completion_helpers) ------------------
@@ -124,6 +401,34 @@ class _StallGuard:
 class LLMClient:
     def __init__(self, cfg: LLMConfig):
         self.cfg = cfg
+        # Real token usage from the most recent stream that carried a `usage`
+        # object (audit #8, hermes context_compressor: "defers to recent real
+        # API usage over known-noisy rough estimates"). The real number sees
+        # the WHOLE request — stable prefix, tool schemas, volatile tail —
+        # where the char heuristic sees only the history, and it is exact on
+        # CJK-heavy text where the heuristic drifts. Not requested explicitly
+        # (stream_options is not universal); captured when present.
+        self.last_usage: "dict[str, Any] | None" = None
+        self.last_prompt_tokens: int = 0
+        self.usage_fresh: bool = False
+
+    def _note_usage(self, usage: Any) -> None:
+        """Record a `usage` object seen in a stream payload (typically the
+        final chunk). Only positive prompt_tokens counts — providers send
+        zeroed placeholders mid-stream."""
+        if not isinstance(usage, dict):
+            return
+        prompt = usage.get("prompt_tokens")
+        if isinstance(prompt, (int, float)) and prompt > 0:
+            self.last_usage = dict(usage)
+            self.last_prompt_tokens = int(prompt)
+            self.usage_fresh = True
+
+    def mark_usage_stale(self) -> None:
+        """The window was rewritten (compaction): the captured usage no longer
+        describes it. The numbers stay readable for diagnostics; only the
+        compaction-trigger freshness drops."""
+        self.usage_fresh = False
 
     def is_live(self) -> bool:
         return self.cfg.provider in LIVE_PROVIDERS and bool(self.cfg.base_url)
@@ -193,12 +498,13 @@ class LLMClient:
     # failed request; there is NO fabricated fallback output anywhere.
     _RETRYABLE_HTTP = {408, 429, 500, 502, 503, 504, 520, 522, 524}
     _RETRY_LIMIT = 5
-    _RETRY_DELAY = 5.0
 
     def _connect_with_retry(self, url: str, data: bytes, timeout: float):
-        """Open the streaming request, Claude-Code style on failure: a flat 5s
-        pause, up to 5 retries, then stop and surface the error. Yields dim
-        retry notices to the UI; returns the open response. Only the connection
+        """Open the streaming request. On transient failure: jittered
+        exponential backoff (audit #5) — min(5·2^(n−1), 120)s + U(0, 0.5·delay)
+        — up to 5 retries, then stop and surface the error; a 429's Retry-After
+        header, when present, replaces the computed delay. Yields dim retry
+        notices to the UI; returns the open response. Only the connection
         phase retries — a stream that dies mid-flight surfaces immediately (the
         interrupt-commit machinery already preserves partials)."""
         import urllib.error
@@ -206,6 +512,7 @@ class LLMClient:
 
         attempt = 0
         while True:
+            retry_after = None
             req = urllib.request.Request(url, data=data, headers=self._headers(), method="POST")
             try:
                 return urllib.request.urlopen(req, timeout=timeout)
@@ -214,6 +521,8 @@ class LLMClient:
                 if e.code not in self._RETRYABLE_HTTP:
                     _log.info("permanent HTTP error from %s: %s %s", url, e.code, detail[:200])
                     raise RuntimeError(f"HTTP {e.code}: {detail}") from e
+                if e.code == 429:
+                    retry_after = _parse_retry_after(getattr(e, "headers", None))
                 err = f"HTTP {e.code}: {detail[:120]}"
             except urllib.error.URLError as e:
                 err = f"connection failed: {e.reason}"
@@ -223,9 +532,10 @@ class LLMClient:
             if attempt > self._RETRY_LIMIT:
                 _log.error("gave up after %d retries: %s", self._RETRY_LIMIT, err)
                 raise RuntimeError(f"{err} — gave up after {self._RETRY_LIMIT} retries")
-            _log.warning("connect retry %d/%d: %s", attempt, self._RETRY_LIMIT, err)
-            yield Notice("retry", f"⚠ {err} — retry {attempt}/{self._RETRY_LIMIT} in {int(self._RETRY_DELAY)}s")
-            time.sleep(self._RETRY_DELAY)
+            delay = _retry_delay(attempt, retry_after)
+            _log.warning("connect retry %d/%d in %.1fs: %s", attempt, self._RETRY_LIMIT, delay, err)
+            yield Notice("retry", f"⚠ {err} — retry {attempt}/{self._RETRY_LIMIT} in {delay:.0f}s")
+            time.sleep(delay)
 
     def raw_complete(self, messages: list[dict[str, Any]], max_tokens: int = 1024, timeout: float = 60.0) -> str:
         """One-off NON-streaming completion for engine-internal use (context
@@ -293,6 +603,11 @@ class LLMClient:
                 # Strict OpenAI-compatible providers reject null content even on
                 # tool-call messages; "" is accepted everywhere.
                 msg = {**msg, "content": ""}
+            if msg.get("tool_calls"):
+                # Pre-flight repair over replayed history (audit #2): a bad
+                # turn already in the durable context must not poison every
+                # later request.
+                msg = _preflight_history_tool_calls(msg)
             messages.append(msg)
         if not in_context:
             messages.append({"role": "user", "content": user_text})
@@ -362,6 +677,8 @@ class LLMClient:
         }, override=reasoning)
         data = json.dumps(body).encode("utf-8")
         flow = ""  # "" | "think" | "speech" — for newline transitions around thinking
+        # Lone-surrogate scrub (audit #7); joiners keep split astral pairs whole.
+        speech_join, think_join = _SurrogateJoiner(), _SurrogateJoiner()
         resp = yield from self._connect_with_retry(url, data, timeout=90)
         guard = _StallGuard(resp, stall_timeout=_stall_timeout_for(len(data)))
         try:
@@ -378,10 +695,16 @@ class LLMClient:
                         payload = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    delta = payload.get("choices", [{}])[0].get("delta", {})
+                    self._note_usage(payload.get("usage"))  # audit #8
+                    # `or [{}]`: a usage-only final chunk carries "choices": []
+                    # — plain [0] indexing would crash on it.
+                    choices = payload.get("choices") or [{}]
+                    delta = choices[0].get("delta", {})
                     thinking = delta.get("reasoning_content") or delta.get("reasoning")
                     if thinking:
                         guard.mark_payload()
+                        thinking = think_join.feed(thinking)
+                    if thinking:
                         # Reasoning travels as ThinkDelta; the flow-transition
                         # newlines ride in the same event type so a frontend
                         # that hides thinking leaks nothing.
@@ -393,6 +716,8 @@ class LLMClient:
                     chunk = delta.get("content")
                     if chunk:
                         guard.mark_payload()
+                        chunk = speech_join.feed(chunk)
+                    if chunk:
                         if flow == "think":
                             yield ThinkDelta("\n")
                         flow = "speech"
@@ -401,6 +726,12 @@ class LLMClient:
             _log.error("%s (model=%s)", e, self.cfg.model)
             yield Notice("stall", f"⚠ {e}")
             raise RuntimeError(str(e)) from None
+        leftover = think_join.flush()
+        if leftover:
+            yield ThinkDelta(leftover)
+        leftover = speech_join.flush()
+        if leftover:
+            yield TextDelta(leftover, channel)
 
     # ---- native function-calling agent loop ---------------------------------------
 
@@ -417,6 +748,16 @@ class LLMClient:
         "break the work into several smaller tool calls (e.g. write the file in pieces).]"
     )
     INTERRUPT_MARK = "\n[cut off mid-reply by the operator's next message]"
+    # Step-budget exhaustion (audit #9, hermes turn_finalizer._handle_max_iterations):
+    # a turn the loop limit cuts mid-work must say so — to the UI AND in
+    # context — or the next turn treats the stop as completion ("started
+    # working, then mysteriously gave up", the same bug family as silent
+    # truncation).
+    _MAX_STEPS_NOTE = (
+        "[System: this turn's tool-step budget ({steps} steps) ran out before the work was "
+        "finished. Nothing failed — the loop was stopped. Pick the unfinished work back up "
+        "next turn instead of restarting it.]"
+    )
     # Empty-completion policy (audit #4, hermes conversation_loop ≤3 retries):
     # a stream that ends with no text and no tool calls is an invisible
     # non-answer; silently recording assistant {content: None} violates the
@@ -554,7 +895,16 @@ class LLMClient:
 
                 finished = True
                 return
-            finished = True  # step budget exhausted; everything so far is recorded
+            # Step budget exhausted mid-work (audit #9): NEVER a silent stop.
+            # The UI gets a Notice; the durable context gets an explicit marker
+            # so the next turn knows the loop was cut, not completed. Everything
+            # up to here is already recorded.
+            _log.warning("step budget exhausted (%d steps, model=%s) — turn stopped mid-work",
+                         max_steps, self.cfg.model)
+            note = {"role": "system", "content": self._MAX_STEPS_NOTE.format(steps=max_steps)}
+            record(note)
+            yield Notice("budget", f"⚠ step budget exhausted ({max_steps} tool steps) — stopping here; the work is unfinished")
+            finished = True
         finally:
             if not finished:
                 partial = "".join(acc).strip()
@@ -586,6 +936,9 @@ class LLMClient:
         reasoning_parts: list[str] = []
         finish_reason = ""
         flow = ""  # "" | "think" | "speech" — for newline transitions around thinking
+        # Lone-surrogate scrub (audit #7) on everything emitted/accumulated;
+        # joiners keep astral pairs split across deltas whole.
+        speech_join, think_join = _SurrogateJoiner(), _SurrogateJoiner()
         resp = yield from self._connect_with_retry(f"{self.cfg.base_url}/chat/completions", data, timeout=120)
         guard = _StallGuard(resp, stall_timeout=_stall_timeout_for(len(data)))
         try:
@@ -602,7 +955,10 @@ class LLMClient:
                         payload = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    choice = payload.get("choices", [{}])[0]
+                    self._note_usage(payload.get("usage"))  # audit #8
+                    # `or [{}]`: a usage-only final chunk carries "choices": []
+                    # — plain [0] indexing would crash on it.
+                    choice = (payload.get("choices") or [{}])[0]
                     if choice.get("finish_reason"):
                         finish_reason = str(choice["finish_reason"])
                         guard.mark_payload()
@@ -613,6 +969,8 @@ class LLMClient:
                     thinking = delta.get("reasoning_content") or delta.get("reasoning")
                     if thinking:
                         guard.mark_payload()
+                        thinking = think_join.feed(thinking)
+                    if thinking:
                         reasoning_parts.append(thinking)
                         # ThinkDelta: hidden by default behind the "✶ thinking…"
                         # indicator; /thinking on reveals it dimmed. The flow
@@ -626,6 +984,8 @@ class LLMClient:
                     chunk = delta.get("content")
                     if chunk:
                         guard.mark_payload()
+                        chunk = speech_join.feed(chunk)
+                    if chunk:
                         if flow == "think":
                             yield ThinkDelta("\n")
                         flow = "speech"
@@ -646,6 +1006,16 @@ class LLMClient:
             _log.error("%s (model=%s)", e, self.cfg.model)
             yield Notice("stall", f"⚠ {e}")
             raise RuntimeError(str(e)) from None
+        # A stream ending on a held-back high surrogate: release it scrubbed so
+        # nothing un-sanitized is lost from the accumulated turn.
+        leftover = think_join.flush()
+        if leftover:
+            reasoning_parts.append(leftover)
+            yield ThinkDelta(leftover)
+        leftover = speech_join.flush()
+        if leftover:
+            text_out.append(leftover)
+            yield TextDelta(leftover, channel)
         tool_calls: list[dict[str, Any]] = []
         for idx in sorted(acc):
             s = acc[idx]
@@ -653,7 +1023,13 @@ class LLMClient:
                 tool_calls.append({
                     "id": s["id"] or f"call_{idx}",
                     "type": "function",
-                    "function": {"name": s["name"], "arguments": s["args"] or "{}"},
+                    # Scrub surrogates (audit #7 — args are replayed into later
+                    # requests and json.dumps'd by adapters), then repair at
+                    # stream end (audit #2): trailing commas, unclosed braces,
+                    # raw control chars — fixable args must not become a
+                    # missing-args error, and only clean args enter history.
+                    "function": {"name": s["name"],
+                                 "arguments": _repair_tool_args(_scrub_surrogates(s["args"]), s["name"])},
                 })
         return tool_calls, "".join(reasoning_parts), finish_reason
 

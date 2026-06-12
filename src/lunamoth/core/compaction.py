@@ -191,14 +191,67 @@ def _budget(ctx: ContextBuffer) -> int:
     return max(0, ctx.max_tokens - ctx.trim_buffer_tokens)
 
 
+def _window_tokens(ctx: ContextBuffer, llm) -> int:
+    """Window size for the compaction trigger (audit #8, hermes
+    context_compressor): prefer the provider's REAL prompt_tokens from the
+    most recent stream over the char heuristic. The real number sees the whole
+    request (stable prefix, tool schemas, volatile tail) and is exact on
+    CJK-heavy text; the heuristic sees only the history and drifts both ways
+    (thrash or overflow).
+
+    Plausibility gate: trust the real number only while the live history is a
+    substantial share of the request it measured (heur·4 ≥ real). The same
+    client survives /reset and make_session — without the gate, stale usage
+    from a window that no longer exists would drive compaction of a
+    near-empty buffer."""
+    heur = ctx.token_count()
+    if not getattr(llm, "usage_fresh", False):
+        return heur
+    real = int(getattr(llm, "last_prompt_tokens", 0) or 0)
+    if real > 0 and heur * 4 >= real:
+        return real
+    return heur
+
+
 def should_compact(ctx: ContextBuffer, llm) -> bool:
     budget = _budget(ctx)
     if not (llm and llm.is_live()) or budget <= 0:
         return False
-    tokens = ctx.token_count()
+    tokens = _window_tokens(ctx, llm)
     if tokens < THRESHOLD_RATIO * budget:
         return False
     return _guard(ctx).allows(tokens)
+
+
+def _align_tail_cut(msgs: list[dict], cut: int) -> int:
+    """The tail must not OPEN with orphaned tool results (audit #11, hermes
+    _align_boundary_backward): render() silently drops a role:"tool" message
+    whose declaring assistant got summarized away — the freshest work would
+    vanish from the API view. Pull the cut back to the assistant that made the
+    calls so the whole group stays verbatim. If there is no parent in the
+    window (already orphaned), push forward instead so the orphans fold into
+    the summary rather than stranding at the tail head."""
+    if cut < len(msgs) and msgs[cut].get("role") == "tool":
+        j = cut - 1
+        while j >= 0 and msgs[j].get("role") == "tool":
+            j -= 1
+        if j >= 0 and msgs[j].get("role") == "assistant" and msgs[j].get("tool_calls"):
+            return j
+        while cut < len(msgs) and msgs[cut].get("role") == "tool":
+            cut += 1
+    return cut
+
+
+def _anchor_last_user(msgs: list[dict], cut: int) -> int:
+    """Keep the operator's most recent user message OUT of the summary (audit
+    #11, hermes _ensure_last_user_message_in_tail, scar #10896): a summarized
+    active request effectively disappears — the model stalls on it, repeats
+    finished work, or drops it. A user message is itself a clean boundary (no
+    tool-pair splitting risk), so anchoring is a plain pull-back."""
+    for i in range(len(msgs) - 1, -1, -1):
+        if msgs[i].get("role") == "user":
+            return min(cut, i)
+    return cut
 
 
 def compact(ctx: ContextBuffer, lang: str, llm, *, force: bool = False) -> bool:
@@ -218,9 +271,13 @@ def compact(ctx: ContextBuffer, lang: str, llm, *, force: bool = False) -> bool:
     if force:
         guard.cooldown_until = 0.0
     else:
-        if tokens_before < THRESHOLD_RATIO * budget:
+        # Trigger on real usage when fresh (audit #8); the shrink measurement
+        # below stays on the heuristic — it is the only measure available for
+        # the just-rewritten window, and before/after must share a scale.
+        trigger_tokens = _window_tokens(ctx, llm)
+        if trigger_tokens < THRESHOLD_RATIO * budget:
             return False
-        if not guard.allows(tokens_before):
+        if not guard.allows(trigger_tokens):
             return False
 
     msgs = ctx.messages
@@ -236,6 +293,10 @@ def compact(ctx: ContextBuffer, lang: str, llm, *, force: bool = False) -> bool:
         if acc >= tail_budget:
             cut = i
             break
+    if cut is not None:
+        # Boundary hygiene (audit #11): the token walk is blind to structure.
+        cut = _align_tail_cut(msgs, cut)
+        cut = _anchor_last_user(msgs, cut)
     if cut is None or cut < 2:   # whole thing fits in the tail → nothing old to fold
         # Over threshold but nothing compactable: without counting this the
         # guard never fires and every turn re-walks a no-op (#40803).
@@ -251,6 +312,9 @@ def compact(ctx: ContextBuffer, lang: str, llm, *, force: bool = False) -> bool:
     summary_msg = {"role": "system", "content": _HEADER[_lang(lang)] + summary, "kind": "summary"}
     tail = [dict(m) for m in msgs[cut:]]
     ctx.messages = [summary_msg] + tail
+    stale = getattr(llm, "mark_usage_stale", None)
+    if callable(stale):
+        stale()  # the captured usage described the pre-compaction window
     tokens_after = ctx.token_count()
     if tokens_before > 0 and (tokens_before - tokens_after) / tokens_before < _MIN_SHRINK:
         guard.record_ineffective(tokens_after)

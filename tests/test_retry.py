@@ -1,4 +1,5 @@
-"""Failure policy: retry 5x at 5s (Claude-Code style), then surface the error.
+"""Failure policy: 5 retries on jittered exponential backoff (audit #5, hermes
+retry_utils), Retry-After honored on 429, then surface the error.
 There is NO fabricated fallback output anywhere — a failed request fails."""
 import urllib.error
 import urllib.request
@@ -69,6 +70,90 @@ def test_permanent_http_error_surfaces_immediately(monkeypatch, no_sleep):
     gen = _client()._connect_with_retry("https://x.test/v1/chat/completions", b"{}", 1)
     with pytest.raises(RuntimeError, match="HTTP 401"):
         _drive(gen)  # no retries for auth errors — surface NOW
+
+
+# ---- jittered backoff + Retry-After (audit #5) ------------------------------------------
+
+
+def test_retry_delay_is_jittered_exponential():
+    from lunamoth.core.llm import _RETRY_MAX_DELAY, _retry_delay
+
+    for attempt in range(1, 8):
+        base = min(5.0 * 2 ** (attempt - 1), _RETRY_MAX_DELAY)
+        for _ in range(20):
+            d = _retry_delay(attempt)
+            assert base <= d <= 1.5 * base  # jitter is U(0, 0.5·delay), additive
+    assert _retry_delay(50) <= 1.5 * _RETRY_MAX_DELAY  # capped, no overflow
+
+
+def test_retry_after_wins_but_is_capped():
+    from lunamoth.core.llm import _retry_delay
+
+    assert _retry_delay(3, retry_after=7.0) == 7.0      # the provider's own schedule — no jitter
+    assert _retry_delay(1, retry_after=9999.0) == 120.0  # hostile header can't wedge the turn
+    d = _retry_delay(2, retry_after=0.0)                 # nonsense value → normal backoff
+    assert 10.0 <= d <= 15.0
+
+
+def test_parse_retry_after_forms():
+    import time as _time
+    from email.utils import formatdate
+
+    from lunamoth.core.llm import _parse_retry_after
+
+    assert _parse_retry_after({"Retry-After": "30"}) == 30.0
+    assert _parse_retry_after({}) is None
+    assert _parse_retry_after(None) is None
+    assert _parse_retry_after({"Retry-After": "soonish"}) is None
+    http_date = formatdate(_time.time() + 60, usegmt=True)
+    delta = _parse_retry_after({"Retry-After": http_date})
+    assert delta is not None and 50 <= delta <= 61
+
+
+def test_429_honors_retry_after_header(monkeypatch):
+    import lunamoth.core.llm as llm_mod
+
+    sleeps = []
+    monkeypatch.setattr(llm_mod.time, "sleep", sleeps.append)
+    calls = {"n": 0}
+
+    class Fake429(urllib.error.HTTPError):
+        def __init__(self):
+            super().__init__("https://x.test", 429, "rate limited", {"Retry-After": "42"}, None)
+
+        def read(self):
+            return b'{"error": "slow down"}'
+
+    def flaky(req, timeout):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise Fake429()
+        return "RESPONSE"
+
+    monkeypatch.setattr(urllib.request, "urlopen", flaky)
+    notices, resp = _drive(_client()._connect_with_retry("https://x.test/v1/chat/completions", b"{}", 1))
+    assert resp == "RESPONSE"
+    assert sleeps == [42.0]  # the provider's schedule, not the computed backoff
+    assert "in 42s" in notices[0].text
+
+
+def test_retry_budget_and_visible_error_unchanged(monkeypatch):
+    # The no-fallback policy holds: exactly 5 retries, then a VISIBLE error.
+    import lunamoth.core.llm as llm_mod
+
+    sleeps = []
+    monkeypatch.setattr(llm_mod.time, "sleep", sleeps.append)
+    monkeypatch.setattr(
+        urllib.request, "urlopen",
+        lambda req, timeout: (_ for _ in ()).throw(urllib.error.URLError("down")),
+    )
+    with pytest.raises(RuntimeError, match="gave up after 5 retries"):
+        _drive(_client()._connect_with_retry("https://x.test/v1/chat/completions", b"{}", 1))
+    assert len(sleeps) == 5
+    # Delays grow exponentially: each within [base, 1.5·base] for base 5,10,20,40,80.
+    for n, d in enumerate(sleeps, start=1):
+        base = min(5.0 * 2 ** (n - 1), 120.0)
+        assert base <= d <= 1.5 * base
 
 
 @pytest.fixture

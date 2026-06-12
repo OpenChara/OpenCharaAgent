@@ -154,6 +154,122 @@ def test_nothing_to_fold_counts_as_ineffective(clock):
     assert _sc(ctx, 1000, llm) is False  # guard engaged after two no-ops
 
 
+# ---- tail boundary respects tool pairs + the last user message (audit #11) --------------
+
+
+def test_tail_never_starts_with_orphaned_tool_results():
+    # The blind token walk lands the cut ON a tool result; render() would then
+    # silently drop it (orphan). The cut must pull back to the parent assistant.
+    ctx = ContextBuffer(max_tokens=10_000_000)
+    _fill(ctx, 20, 500)
+    ctx.add_message({"role": "assistant", "content": "", "tool_calls": [
+        {"id": "c9", "type": "function", "function": {"name": "terminal", "arguments": "{}"}}]})
+    ctx.add_message({"role": "tool", "tool_call_id": "c9", "content": "y" * 8000})
+    ctx.add("user", "and then?")
+    assert _cp(ctx, 4000, FakeLLM(summary="S")) is True
+    msgs = ctx.messages
+    assert msgs[0]["kind"] == "summary"
+    first_tool = next(i for i, m in enumerate(msgs) if m.get("role") == "tool")
+    assert msgs[first_tool - 1].get("tool_calls")  # parent kept with its result
+    rendered = ctx.render()
+    assert any(m.get("tool_call_id") == "c9" for m in rendered)  # nothing dropped
+
+
+def test_parentless_tool_results_fold_into_the_summary():
+    from lunamoth.core.compaction import _align_tail_cut
+
+    msgs = [
+        {"role": "user", "content": "a"},
+        {"role": "tool", "tool_call_id": "x", "content": "r1"},
+        {"role": "tool", "tool_call_id": "y", "content": "r2"},
+        {"role": "user", "content": "b"},
+    ]
+    # No declaring assistant in the window: push forward past the orphans
+    # instead of stranding them at the tail head.
+    assert _align_tail_cut(msgs, 1) == 3
+    # With a parent, pull back to it.
+    msgs[0] = {"role": "assistant", "content": "", "tool_calls": [{"id": "x"}]}
+    assert _align_tail_cut(msgs, 1) == 0
+    # Non-tool boundary: untouched.
+    assert _align_tail_cut(msgs, 3) == 3
+
+
+def test_last_user_message_stays_out_of_the_summary():
+    # Scar #10896: the operator's active request must never be summarized away.
+    ctx = ContextBuffer(max_tokens=10_000_000)
+    _fill(ctx, 20, 500)
+    ctx.add("user", "IMPORTANT: refactor the parser next")
+    ctx.add("assistant", "z" * 8200)  # fat reply puts the token-walk cut AFTER the user msg
+    llm = FakeLLM(summary="S")
+    seen = {}
+    orig = llm.raw_complete
+
+    def capture(messages, max_tokens=1024, timeout=60.0):
+        seen["convo"] = messages[1]["content"]
+        return orig(messages, max_tokens)
+
+    llm.raw_complete = capture
+    assert _cp(ctx, 4000, llm) is True
+    assert "IMPORTANT" not in seen["convo"]  # not summarized
+    assert any(m.get("role") == "user" and "IMPORTANT" in str(m.get("content"))
+               for m in ctx.messages)        # kept verbatim in the tail
+
+
+def test_anchor_refuses_when_only_the_head_remains():
+    # Last user message at index 0/1: anchoring would leave nothing to fold —
+    # compact() bails (counted ineffective) instead of summarizing the request.
+    ctx = ContextBuffer(max_tokens=10_000_000)
+    ctx.add("user", "the one and only ask")
+    ctx.add("assistant", "w" * 9000)
+    ctx.add("assistant", "v" * 9000)
+    ctx.add("assistant", "almost done")
+    llm = FakeLLM(summary="S")
+    assert _cp(ctx, 4000, llm) is False
+    assert llm.calls == 0  # bailed before any summarizer spend
+
+
+# ---- real usage preferred over the char heuristic (audit #8) ----------------------------
+
+
+class FakeUsageLLM(FakeLLM):
+    def __init__(self, prompt_tokens=0, fresh=True, **kw):
+        super().__init__(**kw)
+        self.last_prompt_tokens = prompt_tokens
+        self.usage_fresh = fresh
+
+    def mark_usage_stale(self):
+        self.usage_fresh = False
+
+
+def test_real_usage_triggers_when_heuristic_undercounts():
+    # History heuristic ~1000 tokens (under a 5000-budget threshold of 3750),
+    # but the provider measured the WHOLE request at 3900: compaction fires.
+    ctx = ContextBuffer(max_tokens=10_000_000)
+    _fill(ctx, 8, 500)
+    assert not _sc(ctx, 5000, FakeUsageLLM(prompt_tokens=0))            # heuristic alone: under
+    assert _sc(ctx, 5000, FakeUsageLLM(prompt_tokens=3900))             # real usage: over
+    assert not _sc(ctx, 5000, FakeUsageLLM(prompt_tokens=3900, fresh=False))  # stale → heuristic
+
+
+def test_implausible_real_usage_is_distrusted_after_reset():
+    # The same client survives /reset: usage captured against the OLD window
+    # must not compact a near-empty buffer (heur·4 < real fails the gate).
+    ctx = ContextBuffer(max_tokens=10_000_000)
+    _fill(ctx, 2, 100)  # ~54 tokens of live history
+    assert not _sc(ctx, 5000, FakeUsageLLM(prompt_tokens=3900))
+
+
+def test_compact_marks_usage_stale():
+    ctx = ContextBuffer(max_tokens=10_000_000)
+    _fill(ctx, 40, 500)
+    llm = FakeUsageLLM(prompt_tokens=100_000, summary="TIGHT")
+    assert _cp(ctx, 4000, llm) is True
+    # The captured usage described the pre-compaction window; after the
+    # rewrite the trigger must fall back to the heuristic until a new stream
+    # carries fresh usage.
+    assert llm.usage_fresh is False
+
+
 def test_effective_compaction_resets_the_guard(clock):
     ctx = ContextBuffer(max_tokens=10_000_000)
     _fill(ctx, 40, 500)
