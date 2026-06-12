@@ -230,17 +230,14 @@ into the session's card, key stripped.)
 - **Its own pace**: `patience` (seconds between spontaneous cycles —
   `Settings.patience`, default 600, card hook `extensions.lunamoth.patience`,
   `/patience`; precedence operator > card > default. NEVER reintroduce tiny
-  defaults: a 2 s
-  daemon default once burned a real key's daily limit), `/quiet` (engagement:
+  defaults: a 2 s daemon default once burned a real key's daily limit),
+  `/quiet` (engagement:
   it sets work aside while you talk, resumes after N s of silence), the `rest`
   tool (it chooses its next wake, 1–120min; your message always wakes it —
   but ATTACH never does: entering the room is a presence fact, not a wake). Idle ticks are user messages carrying ONLY a
   wall-clock timestamp (ephemeral, in_context=False — the rules layer
   documents the convention); long silences get one gap note; day-level date
   rides the env facts.
-- (Tempo is RETIRED, owner decision 2026-06-13: a chara's rhythm is `patience`
-  alone. No `/tempo`, no card hook, no scheduling math — old cards declaring
-  `extensions.lunamoth.tempo` still load; the key is ignored.)
 - **Embodiment stance**: `literal` (default) means today's digital-being model;
   `actor` injects a neutral bridge before Rules so tools remain real backstage
   while the fiction stays whole. Precedence is operator override
@@ -258,13 +255,11 @@ into the session's card, key stripped.)
 - Three memory-ish things, distinct: context window (sliding) · transcript
   (SQLite, restore) · durable memory (frozen-snapshot two-store + `memory` tool).
 
-## Roadmap (organized by audience; ordered within each)
+## Roadmap (OPEN work only — shipped things live in the module map and git history)
 
 **A. For OC creators (inspiration → living chara, fast)**
-1. **AI-assisted card creation** — SHIPPED in the desktop deck (cards.draft:
-   prose inspiration → editable card + sanitized SVG avatar + theme color);
-   iterate per `docs/webui-redesign-0612.md` (studio as blur modal, names and
-   user persona on top, editable avatar).
+1. Card studio / deck UX iteration — Track B owns it
+   (`docs/webui-redesign-0612.md` + the owner's issue list).
 2. Card/persona market: `lunamoth-pack.json` + git-repo index (Claude Code
    marketplace model); ST PNG import already works.
 
@@ -272,25 +267,21 @@ into the session's card, key stripped.)
 1. **The neutral prompt curriculum** — iterate rules.py + tool descriptions so
    any worldview and any character can live well: how to use tools, how to
    treat goals, how to spend unattended time — neutral suggestions, never
-   orders. PARTIAL: embodiment shipped as `literal|actor` with a neutral bridge
-   for actor stance; the rest of the curriculum remains open.
-2. (Tempo was shipped, then RETIRED 2026-06-13 — "时间流速" confused even its
-   owner; pacing is `patience` alone.)
-3. **A browse path for curiosity** — charas reading what interests them
+   orders. PARTIAL: embodiment (literal|actor, wake-time). Next: cross-worldview
+   eval cards.
+2. **A browse path for curiosity** — charas reading what interests them
    (today: terminal+`/net on` or an MCP fetch server; consider a bundled
    suggestion or note in the curriculum).
-4. Later: a **GM layer** — scheduled/world events injected through the
+3. Later: a **GM layer** — scheduled/world events injected through the
    existing `stream_event` channel to make charas aware of a living world.
 
 **C. For developers / agent users**
-1. Declarative tool registry (hermes-style `tools/registry.py`, builtin/ split).
-2. Messaging adapters — SHIPPED: WeCom (callback server), personal WeChat
-   over Tencent's OFFICIAL iLink/ClawBot API (QR login, no ban risk, no public
-   callback), QQ as OneBot v11 forward-WS client to user-run NapCat; all
-   say-channel-only behind `messaging.Adapter`, supervised by lunamothd.
-   None live-tested with real credentials yet. NEXT: Telegram (long-poll,
+1. **hermes parity burn-down** (`docs/archive/hermes-parity-audit.md`):
+   8 P1s in flight; then the P2 batches (llm robustness, runner output
+   hygiene, compaction boundaries, tool-loop guardrails, messaging dedup,
+   chara auto-restart). Multi-key management RPC rides this track too.
+2. Declarative tool registry (hermes-style `tools/registry.py`, builtin/ split).
+3. Messaging: live-test WeCom/WeChat/QQ with real credentials (budget a fix
+   round — iLink endpoints shifted once already); then Telegram (long-poll,
    trivial after qq.py).
-3. Remote TUI client over the gateway (`--connect`). Electron shell SHIPPED
-   (apps/desktop: thin spawn-and-load shell, focus-aware say notifications).
-4. hermes leftovers in core/llm.py: stream stall detection, tool-call args
-   repair, parallel tool execution.
+4. Remote TUI client over the gateway (`--connect`).
