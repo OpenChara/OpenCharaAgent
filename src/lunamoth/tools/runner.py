@@ -16,6 +16,9 @@ Three isolation mechanisms (chosen per session, see `sessions.py`):
 
 Permissions (allow_network, writable_paths) are read fresh on every call, so the
 operator can flip them mid-session (TUI `/net on`, `/allow-dir`) without restart.
+
+The jail builders themselves live in `session/isolation.py` (stdlib-only) so the
+supervisor's PTY shell can share them without importing tools/.
 """
 from __future__ import annotations
 
@@ -27,86 +30,19 @@ import time
 from pathlib import Path
 
 from ..obs import get_logger
+from ..session.isolation import (  # noqa: F401 — backend/os_sandbox_available are this module's public API
+    _base_env,
+    _docker,
+    _linux_jail,
+    _macos_jail,
+    backend,
+    os_sandbox_available,
+)
 
 _log = get_logger("runner")
 
 DEFAULT_TIMEOUT = 30
 _OUTPUT_CAP = 12000
-
-# Don't hand the agent our own provider/credentials through the environment.
-_ENV_BLOCKLIST = (
-    "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "ANTHROPIC_API_KEY",
-    "GITHUB_TOKEN", "LLM_PROVIDER",
-)
-
-
-def backend() -> str:
-    """Isolation mechanism for this session (LUNAMOTH_PY_BACKEND: dir|sandbox|docker)."""
-    raw = os.environ.get("LUNAMOTH_PY_BACKEND", os.environ.get("LUNAMOSS_PY_BACKEND", "sandbox")).strip().lower()
-    return "dir" if raw in {"dir", "local"} else raw
-
-
-def os_sandbox_available() -> bool:
-    if sys.platform == "darwin":
-        return bool(shutil.which("sandbox-exec"))
-    if sys.platform == "linux":
-        return bool(shutil.which("bwrap"))
-    return False
-
-
-def _base_env(workspace: Path) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if k not in _ENV_BLOCKLIST}
-    env["TMPDIR"] = str(workspace)  # keep temp files inside the writable jail
-    env.setdefault("PATH", "/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin")
-    return env
-
-
-def _macos_jail(command: str, workspace: Path, allow_network: bool, writable: list[Path]) -> list[str]:
-    writes = "\n".join(f'(allow file-write* (subpath "{p}"))' for p in [workspace, *writable])
-    net = "(allow network*)" if allow_network else "(deny network*)"
-    profile = f'''
-(version 1)
-(deny default)
-(allow process*)
-(allow signal (target self))
-(allow sysctl-read)
-(allow mach-lookup)
-(allow file-read*)
-(allow file-ioctl (literal "/dev/dtracehelper") (literal "/dev/tty"))
-{writes}
-(allow file-write* (literal "/dev/null") (literal "/dev/tty") (literal "/dev/stdout") (literal "/dev/stderr"))
-{net}
-'''
-    return ["sandbox-exec", "-p", profile, "/bin/bash", "-c", command]
-
-
-def _linux_jail(command: str, workspace: Path, allow_network: bool, writable: list[Path]) -> list[str]:
-    ws = str(workspace)
-    cmd = ["bwrap", "--die-with-parent", "--unshare-all"]
-    if allow_network:
-        cmd += ["--share-net", "--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf"]
-    cmd += ["--proc", "/proc", "--dev", "/dev"]
-    for ro in ("/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc", sys.prefix):
-        cmd += ["--ro-bind-try", ro, ro]
-    cmd += ["--bind", ws, ws]
-    for p in writable:
-        cmd += ["--bind", str(p), str(p)]
-    cmd += ["--chdir", ws, "/bin/bash", "-c", command]
-    return cmd
-
-
-def _docker(command: str, workspace: Path, allow_network: bool, image: str, memory_mb: int, cpus: float) -> list[str]:
-    # NOTE: disk isn't hard-capped here — the container is read-only except the
-    # bind-mounted workspace (host disk). A hard quota needs --storage-opt, which
-    # only some drivers accept; we skip it rather than risk failing to launch.
-    return [
-        "docker", "run", "--rm", "-i",
-        "--network", "bridge" if allow_network else "none",
-        "--memory", f"{memory_mb}m", "--cpus", str(cpus), "--pids-limit", "256",
-        "--read-only", "--tmpfs", "/tmp:rw,nosuid,size=256m",
-        "-v", f"{workspace}:/workspace:rw", "-w", "/workspace",
-        image, "sh", "-c", command,
-    ]
 
 
 def run_terminal(
