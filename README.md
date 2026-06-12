@@ -56,7 +56,7 @@ Each unchecked item below is scoped to be independently completable — it lists
 - [x] **Typed event protocol** — the backend streams frozen-dataclass events (`TextDelta`/`ThinkDelta`/`ToolStart`/`ToolEnd`/`Notice`) instead of in-band control characters; each frontend decides rendering (dim machinery, ✶-hidden thinking). `lunamoth run NAME -p "…" --stream-json` emits the same events as JSONL — the wire format for every future client
 - [x] **Frontend/backend separation** — domain packages (`core/ protocol/ content/ tools/ obs/ session/ front/`) with the dependency direction enforced by tests; frontends hold a `CharaHandle` (attach/streams/commands/snapshot) and can't reach deeper; `/commands` live in ONE registry shared by the TUI and the plain terminal. (design absorbed into `CLAUDE.md`)
 - [x] **A life of its own: speak channel, engagement, time sense** — unattended output is the chara's own (`muse` channel); the `speak` tool is how it DECIDES to reach you (the basis for future messaging frontends: Telegram/WeChat deliver only what it speaks). While you're talking it sets its work aside and resumes after `/quiet <seconds>` of silence (default 5 min). It feels real time without polluting context: unattended ticks carry only a wall-clock timestamp (ephemeral), a long silence gets ONE gap note, the date rides the env facts — and it paces itself with the `rest` tool (1–120 min; your message always wakes it)
-- [x] **Chara knobs: tempo + embodiment** — cards can declare a time-flow rate (`extensions.lunamoth.tempo`, with `/tempo` override) and an embodiment stance (`literal` digital being or `actor` with real tools backstage, with `/embodiment` override); existing cards stay literal by default
+- [x] **Chara knobs: patience + tempo + embodiment** — cards can declare base spontaneous-cycle patience (`extensions.lunamoth.patience`, with `/patience` override), a time-flow rate (`extensions.lunamoth.tempo`, with `/tempo` override), and an embodiment stance (`literal` digital being or `actor` with real tools backstage, with `/embodiment` override); existing cards stay literal by default
 - [x] **Three-zone prompt stack & card-first context** — stable prefix / durable history / volatile tail are assembled explicitly for every API call: the prefix stays byte-identical for prompt cache, card PHI is the final post-history system slot, constant world info is stable while keyword lore shallow-scans the recent tail with sticky turns and a 25% budget cap, and compaction summaries persist into the transcript so restarts resume from the checkpoint.
 
 **Compatibility & extensibility**
@@ -77,7 +77,7 @@ Each unchecked item below is scoped to be independently completable — it lists
 <tr><td><b>Composable tool packs</b></td><td>Capability bundles (<code>toolpacks/*.json</code>) declare exactly which tools a character gets. No pack, no powers.</td></tr>
 <tr><td><b>Sandboxed execution</b></td><td>The <code>terminal</code> tool runs shell commands (any language) under a per-session jail — <code>sandbox-exec</code>/<code>bubblewrap</code> by default, Docker for a stronger boundary — with network off until you flip <code>/net on</code>.</td></tr>
 <tr><td><b>Bounded, auditable memory</b></td><td>Durable memory is a token-capped file the character edits through tools, not an unbounded database; every tool call lands in <code>sandbox/logs/audit.jsonl</code>.</td></tr>
-<tr><td><b>Lives on its own</b></td><td>In <code>live</code> mode the character keeps thinking and creating between your messages, paced by <code>patience ÷ tempo</code>; in <code>chat</code> mode it attends to you only. Background charas always live.</td></tr>
+<tr><td><b>Lives on its own</b></td><td>In <code>live</code> mode the character keeps thinking and creating between your messages, paced by its card/settings <code>patience ÷ tempo</code>; in <code>chat</code> mode it attends to you only. A resident <code>lunamothd</code> supervisor owns desktop/background life.</td></tr>
 <tr><td><b>Terminal-first TUI</b></td><td>A single-terminal split interface (display stream + operator console) with themes, gauges, and hot-swappable settings.</td></tr>
 </table>
 
@@ -116,13 +116,16 @@ So `lunamoth` (no args) opens a **roster** (resume-first), not a fresh session: 
 lunamoth                     # the roster: pick a chara to attach, or press n to summon one
 lunamoth ls                  # NAME / CHARACTER / STATUS / ISOLATION / LAST ACTIVE
 lunamoth attach muse         # open a chara (adopts its background loop while you're attached)
-lunamoth start muse          # let a chara live in the background (detached)
+lunamoth start muse          # let a chara live in the background (delegates to lunamothd when running)
 lunamoth start-all           # bring every chara back to life — e.g. after a reboot
 lunamoth stop muse           # send a chara back to sleep
+lunamoth desktop --daemon    # start the resident web/supervisor daemon
+lunamoth daemon status       # list chara/gateway/life states
+lunamoth daemon stop         # stop the resident daemon
 lunamoth new muse --isolation docker
 ```
 
-Attaching a backgrounded chara pauses its daemon so the two don't fight over the workspace, then hands it back to the background when you detach — the chara keeps living. Remote baseline: `ssh yourserver -t lunamoth attach muse` — charas live on the server, your terminal is just a viewport. (A proper gateway for public-IP/VPS access is on the roadmap; activation is already factored behind `SessionMeta.env()`.)
+When `lunamoth desktop --daemon` is running, one resident supervisor (`lunamothd`) owns long-lived chara children and web clients reconnect to them instead of killing/recreating them. The older per-chara `start` path remains as a fallback when no daemon is answering. Attaching a legacy backgrounded chara pauses its daemon so the two don't fight over the workspace, then hands it back to the background when you detach — the chara keeps living. Remote baseline: `ssh yourserver -t lunamoth attach muse` — charas live on the server, your terminal is just a viewport. (A proper gateway for public-IP/VPS access is on the roadmap; activation is already factored behind `SessionMeta.env()`.)
 
 ## Connecting a model
 
@@ -174,11 +177,13 @@ How that command is contained is the isolation level, chosen per session with `l
 ```bash
 lunamoth                  # three-card TUI: character stream / operator console / telemetry
 lunamoth --mode chat      # attach in chat mode (it only replies; default: the chara's setting)
-lunamoth --patience 4     # pause between its spontaneous cycles (live mode)
+lunamoth --patience 4     # dev override for spontaneous-cycle patience; default comes from the chara
 lunamoth --plain          # legacy plain terminal mode
 ```
 
-In-session: `/help`, `/goal`, `/skills`, `/mcp`, `/status`, `/memory`, `/files`, `/mode live|chat`, `/tempo`, `/embodiment`, `/reasoning`, `/net on|off`, `/allow-dir <path>`, `/patience <s>`, `/panel`, `/theme`, `/settings`, `/clear`, `/exit` — verbose output lights up the right-side **spotlight panel** (telemetry / memory / file tree with click-to-preview / operator terminal / help), so the console stays a clean chat log. `! <cmd>` runs YOUR shell command in the chara's sandbox (same jail, output in the panel); `Esc` brings the panel home to telemetry.
+Patience defaults to 600 seconds, can be declared by cards as `extensions.lunamoth.patience`, can be seeded by `LUNAMOTH_PATIENCE`, and is persisted per chara with `/patience <seconds>`. Effective spontaneous pacing is `patience ÷ tempo`; `/quiet` and `rest` are not scaled.
+
+In-session: `/help`, `/goal`, `/skills`, `/mcp`, `/status`, `/memory`, `/files`, `/mode live|chat`, `/tempo`, `/patience`, `/embodiment`, `/reasoning`, `/net on|off`, `/allow-dir <path>`, `/panel`, `/theme`, `/settings`, `/clear`, `/exit` — verbose output lights up the right-side **spotlight panel** (telemetry / memory / file tree with click-to-preview / operator terminal / help), so the console stays a clean chat log. `! <cmd>` runs YOUR shell command in the chara's sandbox (same jail, output in the panel); `Esc` brings the panel home to telemetry.
 
 ## License & acknowledgements
 

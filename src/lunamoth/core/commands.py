@@ -18,6 +18,7 @@ from ..content.knobs import (
     TEMPO_PRESETS,
     embodiment_copy,
     normalize_embodiment,
+    parse_patience,
     parse_tempo,
     tempo_label,
 )
@@ -245,6 +246,33 @@ def _tempo(agent, session, arg: str) -> Reply:
     )
 
 
+def _patience(agent, session, arg: str) -> Reply:
+    want = arg.strip()
+    if want:
+        patience = parse_patience(want)
+        if patience is None:
+            return Reply(False, "usage: /patience <seconds> — base seconds between spontaneous cycles")
+        _persist(agent, patience=patience, patience_override=True)
+        return Reply(
+            True,
+            f"patience = {patience:g}s (persisted — spontaneous cycle pause = patience ÷ tempo)",
+            {"patience": patience},
+        )
+    cur = agent.effective_patience() if hasattr(agent, "effective_patience") else 600.0
+    parsed = parse_patience(getattr(agent.settings, "patience", 600.0))
+    explicit = bool(getattr(agent.settings, "patience_override", False))
+    source = (
+        "operator"
+        if parsed is not None and (explicit or abs(parsed - 600.0) > 1e-9)
+        else "card/default"
+    )
+    return Reply(
+        True,
+        f"patience = {cur:g}s ({source})  (usage: /patience <seconds>)",
+        {"patience": cur},
+    )
+
+
 def _embodiment(agent, session, arg: str) -> Reply:
     want = normalize_embodiment(arg)
     usage = (
@@ -332,6 +360,7 @@ _REGISTRY: dict[str, Command] = dict([
     _cmd("mode", "/mode live|chat", "live: keeps creating while you watch; chat: replies only", _mode),
     _cmd("quiet", "/quiet <seconds>", "silence before it resumes its own work (default 300)", _quiet),
     _cmd("tempo", "/tempo <preset|0.1..10>", "chara time-flow rate (swift/steady/slow/glacial)", _tempo),
+    _cmd("patience", "/patience <seconds>", "base seconds between spontaneous cycles", _patience),
     _cmd("embodiment", "/embodiment literal|actor", "how tools relate to the character's fiction", _embodiment),
     _cmd("thinking", "/thinking on|off", "show the thinking text (default: ✶ indicator only)", _thinking),
     _cmd("reasoning", "/reasoning off|low|medium|high", "reasoning effort (default medium)", _reasoning),

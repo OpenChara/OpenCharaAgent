@@ -106,6 +106,7 @@ class JsonRpcDispatcher:
         self._stream_interrupt = threading.Event()
         self._pending_permissions: dict[str, _PendingPermission] = {}
         self._attached = False
+        self._attach_info = None
         self._closed = False
         self.should_close = False
 
@@ -135,6 +136,8 @@ class JsonRpcDispatcher:
                 result = self._snapshot(params)
             elif method == "permission_reply":
                 result = self._permission_reply(params)
+            elif method == "presence.set":
+                result = self._presence_set(params)
             elif method == "detach":
                 result = self._detach()
             else:
@@ -171,13 +174,21 @@ class JsonRpcDispatcher:
     # ---- method handlers -----------------------------------------------------
 
     def _attach(self, params: dict[str, Any]) -> Any:
-        with self._lock:
-            if self._attached:
-                raise RpcError(-32010, "a client is already attached")
         present = bool(params.get("present", True))
+        with self._lock:
+            already = self._attached
+            info = self._attach_info
+        if already:
+            # Adoption-safe: a second attach to a live session is just presence
+            # bookkeeping and returns the original AttachInfo shape. The
+            # supervisor relies on this when a browser reconnects to a long-lived
+            # child process.
+            self.handle.set_present(present)
+            return info if info is not None else self.handle.attach(present=present)
         info = self.handle.attach(present=present)
         with self._lock:
             self._attached = True
+            self._attach_info = info
         return info
 
     def _send(self, rid: Any, params: dict[str, Any], wants_response: bool) -> None:
@@ -233,6 +244,30 @@ class JsonRpcDispatcher:
             raise RpcError(-32602, "snapshot takes no params")
         return self.handle.snapshot(fresh=True)
 
+
+    def _presence_set(self, params: dict[str, Any]) -> dict[str, bool]:
+        present = params.get("present")
+        if not isinstance(present, bool):
+            raise RpcError(-32602, "presence.set.present must be a boolean")
+        with self._lock:
+            attached = self._attached
+        if present:
+            if attached:
+                self.handle.set_present(True)
+            else:
+                info = self.handle.attach(present=True)
+                with self._lock:
+                    self._attached = True
+                    self._attach_info = info
+            return {"ok": True, "present": True}
+        if attached:
+            # Keep the transport alive, but run the same presence handoff as a
+            # detach so card on_detach hooks are queued once.
+            self.handle.detach()
+        else:
+            self.handle.set_present(False)
+        return {"ok": True, "present": False}
+
     def _permission_reply(self, params: dict[str, Any]) -> dict[str, bool]:
         pid = params.get("id")
         granted = params.get("granted")
@@ -252,6 +287,7 @@ class JsonRpcDispatcher:
         with self._lock:
             was_attached = self._attached
             self._attached = False
+            self._attach_info = None
             self.should_close = True
             self._stream_interrupt.set()
             self._cancel_pending_permissions_locked()

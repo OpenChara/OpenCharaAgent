@@ -1,10 +1,11 @@
-"""Card/user-facing chara knobs: tempo and embodiment.
+"""Card/user-facing chara knobs: tempo, patience and embodiment.
 
 Pure helpers live in content so core, protocol and frontends can agree on the
 same parsing/formatting without importing each other.
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
 TEMPO_PRESETS: dict[str, float] = {
@@ -66,6 +67,32 @@ def parse_tempo(value: Any) -> float | None:
         return None
     if TEMPO_MIN <= tempo <= TEMPO_MAX:
         return tempo
+    return None
+
+
+def parse_patience(value: Any) -> float | None:
+    """Parse a card/command patience value in seconds.
+
+    Accepted values are positive numeric values. Returns None for
+    missing/invalid input. No presets: unlike tempo, patience is ordinary wall
+    seconds at tempo=1.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        patience = float(value)
+    elif isinstance(value, str):
+        raw = value.strip().lower()
+        if not raw:
+            return None
+        try:
+            patience = float(raw)
+        except ValueError:
+            return None
+    else:
+        return None
+    if math.isfinite(patience) and patience > 0:
+        return patience
     return None
 
 

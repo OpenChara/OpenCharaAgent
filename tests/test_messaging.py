@@ -80,6 +80,7 @@ class FakeHandle:
             rest_until=self.rest_until,
             quiet=self.quiet,
             tempo=self.tempo,
+            patience=600.0,
             embodiment="literal",
             context_tokens=0,
             context_max=1,

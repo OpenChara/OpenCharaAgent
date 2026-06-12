@@ -181,8 +181,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--mode', choices=['live', 'chat'], default='',
                         help="interaction mode override (default: the chara's persisted setting)")
     parser.add_argument('--no-think', action='store_true', help=argparse.SUPPRESS)  # pre-rename alias for --mode chat
-    parser.add_argument('--patience', '--cooldown', dest='patience', type=float, default=0.5,
-                        help='pause between spontaneous cycles, in seconds')
+    parser.add_argument('--patience', '--cooldown', dest='patience', type=float, default=None,
+                        help='override pause between spontaneous cycles, in seconds (default: chara setting)')
     parser.add_argument('--no-stream', action='store_true', help='use non-streaming fallback output')
     parser.add_argument('--clean-on-exit', action='store_true', help='wipe the session sandbox on shutdown (default: persist)')
     parser.add_argument('--no-clean-on-exit', action='store_true', help=argparse.SUPPRESS)
@@ -193,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
 
         os.environ['LUNAMOTH_DEBUG'] = '1'  # picked up by setup_logging in the agent
 
-    base_patience = float(args.patience)
+    base_patience = float(args.patience) if args.patience is not None else None
     # Presence: interactive terminal = operator attached; detached daemon
     # (stdin is /dev/null, started by `lunamoth start`) = operator away. The
     # handle does the presence/handoff bookkeeping on attach.
@@ -202,6 +202,8 @@ def main(argv: list[str] | None = None) -> int:
     if interactive:
         handle.set_permission_hook(_stdin_permission_hook)
     info = handle.attach(present=interactive)
+    if base_patience is None:
+        base_patience = float(getattr(handle.snapshot(fresh=True), "patience", 600.0) or 600.0)
     name = info.char_name
     reply_pfx, think_pfx = f"{name}> ", f"{name}~ "
 

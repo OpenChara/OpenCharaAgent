@@ -17,6 +17,9 @@ class DummyHandle:
     def set_permission_hook(self, hook):
         self.permission_hook = hook
 
+    def set_present(self, present: bool):
+        self.attached = bool(present)
+
     def attach(self, present: bool = True):
         self.attached = True
         return AttachInfo(
@@ -60,6 +63,7 @@ class DummyHandle:
             rest_until=0.0,
             quiet=300,
             tempo=1.0,
+            patience=600.0,
             embodiment="literal",
             context_tokens=0,
             context_max=100,
@@ -209,15 +213,25 @@ def test_permission_ask_then_reply_granted():
     assert any(f.get("method") == "event" and f["params"]["text"] == "granted" for f in frames)
 
 
-def test_second_attach_rejected_until_detach():
-    dispatch, _frames = make_dispatcher()
-    ok = dispatch.dispatch({"jsonrpc": "2.0", "id": 1, "method": "attach", "params": {}})
+def test_second_attach_is_adoption_safe_presence_update():
+    handle = DummyHandle()
+    dispatch, _frames = make_dispatcher(handle)
+    ok = dispatch.dispatch({"jsonrpc": "2.0", "id": 1, "method": "attach", "params": {"present": True}})
     assert "result" in ok
-    bad = dispatch.dispatch({"jsonrpc": "2.0", "id": 2, "method": "attach", "params": {}})
-    assert bad["error"]["code"] == -32010
+    again = dispatch.dispatch({"jsonrpc": "2.0", "id": 2, "method": "attach", "params": {"present": True}})
+    assert again["result"] == ok["result"]
     dispatch.dispatch({"jsonrpc": "2.0", "id": 3, "method": "detach", "params": {}})
     ok2 = dispatch.dispatch({"jsonrpc": "2.0", "id": 4, "method": "attach", "params": {}})
     assert "result" in ok2
+
+
+def test_presence_set_is_idempotent():
+    handle = DummyHandle()
+    dispatch, _frames = make_dispatcher(handle)
+    resp = dispatch.dispatch({"jsonrpc": "2.0", "id": 1, "method": "presence.set", "params": {"present": True}})
+    assert resp["result"] == {"ok": True, "present": True}
+    resp = dispatch.dispatch({"jsonrpc": "2.0", "id": 2, "method": "presence.set", "params": {"present": False}})
+    assert resp["result"] == {"ok": True, "present": False}
 
 
 def test_ws_auth_query_and_first_message():

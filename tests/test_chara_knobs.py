@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from lunamoth.content.knobs import parse_tempo
+from lunamoth.content.knobs import parse_patience, parse_tempo
 from lunamoth.session.settings import Settings
 
 
@@ -112,6 +112,52 @@ def test_snapshot_tempo_drives_effective_interval(agent_factory, tmp_path):
     assert until > until_before  # tempo does not shorten the rest tool's explicit decision
 
 
+def test_patience_parses_positive_numerics_only():
+    assert parse_patience("600") == 600.0
+    assert parse_patience("2.5") == 2.5
+    assert parse_patience(90) == 90.0
+    assert parse_patience(0) is None
+    assert parse_patience(-1) is None
+    assert parse_patience("garbage") is None
+
+
+def test_card_patience_precedence_and_command_persists(agent_factory, tmp_path):
+    from lunamoth.core import commands
+
+    card = _write_card(tmp_path / "patience.json", {"toolpack": "sandbox", "patience": "42"})
+    a = agent_factory(card=card)
+    s = a.make_session()
+    assert a.effective_patience() == 42.0
+
+    shown = commands.execute(a, s, "/patience")
+    assert shown.ok and shown.data == {"patience": 42.0}
+
+    reply = commands.execute(a, s, "/patience 15.5")
+    assert reply.ok and reply.data == {"patience": 15.5}
+    assert a.settings.patience == 15.5
+    assert a.effective_patience() == 15.5  # operator setting > card
+
+    reply = commands.execute(a, s, "/patience 600")
+    assert reply.ok and reply.data == {"patience": 600.0}
+    assert a.effective_patience() == 600.0  # explicit operator 600 still beats card
+
+    reply = commands.execute(a, s, "/patience 0")
+    assert not reply.ok and "usage: /patience" in reply.text
+    reply = commands.execute(a, s, "/patience nonsense")
+    assert not reply.ok and "usage: /patience" in reply.text
+
+
+def test_snapshot_reports_effective_patience(agent_factory, tmp_path):
+    from lunamoth.protocol.api import CharaHandle
+
+    card = _write_card(tmp_path / "patience-snap.json", {"toolpack": "sandbox", "patience": 123.0})
+    a = agent_factory(card=card)
+    handle = CharaHandle(agent=a)
+    handle.attach(present=False)
+    snap = handle.snapshot(fresh=True)
+    assert snap.patience == 123.0
+
+
 def test_embodiment_actor_bridge_order_override_macros_and_tool_gate(agent_factory, tmp_path):
     card = _write_card(tmp_path / "actor.json", {
         "toolpack": "sandbox",
@@ -181,3 +227,26 @@ def test_embodiment_command_persists_and_explains(agent_factory, monkeypatch):
 
     bad = commands.execute(a, s, "/embodiment puppet")
     assert not bad.ok and "usage: /embodiment literal|actor" in bad.text
+
+
+def test_hub_daemon_launch_does_not_hardcode_tiny_patience(monkeypatch, tmp_path):
+    from lunamoth.server import hub as H
+    from lunamoth.session import sessions as S
+
+    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home-daemon"))
+    meta = S.create_session("no-tiny")
+    meta.config_path.write_text(json.dumps({"provider": "mock", "character_path": ""}), encoding="utf-8")
+    calls = []
+
+    class Proc:
+        pid = 4242
+
+    def fake_popen(argv, **kwargs):
+        calls.append(argv)
+        return Proc()
+
+    monkeypatch.setattr(H.subprocess, "Popen", fake_popen)
+    assert H.start_daemon(meta) is True
+    assert calls
+    assert "--patience" not in calls[0]
+    assert "2.0" not in calls[0]

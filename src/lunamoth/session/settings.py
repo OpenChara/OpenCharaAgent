@@ -80,6 +80,12 @@ class Settings:
     # Chara time-flow rate. 0 means unset: respect the card's tempo, then 1.0.
     # This scales only spontaneous-cycle pacing, never quiet/rest.
     tempo: float = 0.0
+    # Base seconds between spontaneous cycles at tempo=1. Card defaults may
+    # supply this; operator commands/env/config persist an override.
+    patience: float = 600.0
+    # Internal source bit: distinguishes the default 600 from an operator
+    # intentionally setting 600, so card defaults can still win when unset.
+    patience_override: bool = False
     # Embodiment stance override. Empty means respect the card, then literal.
     # literal = tools are the chara's own hands; actor = tools are backstage.
     embodiment_override: str = ""
@@ -148,6 +154,7 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "mode": ("LUNAMOTH_MODE", "LUNAMOTH_PRESENCE"),
     "reasoning": ("LLM_REASONING",),
     "tempo": ("LUNAMOTH_TEMPO",),
+    "patience": ("LUNAMOTH_PATIENCE",),
     "embodiment_override": ("LUNAMOTH_EMBODIMENT",),
 }
 
@@ -159,7 +166,7 @@ _FIELD_TYPES = {f.name: f.type for f in fields(Settings)}
 def _coerce(name: str, raw: Any) -> Any:
     if name == "temperature":
         return float(raw)
-    if name == "tempo":
+    if name in {"tempo", "patience"}:
         return float(raw)
     if name in _INT_FIELDS:
         return int(raw)
@@ -172,7 +179,7 @@ def _coerce(name: str, raw: Any) -> Any:
     if name == "reasoning":
         v = str(raw).strip().lower()
         return v if v in {"off", "low", "medium", "high"} else "medium"
-    if name == "show_thinking":
+    if name in {"show_thinking", "patience_override"}:
         return str(raw).strip().lower() in {"1", "true", "yes", "on"}
     if name == "embodiment_override":
         v = str(raw).strip().lower()
@@ -188,6 +195,8 @@ def load_settings() -> Settings:
             if os.environ.get(env_name):
                 try:
                     data[field_name] = _coerce(field_name, os.environ[env_name])
+                    if field_name == "patience":
+                        data["patience_override"] = True
                     break
                 except (TypeError, ValueError):
                     pass
@@ -202,6 +211,10 @@ def load_settings() -> Settings:
                 if k in _FIELD_TYPES and v is not None:
                     try:
                         data[k] = _coerce(k, v)
+                        if k == "patience" and "patience_override" not in file_data:
+                            parsed = float(data[k])
+                            if parsed > 0 and abs(parsed - 600.0) > 1e-9:
+                                data["patience_override"] = True
                     except (TypeError, ValueError):
                         pass
         except (json.JSONDecodeError, OSError):

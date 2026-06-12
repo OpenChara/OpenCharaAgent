@@ -28,7 +28,7 @@ from textual.widgets import (
     ContentSwitcher, DirectoryTree, Footer, Header, Input, RichLog, Static,
 )
 
-from ...content.knobs import tempo_label
+from ...content.knobs import parse_patience, tempo_label
 from ...content.themes import load_theme
 from ...obs import broker, get_logger
 from ...presence import normalize_mode
@@ -42,7 +42,7 @@ _log = get_logger("tui")
 
 # Frontend-only commands; backend ones are appended from the registry at boot.
 _FRONT_COMMANDS = [
-    "/help", "/panel", "/theme", "/patience", "/settings", "/clear", "/exit",
+    "/help", "/panel", "/theme", "/settings", "/clear", "/exit",
     "/mode live", "/mode chat", "/thinking on", "/thinking off", "/net on", "/net off",
 ]
 
@@ -208,13 +208,12 @@ class LunaMothTUI(App):
     # stream runs (replies always show as "talking"; idle shows "waiting").
     ACTIVITIES = ("working", "thinking", "musing", "tinkering", "dreaming")
 
-    def __init__(self, patience: float = 2.0, clean_on_exit: bool = False, mode_override: str = ""):
+    def __init__(self, patience: float | None = None, clean_on_exit: bool = False, mode_override: str = ""):
         super().__init__()
-        # `patience` = how long the chara waits after a turn before its next
-        # spontaneous cycle at tempo=1 (live mode). Tempo belongs to the chara
-        # and scales this base pause: effective pause = base_patience / tempo.
-        self.base_patience = patience
-        self.patience = patience  # legacy alias used by tests/old UI code
+        # `patience` = optional dev override for the base pause. When absent,
+        # the chara's effective setting/card hook supplies the value. Tempo
+        # scales this base pause: effective pause = base_patience / tempo.
+        self._patience_override = patience is not None
         self.clean_on_exit = clean_on_exit
         self.settings = load_settings()
         # Interaction mode (live = it keeps living while you watch; chat = it
@@ -222,7 +221,10 @@ class LunaMothTUI(App):
         self.mode = normalize_mode(mode_override or self.settings.mode)
         self.skin = load_theme(self.settings.tui_theme_path)
         self.handle = CharaHandle(self.settings)
-        self.char_name = self.handle.snapshot().char_name
+        snap0 = self.handle.snapshot()
+        self.char_name = snap0.char_name
+        self.base_patience = float(patience) if patience is not None else float(getattr(snap0, "patience", 600.0) or 600.0)
+        self.patience = self.base_patience  # legacy alias used by tests/old UI code
         self.slash_commands = sorted(set(
             _FRONT_COMMANDS + [f"/{c.name}" for c in self.handle.commands()]
         ))
@@ -846,7 +848,12 @@ class LunaMothTUI(App):
         if "show_thinking" in data:
             self.show_thinking = bool(data["show_thinking"])
         self.settings = self.handle.settings  # stay in sync with persisted state
-        if "tempo" in data:
+        if "patience" in data and not self._patience_override:
+            parsed = parse_patience(data.get("patience"))
+            if parsed is not None:
+                self.base_patience = parsed
+                self.patience = parsed
+        if "tempo" in data or "patience" in data:
             self.next_spont_at = time.monotonic() + self._cycle_pause()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -901,20 +908,6 @@ class LunaMothTUI(App):
         if low in {"/clear", "/cls"}:
             await self.action_clear_display()
             return
-        if low.startswith(("/patience", "/cooldown")):
-            parts = text.split(maxsplit=1)
-            if len(parts) == 2:
-                try:
-                    self.base_patience = max(0.0, float(parts[1]))
-                    self.patience = self.base_patience
-                    self._console(f"patience = {self.base_patience:.2f}s", "grey50")
-                    self.next_spont_at = time.monotonic() + self._cycle_pause()
-                    self._update_status()
-                except ValueError:
-                    self._console("bad patience value", "red")
-            else:
-                self._console(f"patience = {self.base_patience:.2f}s (usage: /patience <sec>)", "grey50")
-            return
         if low.startswith("/theme"):
             self._cmd_theme(text)
             return
@@ -965,7 +958,6 @@ class LunaMothTUI(App):
             "          (same jail; output shows here)",
             "Esc       panel back to telemetry",
             "/panel <view>  switch this panel by hand",
-            "/patience <sec>   pause between its cycles",
             "/theme [name]     TUI skin",
             "/settings  config   /clear  top pane   /exit",
             "",
@@ -1084,7 +1076,7 @@ class LunaMothTUI(App):
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="LunaMoth single-terminal TUI")
     # `patience` = pause between spontaneous cycles; --cooldown kept as an alias.
-    parser.add_argument("--patience", "--cooldown", dest="patience", type=float, default=2.0)
+    parser.add_argument("--patience", "--cooldown", dest="patience", type=float, default=None)
     # Interaction mode (default: the chara's persisted setting). --forever/--think
     # and --no-think kept as pre-rename aliases for live/chat.
     parser.add_argument("--mode", choices=["live", "chat"], default="")

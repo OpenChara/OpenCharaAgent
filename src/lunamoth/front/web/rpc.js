@@ -46,8 +46,8 @@ class RpcSocket {
   _onFrame(raw) {
     let frame;
     try { frame = JSON.parse(raw); } catch (e) { return; }
-    if (frame.method) { // notification (event / hello / permission_ask)
-      if (this.onEvent) this.onEvent(frame.method, frame.params || {});
+    if (frame.method) { // notification (event / hello / permission_ask / life.state)
+      if (this.onEvent) this.onEvent(frame.method, frame.params || {}, frame);
       return;
     }
     const p = this.pending.get(frame.id);
@@ -136,17 +136,38 @@ class CharaClient {
     this.sock = new RpcSocket(`/chara/${encodeURIComponent(name)}`);
     this.onProtocolEvent = null; // (ev) protocol event dicts
     this.onPermissionAsk = null; // ({id, kind, reason, detail, wait_seconds})
+    this.onLifeState = null;    // supervisor life.state
+    this.onRejoinGap = null;    // () => fresh attach
     this.onClose = null;
     this.streaming = false;
-    this.sock.onEvent = (method, params) => {
+    this.lastSeq = Number(localStorage.getItem(`lm-last-seq:${name}`) || 0) || 0;
+    this.rejoinGap = false;
+    this.sock.onEvent = (method, params, frame) => {
+      if (frame && Number.isFinite(Number(frame.seq))) {
+        this.lastSeq = Math.max(this.lastSeq, Number(frame.seq));
+        try { localStorage.setItem(`lm-last-seq:${this.name}`, String(this.lastSeq)); } catch (e) { /* private */ }
+      }
       if (method === "event" && this.onProtocolEvent) this.onProtocolEvent(params);
       else if (method === "permission_ask" && this.onPermissionAsk) this.onPermissionAsk(params);
+      else if (method === "life.state" && this.onLifeState) this.onLifeState(params);
+      else if (method === "rejoin.gap") {
+        this.rejoinGap = true;
+        if (this.onRejoinGap) this.onRejoinGap();
+      }
     };
   }
 
   async connect() {
     await this.sock.connect();
+    this.rejoinGap = false;
     this.sock.onClose = (ev) => { if (this.onClose) this.onClose(ev); };
+    this.sock.notify("rejoin", { last_seq: this.lastSeq });
+  }
+
+  clearRejoin() {
+    this.lastSeq = 0;
+    this.rejoinGap = false;
+    try { localStorage.removeItem(`lm-last-seq:${this.name}`); } catch (e) { /* private */ }
   }
 
   attach() { return this.sock.call("attach", { present: true }, 120000); }

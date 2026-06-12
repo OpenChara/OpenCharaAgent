@@ -208,12 +208,27 @@ function sessionsSorted() {
 function statusOf(s) {
   // one line per card, exception first (design §3.2)
   if (s.status === "new") return { dot: "off", line: t("st-new"), cls: "" };
+  if (s.status === "crashed") return { dot: "err", line: s.error || "crashed", cls: "err" };
   if (s.error && (s.error_kind === "auth" || (s.status !== "attached" && s.status !== "running")))
     return { dot: "err", line: t("st-error"), cls: "err" };
   if (s.status === "idle") return { dot: "off", line: `${t("st-offline")} · ${timeAgo(s.last_active)}`, cls: "" };
   if (s.preview && s.preview.awaiting)
     return { dot: "live", line: s.preview.text, cls: "msg" };
+  if (s.life && s.life.state) return { dot: "live", line: lifeText(s.life), cls: "" };
   return { dot: "live", line: t("st-idle-live"), cls: "" };
+}
+
+function lifeText(life) {
+  if (!life) return "";
+  const now = Date.now() / 1000;
+  if (life.state === "working") return t("life-working");
+  if (life.state === "waiting") return t("life-waiting");
+  if (life.state === "resting") return `${t("life-resting")} · ${timeAgo(life.rest_until)}`;
+  if (life.state === "backoff") return `${t("life-backoff")} · ${life.detail || ""}`;
+  if (life.state === "idle_countdown" && life.next_cycle_at) {
+    return `${t("life-countdown")} · ${durationText(Math.max(0, life.next_cycle_at - now))}`;
+  }
+  return t("st-idle-live");
 }
 
 function isoGlyph(iso) {
@@ -300,7 +315,9 @@ function renderBoard() {
           if (!speaks.length) return null;
           return el("div", { class: "speak-feed" },
             ...speaks.slice(0, 3).map((sp) => el("div", { class: "speak-item" },
-              el("div", { class: "speak-top" }, superBadge("mini"), el("time", null, timeAgo(sp.ts))),
+              el("div", { class: "speak-top" }, superBadge("mini"),
+                s.superchat_unread ? el("span", { class: "chip" }, String(s.superchat_unread)) : null,
+                el("time", null, timeAgo(sp.ts))),
               el("div", { class: "speak-text" }, sp.text || ""))));
         })(),
         el("div", { class: "meta-line" },
@@ -893,7 +910,8 @@ class ChatController {
     this.pendingSuper = false;
     this.turnThink = null;
     this.work = { active: false, phase: "idle", thinkTokens: 0, toolName: "" };
-    this.idleTimer = null;
+    this.life = null;
+    this.lifeTimer = null;
     this.snapTimer = null;
     this.drawerLoaded = {};
     try {
@@ -921,6 +939,11 @@ class ChatController {
       await this.client.connect();
       this.client.onProtocolEvent = (ev) => this.onEvent(ev);
       this.client.onPermissionAsk = (p) => this.onPermission(p);
+      this.client.onLifeState = (p) => this.onLifeState(p);
+      this.client.onRejoinGap = () => {
+        this.client.clearRejoin();
+        $("stream-inner").innerHTML = "";
+      };
       this.client.onClose = (ev) => {
         if (!this.disposed) {
           this.note((ev && ev.reason) || t("conn-lost"));
@@ -943,7 +966,6 @@ class ChatController {
       this.snapTimer = setInterval(() => { if (!document.hidden) this.refreshSnapshot(); }, 6000);
       if (this.opts.netOn) await this.command("/net on", true);
       await this.handleOpening(info);
-      this.scheduleIdle();
     } catch (e) {
       if (!this.disposed) this.note(e.message);
     }
@@ -951,7 +973,7 @@ class ChatController {
 
   dispose() {
     this.disposed = true;
-    clearTimeout(this.idleTimer);
+    clearInterval(this.lifeTimer);
     clearInterval(this.snapTimer);
     const c = this.client;
     (async () => {
@@ -1000,7 +1022,7 @@ class ChatController {
           this.closeCurrent();
         }
         for (const speak of speakTextsFromMessage(m)) {
-          this.appendCharText(speak, { superChat: true });
+          this.appendCharText(speak, { superChat: true, ts: m.ts || Date.now() / 1000 });
           this.closeCurrent();
         }
       }
@@ -1037,6 +1059,7 @@ class ChatController {
 
   appendCharText(text, opts) {
     const kind = opts && opts.superChat ? "super" : "say";
+    const ts = opts && opts.ts ? Number(opts.ts) : Date.now() / 1000;
     if (this.cur.kind !== kind) {
       this.closeCurrent();
       this.breakToolGroup();
@@ -1047,12 +1070,24 @@ class ChatController {
         el("div", { class: "avatar-s " + paletteClass(this.charName), style: "font-size:12px" }, glyphOf(this.charName)),
         el("div", { class: "body" },
           nameLine,
-          textDiv));
+          textDiv,
+          kind === "super" ? el("div", { class: "read-mark" }, "") : null));
+      if (kind === "super") node.dataset.speakTs = String(ts);
       $("stream-inner").appendChild(node);
       this.cur = { kind, node, textNode: textDiv, raw: "" };
     }
     this.cur.raw = (this.cur.raw || "") + text;
     this.cur.textNode.textContent = this.cur.raw;
+    if (kind === "super") this.markSuperRead(this.cur.node, ts);
+  }
+
+  markSuperRead(node, ts) {
+    if (!node || document.visibilityState !== "visible") return;
+    const mark = node.querySelector(".read-mark");
+    if (mark && mark.textContent) return;
+    hub.call("superchat.read", { name: this.name, ts: Number(ts) || Date.now() / 1000 }, 10000)
+      .then(() => { if (mark) mark.textContent = "✓"; refreshHub(); })
+      .catch(() => {});
   }
 
   appendMuseText(text) {
@@ -1097,6 +1132,7 @@ class ChatController {
   closeCurrent() {
     if ((this.cur.kind === "say" || this.cur.kind === "super") && this.cur.raw) {
       this.cur.textNode.innerHTML = mdRender(this.cur.raw);
+      if (this.cur.kind === "super") this.markSuperRead(this.cur.node, Number(this.cur.node.dataset.speakTs || 0));
     }
     this.cur = { kind: null, node: null, textNode: null };
   }
@@ -1220,6 +1256,7 @@ class ChatController {
       phase: phase || this.work.phase || "generate",
       thinkTokens: detail && "thinkTokens" in detail ? detail.thinkTokens : (this.work.thinkTokens || 0),
       toolName: detail && "toolName" in detail ? detail.toolName : (this.work.toolName || ""),
+      lifeText: detail && "lifeText" in detail ? detail.lifeText : (this.work.lifeText || ""),
     };
     node.hidden = false;
     node.className = "work-status " + this.work.phase;
@@ -1227,6 +1264,8 @@ class ChatController {
       node.textContent = t("work-thinking", { n: this.work.thinkTokens || 0 });
     } else if (this.work.phase === "tool") {
       node.textContent = t("work-tool", { name: this.work.toolName || "tool" });
+    } else if (this.work.phase === "life") {
+      node.textContent = (detail && detail.lifeText) || this.work.lifeText || t("life-countdown");
     } else {
       node.textContent = t("work-generating");
     }
@@ -1239,7 +1278,7 @@ class ChatController {
     this.breakToolGroup();
     this.pendingSuper = false;
     this.turnThink = null;
-    this.setWorkState(false);
+    if (!(this.life && this.life.state === "working")) this.setWorkState(false);
     // Electron shell: surface what was said while the window wasn't watched.
     if (this.pendingNotify && window.lunamothNative && !document.hasFocus())
       window.lunamothNative.notify(this.charName, this.pendingNotify.trim().slice(0, 200));
@@ -1275,7 +1314,6 @@ class ChatController {
         this.finalize();
         this.setSending(false);
         this.refreshSnapshot();
-        this.scheduleIdle();
       }
     }
   }
@@ -1287,24 +1325,21 @@ class ChatController {
     await this.runStream(() => this.client.send(text));
   }
 
-  /* live mode: keep the chara's own life ticking while you watch — but only
-     outside the engagement window (settings.quiet after your last word) and
-     never while it rests. Same gating contract as front/terminal.py. */
-  scheduleIdle() {
-    clearTimeout(this.idleTimer);
-    if (this.disposed || this.mode !== "live") return;
-    this.idleTimer = setTimeout(async () => {
-      if (this.disposed) return;
-      const quietS = (this.snap && this.snap.quiet) || 300;
-      const engaged = this.lastUserAt && Date.now() < this.lastUserAt + quietS * 1000;
-      const resting = this.snap && this.snap.rest_until * 1000 > Date.now();
-      if (this.client.streaming || !this.client.open || engaged || resting) {
-        this.scheduleIdle();
-        return;
-      }
-      this.idleDivider();
-      await this.runStream(() => this.client.idle());
-    }, 10000);
+  onLifeState(life) {
+    this.life = life || null;
+    this.renderLifeState();
+    if (!this.lifeTimer) this.lifeTimer = setInterval(() => this.renderLifeState(), 1000);
+  }
+
+  renderLifeState() {
+    if (!this.life) return;
+    if (this.life.state === "working") {
+      this.setWorkState(true, "generate");
+      this.setStatusWord(t("life-working"));
+      return;
+    }
+    this.setWorkState(true, "life", { lifeText: lifeText(this.life) });
+    this.setStatusWord(lifeText(this.life));
   }
 
   async command(line, quiet) {
@@ -1533,7 +1568,6 @@ class ChatController {
       this.mode = s.dataset.mode;
       this.renderModeSeg();
       await this.command(`/mode ${this.mode}`, true);
-      this.scheduleIdle();
     };
     $("net-btn").onclick = () => this.command("/net on");
   }

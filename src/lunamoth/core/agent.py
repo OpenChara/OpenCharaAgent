@@ -38,7 +38,7 @@ from ..tools.toolpacks import ToolPack, load_toolpack
 from ..tools.gateway import ToolGateway
 from .transcript import TranscriptStore
 from ..content.worldinfo import Lorebook, apply_macros
-from ..content.knobs import normalize_embodiment, parse_tempo
+from ..content.knobs import normalize_embodiment, parse_patience, parse_tempo
 
 _log = get_logger("agent")
 
@@ -244,6 +244,22 @@ class LunaMothAgent:
             if card is not None:
                 return card
         return 1.0
+
+    def effective_patience(self) -> float:
+        """Base seconds between spontaneous cycles: operator > card > 600."""
+        raw = getattr(self.settings, "patience", 600.0)
+        override = parse_patience(raw)
+        # Settings.patience defaults to 600. The companion source bit preserves
+        # precedence when the operator explicitly sets 600 while letting a card
+        # default win over a bare, untouched Settings() default.
+        explicit = bool(getattr(self.settings, "patience_override", False))
+        if override is not None and (explicit or abs(override - 600.0) > 1e-9):
+            return override
+        if self.character is not None:
+            card = parse_patience(self.character.defaults().get("patience"))
+            if card is not None:
+                return card
+        return override if override is not None else 600.0
 
     def effective_embodiment(self) -> str:
         """Embodiment stance: operator override > card declaration > literal."""

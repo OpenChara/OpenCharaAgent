@@ -843,7 +843,60 @@ def board_error_kind(line: str) -> str:
     return "provider" if line else ""
 
 
-def session_entry(meta: S.SessionMeta) -> dict[str, Any]:
+def _superchat_path(meta: S.SessionMeta) -> Path:
+    return meta.root / "superchat.json"
+
+
+def superchat_read_ts(meta: S.SessionMeta) -> float:
+    try:
+        data = json.loads(_superchat_path(meta).read_text(encoding="utf-8"))
+        return float(data.get("read_ts") or 0.0) if isinstance(data, dict) else 0.0
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return 0.0
+
+
+def set_superchat_read(meta: S.SessionMeta, ts: float) -> dict[str, Any]:
+    cur = superchat_read_ts(meta)
+    want = max(cur, float(ts or 0.0))
+    path = _superchat_path(meta)
+    _atomic_write_json(path, {"read_ts": want}, private=True)
+    return {"read_ts": want, "superchat_unread": superchat_unread(meta)}
+
+
+def superchat_unread(meta: S.SessionMeta) -> int:
+    read_ts = superchat_read_ts(meta)
+    return sum(1 for sp in _transcript_speaks(meta, limit=1000) if float(sp.get("ts") or 0.0) > read_ts)
+
+
+def _gateway_status_from_disk(meta: S.SessionMeta) -> dict[str, Any]:
+    path = meta.root / "messaging.json"
+    platform = ""
+    enabled = False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        enabled = bool(data.get("enabled")) if isinstance(data, dict) else False
+        adapters = data.get("adapters") if isinstance(data, dict) else None
+        if isinstance(adapters, dict):
+            platform = ",".join(sorted(str(k) for k in adapters))
+    except (OSError, json.JSONDecodeError):
+        pass
+    return {"platform": platform, "state": "stopped" if not enabled else "stopped", "detail": "", "pid": 0}
+
+
+def _await_supervisor(supervisor: Any, coro):
+    # Hub handlers run in worker threads; submit coroutines back to the
+    # supervisor's event loop and wait for the JSON-RPC result.
+    import asyncio
+
+    loop = getattr(supervisor, "loop", None)
+    if loop is None:
+        # Unit-test/fake supervisor path.
+        return asyncio.run(coro)
+    fut = asyncio.run_coroutine_threadsafe(coro, loop)
+    return fut.result(timeout=60.0)
+
+
+def session_entry(meta: S.SessionMeta, supervisor: Any | None = None) -> dict[str, Any]:
     cfg = _read_config(meta)
     last_error = _last_error(meta)
     char_path = (cfg.get("character_path") or "").strip()
@@ -854,11 +907,20 @@ def session_entry(meta: S.SessionMeta) -> dict[str, Any]:
             char_name, lang = card.name or Path(char_path).stem, card.language
         except Exception:  # noqa: BLE001
             char_name = Path(char_path).stem
+    life = supervisor.life_state(meta.name) if supervisor is not None else None
+    gateway = supervisor.gateway_status(meta.name) if supervisor is not None else _gateway_status_from_disk(meta)
+    child_status = supervisor.chara_status(meta.name) if supervisor is not None else None
+    status = meta.status()
+    error = last_error
+    if isinstance(child_status, dict) and child_status.get("state") == "crashed":
+        status = "crashed"
+        error = str(child_status.get("detail") or "crashed")
     return {
         "name": meta.name,
         "char_name": char_name,
         "lang": lang,
-        "status": meta.status(),
+        "status": status,
+        "chara": child_status,
         "isolation": meta.isolation,
         "model": cfg.get("model", ""),
         "mode": cfg.get("mode", "live"),
@@ -866,8 +928,11 @@ def session_entry(meta: S.SessionMeta) -> dict[str, Any]:
         "last_active": meta.last_active or meta.created_at,
         "preview": _transcript_preview(meta),
         "speaks": _transcript_speaks(meta),
-        "error": last_error,
-        "error_kind": board_error_kind(last_error),
+        "life": life,
+        "gateway": gateway,
+        "superchat_unread": superchat_unread(meta),
+        "error": error,
+        "error_kind": board_error_kind(error),
     }
 
 
@@ -922,7 +987,7 @@ def wake(card_path: str, name: str = "", isolation: str = "sandbox",
     return session_entry(meta)
 
 
-def start_daemon(meta: S.SessionMeta, patience: float = 2.0) -> bool:
+def start_daemon(meta: S.SessionMeta, patience: float | None = None) -> bool:
     """Spawn the detached background life (mirror of front/cli._start_daemon)."""
     if meta.daemon_pid():
         return True
@@ -931,8 +996,11 @@ def start_daemon(meta: S.SessionMeta, patience: float = 2.0) -> bool:
     env = {**os.environ, **meta.env()}
     env.setdefault("LUNAMOTH_PY_BACKEND", _ISOLATION_TO_BACKEND[meta.isolation])
     log = meta.daemon_log.open("ab")
+    argv = [sys.executable, "-m", "lunamoth.front.terminal"]
+    if patience is not None:
+        argv += ["--patience", str(patience)]
     proc = subprocess.Popen(
-        [sys.executable, "-m", "lunamoth.front.terminal", "--patience", str(patience)],
+        argv,
         stdin=subprocess.DEVNULL, stdout=log, stderr=log,
         start_new_session=True, env=env, cwd=str(ROOT),
     )
@@ -1195,8 +1263,9 @@ class HubDispatcher:
     """Board-level JSON-RPC. All handlers are synchronous and run off the event
     loop (the transport calls dispatch() in a worker thread)."""
 
-    def __init__(self, write: Callable[[dict[str, Any]], object]):
+    def __init__(self, write: Callable[[dict[str, Any]], object], supervisor: Any | None = None):
         self._write = write
+        self.supervisor = supervisor
 
     def dispatch(self, req: Any) -> dict[str, Any] | None:
         normalized = _normalize_request(req)
@@ -1224,7 +1293,7 @@ class HubDispatcher:
     def _handle(self, method: str, p: dict[str, Any]) -> Any:
         if method == "hub.state":
             defaults = load_defaults()
-            sessions = [session_entry(m) for m in S.list_sessions()]
+            sessions = [session_entry(m, self.supervisor) for m in S.list_sessions()]
             return {
                 "version": __version__,
                 "first_run": not desktop_config_path().exists() and not sessions,
@@ -1235,21 +1304,46 @@ class HubDispatcher:
                 "home": str(S.lunamoth_home()),
             }
         if method == "sessions.list":
-            return [session_entry(m) for m in S.list_sessions()]
-        if method == "session.start":
+            return [session_entry(m, self.supervisor) for m in S.list_sessions()]
+        if method in {"session.start", "chara.start"}:
             meta = self._meta(p)
-            if not start_daemon(meta):
+            if self.supervisor is not None:
+                _await_supervisor(self.supervisor, self.supervisor.start_chara(meta.name))
+            elif not start_daemon(meta):
                 raise RpcError(-32033, "chara is not set up yet")
-            return session_entry(meta)
-        if method == "session.stop":
+            return session_entry(meta, self.supervisor)
+        if method in {"session.stop", "chara.stop"}:
             meta = self._meta(p)
-            stop_daemon(meta)
-            return session_entry(meta)
+            if self.supervisor is not None:
+                _await_supervisor(self.supervisor, self.supervisor.stop_chara(meta.name))
+            else:
+                stop_daemon(meta)
+            return session_entry(meta, self.supervisor)
+        if method == "gateway.start":
+            meta = self._meta(p)
+            if self.supervisor is None:
+                raise RpcError(-32060, "gateway supervision requires lunamothd")
+            return _await_supervisor(self.supervisor, self.supervisor.start_gateway(meta.name, persist=True))
+        if method == "gateway.stop":
+            meta = self._meta(p)
+            if self.supervisor is None:
+                raise RpcError(-32060, "gateway supervision requires lunamothd")
+            return _await_supervisor(self.supervisor, self.supervisor.stop_gateway(meta.name, persist=True))
+        if method == "gateway.status":
+            meta = self._meta(p)
+            return self.supervisor.gateway_status(meta.name) if self.supervisor is not None else _gateway_status_from_disk(meta)
+        if method == "superchat.read":
+            meta = self._meta(p)
+            return set_superchat_read(meta, float(p.get("ts") or 0.0))
         if method == "session.delete":
             meta = self._meta(p)
             if p.get("confirm") != meta.name:
                 raise RpcError(-32034, "confirmation text does not match")
-            stop_daemon(meta)
+            if self.supervisor is not None:
+                _await_supervisor(self.supervisor, self.supervisor.stop_chara(meta.name))
+                _await_supervisor(self.supervisor, self.supervisor.stop_gateway(meta.name, persist=False))
+            else:
+                stop_daemon(meta)
             S.delete_session(meta.name)
             return {"ok": True}
         if method == "session.export":

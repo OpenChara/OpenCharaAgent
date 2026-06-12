@@ -213,6 +213,7 @@ button{font:inherit}
   box-shadow:0 0 0 1px rgba(217,147,13,.22),0 8px 26px rgba(217,147,13,.10);
 }
 .char-msg.super-chat .text{font-weight:500}
+.read-mark{font-size:11px;color:var(--text-3);text-align:right;margin-top:4px}
 .muse-msg{
   margin-left:40px; max-width:82%; align-self:flex-start;
   border-left:2px solid rgba(91,159,212,.20); padding:7px 11px;
@@ -309,6 +310,7 @@ body.dark .md-code{background:rgba(255,255,255,.08)}
 }
 .work-status.tool::before{background:var(--amber)}
 .work-status.generate::before{background:var(--accent)}
+.work-status.life::before{background:var(--green)}
 
 .composer{
   max-width:640px; margin:0 auto; display:flex; align-items:flex-end; gap:8px;

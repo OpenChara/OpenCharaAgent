@@ -40,6 +40,49 @@ from ..session import sessions as S
 
 APP_DIR = Path(__file__).resolve().parents[3]  # repo checkout (dev or ~/.lunamoth/app)
 
+
+# ---- resident supervisor discovery ----------------------------------------
+
+def _daemon_info() -> dict:
+    try:
+        from ..server.supervisor import read_daemon_json
+
+        return read_daemon_json()
+    except Exception:
+        return {}
+
+
+def _daemon_rpc(method: str, params: dict | None = None, timeout: float = 10.0) -> dict | None:
+    data = _daemon_info()
+    token = str(data.get("token") or "")
+    port = int(data.get("http_port") or 0)
+    if not token or not port:
+        return None
+    # Avoid importing server/ from front at module import time; daemon helpers are
+    # process-boundary clients using only stdlib HTTP.
+    import urllib.parse
+    import urllib.request
+
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/rpc?token={urllib.parse.quote(token)}",
+        data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            out = json.loads(resp.read().decode("utf-8", errors="replace"))
+    except Exception:
+        return None
+    return out if isinstance(out, dict) else None
+
+
+def _live_daemon_rpc(method: str, params: dict | None = None, timeout: float = 10.0) -> dict | None:
+    resp = _daemon_rpc(method, params, timeout)
+    if resp and "error" not in resp:
+        return resp
+    return None
+
 # session isolation level -> python tool execution backend
 _ISOLATION_TO_BACKEND = {"dir": "local", "sandbox": "sandbox", "docker": "docker"}
 
@@ -55,7 +98,7 @@ def _needs_setup(meta: S.SessionMeta) -> bool:
 
 # ---- background daemon (persistent agents) ---------------------------------
 
-def _start_daemon(meta: S.SessionMeta, patience: float = 2.0) -> bool:
+def _start_daemon(meta: S.SessionMeta, patience: float | None = None) -> bool:
     """Spawn a detached background process where this agent lives on its own.
 
     The agent keeps thinking / creating in its workspace with no terminal
@@ -67,8 +110,11 @@ def _start_daemon(meta: S.SessionMeta, patience: float = 2.0) -> bool:
     env = {**os.environ, **meta.env()}
     env.setdefault("LUNAMOTH_PY_BACKEND", _ISOLATION_TO_BACKEND[meta.isolation])
     log = meta.daemon_log.open("ab")
+    argv = [sys.executable, "-m", "lunamoth.front.terminal"]
+    if patience is not None:
+        argv += ["--patience", str(patience)]
     proc = subprocess.Popen(
-        [sys.executable, "-m", "lunamoth.front.terminal", "--patience", str(patience)],
+        argv,
         stdin=subprocess.DEVNULL, stdout=log, stderr=log,
         start_new_session=True, env=env, cwd=str(APP_DIR),
     )
@@ -111,7 +157,9 @@ def _launch_tui(meta: S.SessionMeta, args: argparse.Namespace) -> int:
         from .wizard import run_wizard
 
         run_wizard()
-    argv = [sys.argv[0], "--patience", str(args.patience)]
+    argv = [sys.argv[0]]
+    if args.patience is not None:
+        argv += ["--patience", str(args.patience)]
     # The interaction mode lives in the chara's own config; pass it down only when
     # the operator overrides it for this attach (--mode, or the legacy --no-forever).
     mode = args.mode or ("chat" if getattr(args, "no_forever", False) else "")
@@ -232,6 +280,10 @@ def cmd_attach(args: argparse.Namespace) -> int:
 def cmd_start(args: argparse.Namespace) -> int:
     if getattr(args, "all", False) or args.name is None:
         _start_all()
+        return 0
+    delegated = _live_daemon_rpc("chara.start", {"name": args.name}, timeout=30.0)
+    if delegated is not None:
+        print(f"{args.name}: running under lunamothd")
         return 0
     meta = S.load_session(args.name)
     if meta is None:
@@ -409,11 +461,8 @@ def cmd_gateway(args: argparse.Namespace) -> int:
 
 
 def cmd_desktop(args: argparse.Namespace) -> int:
-    """The desktop app: hub gateway + web renderer in the default browser.
-
-    The renderer is a protocol client (Hermes Desktop's shape): board-level
-    RPC on /hub, and each open chat pipes to a child `serve <name> --stdio`."""
-    from ..server.desktop import free_port, serve_desktop
+    """The desktop app: resident supervisor + web renderer."""
+    from ..server.desktop import daemonize_desktop, free_port, serve_desktop
 
     if getattr(args, "debug", False):
         os.environ["LUNAMOTH_DEBUG"] = "1"
@@ -421,7 +470,35 @@ def cmd_desktop(args: argparse.Namespace) -> int:
     http_port = args.port or free_port(host)
     ws_port = args.ws_port or free_port(host)
     token = args.token or secrets.token_urlsafe(24)
-    return serve_desktop(host, http_port, ws_port, token, open_browser=not args.no_open)
+    if getattr(args, "daemon", False) and not os.getenv("LUNAMOTH_DAEMON_CHILD"):
+        info = daemonize_desktop(host, http_port, ws_port, token, debug=bool(getattr(args, "debug", False)))
+        print(f"lunamothd pid {info['pid']} · http:{info['http_port']} ws:{info['ws_port']} · {info.get('path', '')}")
+        return 0
+    return serve_desktop(host, http_port, ws_port, token, open_browser=(not args.no_open and not os.getenv("LUNAMOTH_DAEMON_CHILD")))
+
+
+def cmd_daemon(args: argparse.Namespace) -> int:
+    from ..server.supervisor import daemon_status, stop_daemon_process
+
+    if args.action == "stop":
+        print("stopped lunamothd" if stop_daemon_process() else "lunamothd not running")
+        return 0
+    st = daemon_status()
+    if not st.get("alive"):
+        print(f"lunamothd: stopped ({st.get('path')})")
+        return 1
+    print(f"lunamothd: running pid {st.get('pid')} · http:{st.get('http_port')} ws:{st.get('ws_port')}")
+    resp = _live_daemon_rpc("sessions.list", {}, timeout=10.0)
+    if resp and isinstance(resp.get("result"), list):
+        for row in resp["result"]:
+            gw = row.get("gateway") or {}
+            life = row.get("life") or {}
+            print(
+                f"  {row.get('name')}: chara={(row.get('chara') or {}).get('state') or row.get('status')}"
+                f" life={life.get('state') or '-'}"
+                f" gateway={gw.get('state') or '-'} {gw.get('detail') or ''}"
+            )
+    return 0
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
@@ -554,8 +631,8 @@ def _maybe_update_hint() -> None:
 
 
 def _add_tui_flags(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--patience", "--cooldown", dest="patience", type=float, default=2.0,
-                   help="pause between the chara's spontaneous cycles, in seconds")
+    p.add_argument("--patience", "--cooldown", dest="patience", type=float, default=None,
+                   help="override pause between the chara's spontaneous cycles, in seconds")
     p.add_argument("--mode", choices=["live", "chat"], default="",
                    help="override the chara's interaction mode for this attach (live: keeps creating while you watch; chat: only replies)")
     p.add_argument("--no-forever", action="store_true", help=argparse.SUPPRESS)  # pre-rename alias for --mode chat
@@ -589,11 +666,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("start", help="let an agent live in the background; --all for every agent")
     sp.add_argument("name", nargs="?")
     sp.add_argument("--all", action="store_true", help="start every configured agent")
-    sp.add_argument("--patience", "--cooldown", dest="patience", type=float, default=2.0)
+    sp.add_argument("--patience", "--cooldown", dest="patience", type=float, default=None)
     sp.set_defaults(func=cmd_start)
 
     sp = sub.add_parser("start-all", help="start every configured agent in the background (e.g. after a reboot)")
-    sp.add_argument("--patience", "--cooldown", dest="patience", type=float, default=2.0)
+    sp.add_argument("--patience", "--cooldown", dest="patience", type=float, default=None)
     sp.set_defaults(func=lambda a: (_start_all() or 0))
 
     sp = sub.add_parser("stop", help="stop an agent's background loop; --all to stop every agent")
@@ -623,8 +700,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("gateway", help="run one session's configured messaging adapters")
     sp.add_argument("name")
-    sp.add_argument("--patience", "--cooldown", dest="patience", type=float, default=2.0,
-                    help="pause between the chara's spontaneous cycles, in seconds")
+    sp.add_argument("--patience", "--cooldown", dest="patience", type=float, default=None,
+                    help="override pause between the chara's spontaneous cycles, in seconds")
     sp.add_argument("--debug", action="store_true", help="DEBUG-level diagnostics in the chara's sandbox/logs/")
     sp.set_defaults(func=cmd_gateway)
 
@@ -633,8 +710,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--ws-port", type=int, default=0, help="WebSocket port for the gateway (default: auto)")
     sp.add_argument("--token", default="", help="gateway token (auto-generated if omitted)")
     sp.add_argument("--no-open", action="store_true", help="don't open the browser")
+    sp.add_argument("--daemon", action="store_true", help="start lunamothd in the background")
     sp.add_argument("--debug", action="store_true", help="DEBUG-level diagnostics")
     sp.set_defaults(func=cmd_desktop)
+
+    sp = sub.add_parser("daemon", help="manage the resident desktop supervisor")
+    sp.add_argument("action", choices=["stop", "status"])
+    sp.set_defaults(func=cmd_daemon)
 
     sp = sub.add_parser("setup", help="(re)run the setup wizard")
     sp.add_argument("name", nargs="?", default=S.DEFAULT_SESSION)

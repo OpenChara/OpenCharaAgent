@@ -146,11 +146,12 @@ zero internal deps; `obs/` imports only `config`.
 - `server/` — the remote/desktop gateway (imports protocol+session+content, never
   core/tools directly): `dispatch.py` (per-session JSON-RPC over CharaHandle),
   `stdio.py`/`ws.py` (transports for `lunamoth serve <name>`), `hub.py`
-  (board-level RPC: roster/cards/wake/export/defaults/key-test/transcribe; reads
-  session dirs + transcript SQLite directly — one process = one activated session,
-  so the hub NEVER hosts an agent), `desktop.py` (`lunamoth desktop`: static HTTP
-  for front/web + WS routing /hub and /chara/<name>, the latter a byte pipe to a
-  child `serve --stdio` with daemon pause/resume around it).
+  (board-level RPC: roster/cards/wake/export/defaults/key-test/transcribe plus
+  supervisor child/gateway state; reads session dirs + transcript SQLite directly —
+  one process = one activated session, so the hub NEVER hosts an agent),
+  `supervisor.py` (lunamothd: long-lived `serve --stdio` child registry, gateway
+  supervision, seq/rejoin, life.state, idle driving), `desktop.py` (thin
+  foreground/daemon entry for static HTTP + WS routing).
 - `front/` — ALL frontends; the only textual/rich importers:
   - `cli.py` — the `lunamoth` command (roster default; new/ls/attach/start/stop/rm/
     setup/update/doctor/run/serve/desktop; daemon helpers).
