@@ -359,6 +359,79 @@ def test_referenced_card_cannot_be_deleted():
     assert err["code"] == -32032
 
 
+# ---- world import: card.merge_world + upload recognition --------------------------
+
+def _world_book(entries):
+    return {"name": "imported-world", "entries": entries}
+
+
+def _saved_user_card():
+    draft = {"name": "Holder", "appearance": "x", "personality": "", "scenario": "",
+             "first_mes": "hi", "alternate_greetings": [], "world": [],
+             "relationship": "", "goals": [], "rules": "", "toolpack_hint": ""}
+    return result("card.from_draft", {"draft": draft})["path"]
+
+
+def test_card_merge_world_appends_and_dedupes():
+    path = _saved_user_card()
+    world = _world_book([
+        {"keys": ["alpha"], "content": "ALPHA LORE", "constant": True, "insertion_order": 1},
+        {"key": ["beta"], "content": "BETA LORE", "order": 2},  # standalone-world field names
+    ])
+    r = result("card.merge_world", {"card_path": path, "world": world})
+    assert r["added"] == 2 and r["entries"] == 2
+
+    saved = json.loads(Path(path).read_text(encoding="utf-8"))
+    book = saved["data"]["character_book"]
+    assert book["name"] == "imported-world"
+    assert [(e["keys"], e["content"]) for e in book["entries"]] == [
+        (["alpha"], "ALPHA LORE"), (["beta"], "BETA LORE"),
+    ]
+    assert book["entries"][0]["constant"] is True
+    assert book["entries"][1]["insertion_order"] == 2
+
+    # Merging the same book again: identical keys+content are skipped.
+    again = result("card.merge_world", {"card_path": path, "world": world})
+    assert again["added"] == 0 and again["entries"] == 2
+
+    # The merged book round-trips through the normal card loader.
+    card = H.CharacterCard.load(path)
+    assert card.character_book is not None
+    assert [e.content for e in card.character_book.entries] == ["ALPHA LORE", "BETA LORE"]
+
+
+def test_card_merge_world_accepts_an_uploaded_world_path():
+    path = _saved_user_card()
+    up = H.store_upload("lore.json", json.dumps(_world_book([
+        {"keys": ["gamma"], "content": "GAMMA LORE"},
+    ])).encode("utf-8"))
+    assert up["kind"] == "world"
+    r = result("card.merge_world", {"card_path": path, "world": up["path"]})
+    assert r["added"] == 1
+
+
+def test_card_merge_world_refuses_outside_deck_and_bad_input():
+    err = rpc_error("card.merge_world", {"card_path": luna_card_path(),
+                                         "world": _world_book([{"keys": ["x"], "content": "y"}])})
+    assert err["code"] == -32031  # builtin cards are not writable
+    path = _saved_user_card()
+    err = rpc_error("card.merge_world", {"card_path": path, "world": {"no": "entries"}})
+    assert err["code"] == -32602
+
+
+def test_upload_recognizes_world_books_and_cards():
+    world = H.store_upload("w.json", json.dumps(_world_book([{"keys": ["k"], "content": "c"}])).encode("utf-8"))
+    assert world["kind"] == "world"
+    assert Path(world["path"]).parent == H.user_worlds_dir()
+
+    card = H.store_upload("c.json", json.dumps({"data": {"name": "C", "description": "d"}}).encode("utf-8"))
+    assert card["kind"] == "card"
+    assert Path(card["path"]).parent == H.user_cards_dir()
+
+    binary = H.store_upload("c.png", b"\x89PNG fake")
+    assert binary["kind"] == "card"
+
+
 # ---- works & extras --------------------------------------------------------------
 
 def test_works_list_reads_sandbox_tree():

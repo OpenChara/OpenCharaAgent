@@ -32,7 +32,7 @@ from typing import Any, Callable
 
 from .. import __version__
 from ..config import ROOT
-from ..content.cards import CharacterCard, detect_language
+from ..content.cards import CharacterCard, detect_language, looks_like_world_book, merge_world_into_card
 from ..session import sessions as S
 from ..session.settings import PRESETS, Settings
 from .dispatch import RpcError, error_response, ok_response, _normalize_request
@@ -67,7 +67,12 @@ def user_cards_dir() -> Path:
 
 
 def bundled_cards_dir() -> Path:
-    return ROOT / "characters"
+    return ROOT / "cards"
+
+
+def user_worlds_dir() -> Path:
+    """Uploaded standalone world books wait here until merged into a card."""
+    return S.lunamoth_home() / "worlds"
 
 
 # ---- global model defaults -----------------------------------------------------
@@ -565,13 +570,13 @@ def _card_entry(path: Path, builtin: bool, refs: dict[str, list[str]]) -> dict[s
         _log.warning("unreadable card: %s", path, exc_info=True)
         return None
     ext = card.extensions.get("lunamoth", {}) if isinstance(card.extensions, dict) else {}
-    world = ""
+    # The world is the card's embedded book; surface its name for the deck label.
+    world = str(card.character_book.name or "") if card.character_book else ""
     theme_color = ""
     avatar_svg = ""
     tagline = ""
     embodiment = ""
     if isinstance(ext, dict):
-        world = str(ext.get("world") or "")
         theme_color = _clean_theme_color(ext.get("theme_color"))
         avatar_svg = _sanitize_avatar_svg(ext.get("avatar_svg"))[0]
         tagline = str(ext.get("tagline") or "")
@@ -582,7 +587,7 @@ def _card_entry(path: Path, builtin: bool, refs: dict[str, list[str]]) -> dict[s
         "name": card.name or path.stem,
         "lang": card.language,
         "tags": list(card.tags or [])[:4],
-        "world": Path(world).stem if world else "",
+        "world": world,
         "builtin": builtin,
         "draft": bool(isinstance(ext, dict) and ext.get("draft")),
         "frozen": bool(used_by),
@@ -698,6 +703,62 @@ def _safe_extensions_for_ui(extensions: dict[str, Any]) -> dict[str, Any]:
         safe["embodiment"] = ""
     out["lunamoth"] = safe
     return out
+
+
+def merge_world(card_path: str, world: Any) -> dict[str, Any]:
+    """Fold a standalone ST world book into a card's embedded character_book.
+
+    This is the import path now that the card is the ONE file: entries are
+    appended (identical keys+content are skipped) and the card is saved via
+    the normal card-save path, sanitization included. `world` may be a parsed
+    world-book object or a path to a world-book .json.
+    """
+    p = Path(str(card_path or ""))
+    if p.suffix.lower() != ".json":
+        raise RpcError(-32602, "card.merge_world works on .json cards")
+    if isinstance(world, str):
+        wp = Path(world)
+        if user_worlds_dir() not in wp.parents:
+            raise RpcError(-32031, "world paths must live in the uploaded worlds directory")
+        try:
+            world = json.loads(wp.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RpcError(-32035, f"unreadable world book: {exc}") from exc
+    if not isinstance(world, dict) or not world.get("entries"):
+        raise RpcError(-32602, "card.merge_world expects a world book with entries")
+    try:
+        card = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RpcError(-32035, f"unreadable card: {exc}") from exc
+    if not isinstance(card, dict) or not isinstance(card.get("data"), dict):
+        raise RpcError(-32602, "card.merge_world expects a V2/V3 card (with a data block)")
+    added = merge_world_into_card(card, world)
+    saved = save_card(card, path=str(p))  # user-deck-only write + sanitization
+    book = card["data"].get("character_book") or {}
+    return {"path": saved["path"], "added": added, "entries": len(book.get("entries") or [])}
+
+
+def store_upload(name: str, body: bytes) -> dict[str, Any]:
+    """Store an uploaded file: cards go to the user deck; a .json that parses
+    as a standalone world book (entries, no card data) is stored aside and
+    reported as kind="world" so the deck can offer 'merge into card X'."""
+    suffix = Path(name).suffix.lower()
+    kind, base = "card", user_cards_dir()
+    if suffix == ".json":
+        try:
+            obj = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            obj = None
+        if looks_like_world_book(obj):
+            kind, base = "world", user_worlds_dir()
+    base.mkdir(parents=True, exist_ok=True)
+    target = base / Path(name).name
+    n = 2
+    while target.exists():
+        target = base / f"{Path(name).stem}-{n}{suffix}"
+        n += 1
+    target.write_bytes(body)
+    return {"path": str(target), "kind": kind}
 
 
 def delete_card(path: str) -> dict[str, Any]:
@@ -1387,6 +1448,8 @@ class HubDispatcher:
             return save_card(p.get("data"), path=str(p.get("path") or ""))
         if method == "card.delete":
             return delete_card(str(p.get("path") or ""))
+        if method == "card.merge_world":
+            return merge_world(str(p.get("card_path") or p.get("path") or ""), p.get("world"))
         if method == "cards.draft":
             inspiration = str(p.get("inspiration") or "").strip()
             if not inspiration:

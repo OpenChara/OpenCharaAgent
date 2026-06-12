@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .worldinfo import Lorebook, apply_macros
+from .worldinfo import Lorebook, apply_macros, entry_to_book_dict
 
 # CJK Unified Ideographs (U+4E00–U+9FFF) — i.e. "does this text contain Han characters".
 _CJK = re.compile(r"[\u4e00-\u9fff]")
@@ -132,14 +132,15 @@ class CharacterCard:
         return detect_language(self.source_path, sample)
 
     def defaults(self) -> dict[str, Any]:
-        """The card's recommended world / tool pack / limits.
+        """The card's recommended tool pack / limits / life knobs.
 
         Lives in `extensions.lunamoth` (SillyTavern-compatible free-form field):
-            {"world": "worlds/X.json", "toolpack": "sandbox", "memory_chars": 8000,
-             "goals": ["..."]}
-        The context window is NOT here — it's the model's real window (providers.py).
-        Cards that omit this block (e.g. plain SillyTavern imports) just get the
-        global fallbacks — so any imported card Just Works.
+            {"toolpack": "sandbox", "memory_chars": 8000, "goals": ["..."]}
+        The world is NOT here — it lives in the standard `character_book` field
+        (the card is the ONE external file). The context window is NOT here
+        either — it's the model's real window (providers.py). Cards that omit
+        this block (e.g. plain SillyTavern imports) just get the global
+        fallbacks — so any imported card Just Works.
         """
         ext = self.extensions.get("lunamoth")
         if not isinstance(ext, dict):
@@ -174,3 +175,62 @@ class CharacterCard:
         if not self.first_mes.strip():
             return ""
         return apply_macros(self.first_mes.strip(), self.name, user)
+
+
+def _entries_as_list(raw: Any) -> list[dict[str, Any]]:
+    if isinstance(raw, dict):
+        items = list(raw.values())
+    elif isinstance(raw, list):
+        items = list(raw)
+    else:
+        items = []
+    return [e for e in items if isinstance(e, dict)]
+
+
+def _entry_signature(entry: dict[str, Any]) -> tuple[tuple[str, ...], str]:
+    keys = entry.get("keys") or entry.get("key") or []
+    if isinstance(keys, str):
+        keys = [keys]
+    return (tuple(str(k) for k in keys), str(entry.get("content", "")))
+
+
+def merge_world_into_card(card: dict[str, Any], world: dict[str, Any]) -> int:
+    """Fold a parsed standalone world book into a card dict's embedded
+    `character_book` (the ST import path — the card stays the ONE file).
+
+    Entries are appended in normalized V3 shape; an incoming entry whose
+    keys+content match an existing one is skipped. Returns the number of
+    entries added. Mutates `card` in place.
+    """
+    data = card.get("data") if isinstance(card.get("data"), dict) else card
+    book = data.get("character_book")
+    if not isinstance(book, dict):
+        book = {"name": "", "entries": []}
+    existing = _entries_as_list(book.get("entries"))
+    seen = {_entry_signature(e) for e in existing}
+    added = 0
+    next_id = len(existing)
+    for entry in _entries_as_list(world.get("entries")):
+        normalized = entry_to_book_dict(entry, next_id)
+        sig = _entry_signature(normalized)
+        if sig in seen:
+            continue
+        existing.append(normalized)
+        seen.add(sig)
+        next_id += 1
+        added += 1
+    if not str(book.get("name") or "").strip() and world.get("name"):
+        book["name"] = str(world["name"])
+    book["entries"] = existing
+    data["character_book"] = book
+    return added
+
+
+def looks_like_world_book(obj: Any) -> bool:
+    """A standalone ST world book: has `entries`, is not a V2/V3 card."""
+    return (
+        isinstance(obj, dict)
+        and "entries" in obj
+        and not isinstance(obj.get("data"), dict)
+        and not obj.get("spec")
+    )

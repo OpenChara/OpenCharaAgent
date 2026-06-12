@@ -1,10 +1,10 @@
-"""TUI theme cards — presentation only, fully decoupled from persona/world.
+"""TUI theme cards — presentation only, fully decoupled from the persona.
 
 A theme controls the *look* of the console: ASCII banner, colors, window titles
 and a few decorative phrases. It never touches the model, the persona, tools or
 memory. The built-in default is neutral; any character can run under any theme.
-Themes are JSON files under ``themes/`` (discovered next to characters/worlds)
-and the chosen one is persisted in config like the character/world selection.
+The repo ships no theme files — an operator may point ``Settings.tui_theme_path``
+at their own JSON file; otherwise the built-in default theme below is used.
 
 Layout is fixed across themes — only the cosmetic fields below change.
 """

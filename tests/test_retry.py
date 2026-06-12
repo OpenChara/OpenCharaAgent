@@ -80,7 +80,7 @@ def agent(tmp_path, monkeypatch):
 
     def make(**kw):
         kw.setdefault("toolpack", "")
-        return LunaMothAgent(Settings(character_path="", world_path="", **kw))
+        return LunaMothAgent(Settings(character_path="", **kw))
 
     return make
 

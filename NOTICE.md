@@ -2,7 +2,7 @@
 
 LunaMoth is a local-first agentic character tavern/runtime. The runtime source code is licensed under Apache License 2.0; see `LICENSE`.
 
-This repository also bundles example content assets, including SCP-079 / SCP Foundation inspired character cards, world books, and themes. Those SCP-derived assets are external to the runtime architecture and are licensed under Creative Commons Attribution-ShareAlike 3.0 (CC BY-SA 3.0), consistent with the SCP Wiki. See `CONTENT_LICENSE.md` and the license notices inside asset directories.
+This repository also bundles example content assets, including SCP-079 / SCP Foundation inspired character cards (with their embedded world books). Those SCP-derived assets are external to the runtime architecture and are licensed under Creative Commons Attribution-ShareAlike 3.0 (CC BY-SA 3.0), consistent with the SCP Wiki. See `CONTENT_LICENSE.md` and the license notice inside `cards/`.
 
 Attribution for bundled SCP-derived assets:
 

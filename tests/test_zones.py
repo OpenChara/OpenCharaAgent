@@ -11,31 +11,28 @@ import pytest
 from lunamoth.session.settings import Settings
 
 
-def _write_card(path: Path, *, phi: str = "", rules_closer: str = "", goals: list[str] | None = None) -> Path:
+def _write_card(path: Path, *, phi: str = "", rules_closer: str = "", goals: list[str] | None = None,
+                book: list[dict] | None = None) -> Path:
     lunamoth: dict[str, object] = {"toolpack": "sandbox"}
     if rules_closer:
         lunamoth["rules_closer"] = rules_closer
     if goals is not None:
         lunamoth["goals"] = goals
-    payload = {
-        "data": {
-            "name": "TestCard",
-            "description": "Persona marker.",
-            "personality": "Curious.",
-            "scenario": "A quiet test room.",
-            "first_mes": "",
-            "mes_example": "",
-            "system_prompt": "System marker for {{char}} and {{user}}.",
-            "post_history_instructions": phi,
-            "extensions": {"lunamoth": lunamoth},
-        }
+    data: dict[str, object] = {
+        "name": "TestCard",
+        "description": "Persona marker.",
+        "personality": "Curious.",
+        "scenario": "A quiet test room.",
+        "first_mes": "",
+        "mes_example": "",
+        "system_prompt": "System marker for {{char}} and {{user}}.",
+        "post_history_instructions": phi,
+        "extensions": {"lunamoth": lunamoth},
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-    return path
-
-
-def _write_world(path: Path, entries: list[dict]) -> Path:
-    payload = {"name": "test-world", "entries": {str(i): e for i, e in enumerate(entries)}}
+    if book is not None:
+        # The card's embedded character_book is the ONE world source.
+        data["character_book"] = {"name": "test-world", "entries": book}
+    payload = {"data": data}
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     return path
 
@@ -55,12 +52,11 @@ def agent_factory(tmp_path, monkeypatch):
 
     from lunamoth.core.agent import LunaMothAgent
 
-    def make(*, card: Path | None = None, world: Path | None = None, toolpack: str = "sandbox",
+    def make(*, card: Path | None = None, toolpack: str = "sandbox",
              reset: bool = True, **kw):
         settings = Settings(
             provider="mock",
             character_path=str(card or ""),
-            world_path=str(world or ""),
             toolpack=toolpack,
             **kw,
         )
@@ -98,10 +94,10 @@ def test_stable_prefix_hash_is_identical_across_turns(agent_factory):
 
 
 def test_runtime_flips_and_worldinfo_change_only_volatile_tail(agent_factory, tmp_path):
-    world = _write_world(tmp_path / "world.json", [
-        {"keys": ["trigger"], "content": "KEY-VOLATILE", "order": 1},
+    card = _write_card(tmp_path / "card.json", book=[
+        {"keys": ["trigger"], "content": "KEY-VOLATILE", "insertion_order": 1},
     ])
-    a = agent_factory(world=world)
+    a = agent_factory(card=card)
     s = a.make_session()
     stable_hash = _hash(a._stable_prefix())
     before = _blob(a._volatile_tail(a._scan_text(s, "plain"), s))
@@ -134,11 +130,11 @@ def test_card_phi_is_last_and_absent_from_persona_block(agent_factory, tmp_path)
 
 
 def test_worldinfo_constant_stable_keyword_shallow_scan_and_sticky(agent_factory, tmp_path):
-    world = _write_world(tmp_path / "world.json", [
-        {"keys": ["always"], "content": "CONST-STABLE", "constant": True, "order": 1},
-        {"keys": ["spark"], "content": "KEY-TAIL", "order": 2},
+    card = _write_card(tmp_path / "card.json", book=[
+        {"keys": ["always"], "content": "CONST-STABLE", "constant": True, "insertion_order": 1},
+        {"keys": ["spark"], "content": "KEY-TAIL", "insertion_order": 2},
     ])
-    a = agent_factory(world=world)
+    a = agent_factory(card=card)
     s = a.make_session()
 
     assert "CONST-STABLE" in _blob(a._stable_prefix())
@@ -156,11 +152,11 @@ def test_worldinfo_constant_stable_keyword_shallow_scan_and_sticky(agent_factory
 
 
 def test_worldinfo_budget_cap_truncates_by_order(agent_factory, tmp_path, monkeypatch):
-    world = _write_world(tmp_path / "world.json", [
-        {"keys": ["cap"], "content": "tiny", "order": 1},
-        {"keys": ["cap"], "content": "B" * 80, "order": 2},
+    card = _write_card(tmp_path / "card.json", book=[
+        {"keys": ["cap"], "content": "tiny", "insertion_order": 1},
+        {"keys": ["cap"], "content": "B" * 80, "insertion_order": 2},
     ])
-    a = agent_factory(world=world)
+    a = agent_factory(card=card)
     s = a.make_session()
     monkeypatch.setattr(a, "context_limit", lambda: 20)  # 25% cap ~= 5 rough tokens
     tail = _blob(a._volatile_tail(a._scan_text(s, "cap"), s))
@@ -197,11 +193,10 @@ def test_compaction_summary_persists_and_restore_avoids_resummarizing(agent_fact
 
 
 def test_volatile_tail_never_enters_transcript(agent_factory, tmp_path, monkeypatch):
-    card = _write_card(tmp_path / "card.json", phi="PHI-NEVER-PERSIST")
-    world = _write_world(tmp_path / "world.json", [
-        {"keys": ["spark"], "content": "WI-NEVER-PERSIST", "order": 1},
+    card = _write_card(tmp_path / "card.json", phi="PHI-NEVER-PERSIST", book=[
+        {"keys": ["spark"], "content": "WI-NEVER-PERSIST", "insertion_order": 1},
     ])
-    a = agent_factory(card=card, world=world)
+    a = agent_factory(card=card)
     s = a.make_session()
 
     def canned(*_args, **_kwargs):

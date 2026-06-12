@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import locale
 import os
 from pathlib import Path
+from typing import Any
 
 from ..config import ROOT
 
@@ -22,6 +24,10 @@ _FALLBACK_PERSONA = {
     ),
 }
 
+# The bundled default card is selected by TAG, never by name: the card whose
+# `data.tags` contains this marker wins. No character name lives in the engine.
+DEFAULT_TAG = "default"
+
 
 def system_language() -> str:
     """Best guess at the operator's language, used only to choose which bundled
@@ -36,25 +42,38 @@ def system_language() -> str:
     return "zh" if loc.startswith(("zh", "chinese")) else "en"
 
 
+def _card_tags(path: Path) -> list[str]:
+    """The card's tags, read cheaply and defensively (missing/non-list => [])."""
+    try:
+        card: Any = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return []
+    if not isinstance(card, dict):
+        return []
+    data = card.get("data") if isinstance(card.get("data"), dict) else card
+    tags = data.get("tags")
+    if not isinstance(tags, list):
+        return []
+    return [str(t).strip().lower() for t in tags]
+
+
 def _localized_json(root: Path, lang: str) -> Path | None:
     suffixes = (f".{lang}.json", f"-{lang}.json", f"_{lang}.json")
-    localized = [p for p in sorted(root.glob("*.json")) if p.name.lower().endswith(suffixes)]
-    if localized:
-        return localized[0]
-    all_cards = sorted(root.glob("*.json"))
-    return all_cards[0] if all_cards else None
+    candidates = sorted(root.glob("*.json"))
+    localized = [p for p in candidates if p.name.lower().endswith(suffixes)] or candidates
+    for p in localized:
+        if DEFAULT_TAG in _card_tags(p):
+            return p
+    return localized[0] if localized else None
 
 
 def default_character_path(lang: str | None = None) -> Path | None:
-    """Bundled default character in the operator's language, if present."""
-    lang = lang or system_language()
-    return _localized_json(ROOT / "characters", lang)
+    """Bundled default card in the operator's language, if present.
 
-
-def default_world_path(lang: str | None = None) -> Path | None:
-    """World book that pairs with the default character, if present."""
+    Among localized candidates the card tagged "default" wins; without the tag
+    the sorted-order first card is the default (legacy behavior)."""
     lang = lang or system_language()
-    return _localized_json(ROOT / "worlds", lang)
+    return _localized_json(ROOT / "cards", lang)
 
 
 def fallback_persona(lang: str = "en") -> str:

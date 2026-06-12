@@ -45,9 +45,9 @@ def _choose(prompt: str, options: list[str], default_index: int = 0) -> int:
 
 
 def _discover_characters() -> list[tuple[str, str]]:
-    """(label, path) for cards under characters/. Label is the card's name, else stem."""
+    """(label, path) for cards under cards/. Label is the card's name, else stem."""
     out: list[tuple[str, str]] = []
-    base = ROOT / "characters"
+    base = ROOT / "cards"
     if not base.is_dir():
         return out
     from ..content.cards import CharacterCard
@@ -65,13 +65,17 @@ def _discover_characters() -> list[tuple[str, str]]:
 
 
 def _choose_character(settings: Settings) -> None:
+    from ..content.persona import default_character_path
+
     cards = _discover_characters()
-    labels = ["default · LunaMoth 月蛾"] + [lbl for lbl, _ in cards]
+    default = str(default_character_path() or "")
+    default_name = next((lbl for lbl, p in cards if p == default), "")
+    labels = [f"default · {default_name}" if default_name else "default (bundled)"]
+    labels += [lbl for lbl, _ in cards]
     idx = _choose("Character:", labels, 0)
-    # Empty path = bundled default (LunaMoth, language by locale). Otherwise the card.
+    # Empty path = bundled default (the card tagged "default", language by locale).
     settings.character_path = "" if idx == 0 else cards[idx - 1][1]
-    # Let the card's own world / tools / limits pair fresh.
-    settings.world_path = ""
+    # Let the card's own tools / limits pair fresh (world is inside the card).
     settings.toolpack = ""
 
 
@@ -147,7 +151,8 @@ def run_wizard(non_interactive_ok: bool = True) -> Settings:
 
     settings.user_name = _ask("Your name ({{user}})", settings.user_name)
 
-    # Meet the chara — a plain numbered menu. World / tools / limits pair from the card.
+    # Meet the chara — a plain numbered menu. World (embedded book) / tools /
+    # limits all come from the card itself.
     _choose_character(settings)
     _choose_embodiment(settings)
 

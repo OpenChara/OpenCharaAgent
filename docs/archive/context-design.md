@@ -20,8 +20,13 @@ Volatile tail text is never written to the context buffer or transcript.
 
 ## 3. World info
 
+- The ONE world source is the card's embedded `character_book` — there is no
+  standalone world channel (no `Settings.world_path`, no
+  `extensions.lunamoth.world` pointer, no same-stem pairing). Standalone ST
+  world books are an import format: merged into a card via `card.merge_world`.
 - `constant=true` entries render into the stable prefix.
-- Keyword entries render only into the volatile tail.
+- Keyword entries render only into the volatile tail (sticky namespace
+  `book:{card name}`).
 - Scan text is the last ~4 history messages plus the current user/ephemeral text.
 - Activated keyword entries stay sticky for 4 turns in `Session.wi_sticky`.
 - Activated world-info output is capped at approximately 25% of the model context window, truncating by insertion order.

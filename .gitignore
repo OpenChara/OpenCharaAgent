@@ -86,23 +86,17 @@ docs/_build/
 .lunamoth/
 .scp079/
 
-# User-dropped SillyTavern cards / world books (keep bundled assets, licenses + .gitkeep)
-characters/*
-worlds/*
-!characters/.gitkeep
-!characters/LICENSE-CC-BY-SA-3.0.md
-!worlds/.gitkeep
-!worlds/LICENSE-CC-BY-SA-3.0.md
-!characters/LunaMoth.zh.json
-!characters/LunaMoth.en.json
-!characters/Quinn.zh.json
-!characters/Quinn.en.json
-!worlds/LunaMoth.zh.json
-!worlds/LunaMoth.en.json
-!characters/SCP-079.zh.json
-!characters/SCP-079.en.json
-!worlds/SCP-Foundation.zh.json
-!worlds/SCP-Foundation.en.json
+# User-dropped SillyTavern cards (keep bundled cards, license + .gitkeep);
+# world books live INSIDE cards as the embedded character_book
+cards/*
+!cards/.gitkeep
+!cards/LICENSE-CC-BY-SA-3.0.md
+!cards/LunaMoth.zh.json
+!cards/LunaMoth.en.json
+!cards/Quinn.zh.json
+!cards/Quinn.en.json
+!cards/SCP-079.zh.json
+!cards/SCP-079.en.json
 
 # LunaMoth runtime artifacts
 sandbox/logs/*.jsonl

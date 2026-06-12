@@ -46,7 +46,6 @@ def agent_factory(tmp_path, monkeypatch):
         settings = Settings(
             provider="mock",
             character_path=str(card or ""),
-            world_path="",
             toolpack=toolpack,
             **kw,
         )

@@ -712,15 +712,9 @@ class WebHandler(http.server.SimpleHTTPRequestHandler):
             self.send_error(400, "expected a .json or .png card under 8 MB")
             return
         body = self.rfile.read(length)
-        base = H.user_cards_dir()
-        base.mkdir(parents=True, exist_ok=True)
-        target = base / name
-        n = 2
-        while target.exists():
-            target = base / f"{Path(name).stem}-{n}{Path(name).suffix}"
-            n += 1
-        target.write_bytes(body)
-        payload = json.dumps({"path": str(target)}).encode("utf-8")
+        # A .json that parses as a standalone world book is stored aside and
+        # reported as kind="world" so the deck can offer "merge into card X".
+        payload = json.dumps(H.store_upload(name, body)).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))

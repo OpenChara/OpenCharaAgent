@@ -39,7 +39,7 @@ def agent(tmp_path, monkeypatch):
     monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
     from lunamoth.core.agent import LunaMothAgent
 
-    return lambda toolpack: LunaMothAgent(Settings(character_path="", world_path="", toolpack=toolpack))
+    return lambda toolpack: LunaMothAgent(Settings(character_path="", toolpack=toolpack))
 
 
 def test_card_is_first_then_rules(agent):
