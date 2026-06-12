@@ -41,7 +41,7 @@
 
 - 只改 `src/lunamoth/front/web/`、i18n 文案，及（如确有需要）`apps/desktop/`
   的 Electron 薄壳。**不碰 protocol/、server/、core/**。
-- 缺后端接口**不要自己实现**：写进 `docs/desktop/webui-needs.md`（已有
+- 缺后端接口**不要自己实现**：写进 `docs/archive/webui-needs.md`（已有
   五条 + 三条 v2 登记，往后追加），UI 先做"等待后端"占位形态。
 - 不合并不推送；完成后留 commit 在 `webui` 分支等 owner 验收。
   commit message 以 `Co-Authored-By: Claude <noreply@anthropic.com>` 结尾。
@@ -52,7 +52,7 @@
 
 ## 3. 设计基调
 
-以 `docs/desktop/hermes-ui-notes.md`（Hermes Desktop 28 张截图研究）为参照，
+以 `docs/archive/hermes-ui-notes.md`（Hermes Desktop 28 张截图研究）为参照，
 **学其骨不学其皮**——但下列 owner 修订**推翻**了 Hermes 研究里的对应建议：
 
 1. **聊天保持现有气泡式**。不采用 Hermes 的"用户=边框盒、角色=裸排版"
@@ -227,7 +227,7 @@
   `life`/`speaks`。
 - `StateSnapshot.patience`；`/patience` 命令。
 
-## 6. 后端缺口（详见 `docs/desktop/webui-needs.md`）
+## 6. 后端缺口（详见 `docs/archive/webui-needs.md`）
 
 1. attach 不唤醒 resting chara（supervisor 侧；UI 按 §4.D 配合）
 2. `works.read {name, rel}`（作品页应用内预览）

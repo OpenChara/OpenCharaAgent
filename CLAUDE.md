@@ -93,10 +93,11 @@ uvx ruff check --select F src/lunamoth tests   # lint (unused imports, undefined
 - **No chord shortcuts in the TUI** — everything is a `/command`; Ctrl+C is the
   only key (safety quit).
 - README is split EN (`README.md`) / zh (`README.zh-CN.md`) — update BOTH.
-- Design docs live in docs/ (`context-design.md` = the prompt machine,
-  `desktop/design.md` = web/desktop). Work logs belong in git history
-  and agent memory; ACTIVE cross-machine handovers are the one exception —
-  they live as docs/handover-*.md and are deleted once absorbed.
+- docs/ root holds ONLY the active cross-machine handover/task files (one
+  per running track; delete once absorbed). Settled design specs and research
+  live under `docs/archive/` (`context-design.md` = the prompt machine,
+  `design.md` + `supervisor.md` = web/desktop). Work logs belong in git
+  history and agent memory, never in docs.
 
 ## Module map (src/lunamoth/ — domain subpackages)
 
@@ -169,13 +170,13 @@ zero internal deps; `obs/` imports only `config`.
   - `wizard.py` — plain-terminal first-run setup. `art.py` — the blue wordmark.
   - `web/` — the desktop renderer (no build step: index.html/style.css/i18n.js/
     rpc.js/app.js), a pure protocol client served by `lunamoth desktop`. Design:
-    `docs/desktop/design.md`. UI chrome bilingual zh/en + light/dark; a chara's
+    `docs/archive/design.md`. UI chrome bilingual zh/en + light/dark; a chara's
     words stay in the card's language. Idle driving MUST keep terminal.py's
     gating (quiet window + rest_until) or it burns tokens nonstop.
 
 Content (gitignore-allowlisted): `characters/` `worlds/` `toolpacks/` `themes/`.
 
-## The prompt stack (the machine that runs a chara — full spec: docs/context-design.md)
+## The prompt stack (the machine that runs a chara — full spec: docs/archive/context-design.md)
 
 Every API request is assembled as **three zones**:
 

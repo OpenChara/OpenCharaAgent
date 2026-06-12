@@ -36,7 +36,7 @@ no self-directed extra acceptance runs, no extra commits.
 - Update every reference: `persona.py` (`default_character_path`,
   DELETE `default_world_path`), `.gitignore` allowlist, `server/hub.py`
   (`bundled_cards_dir`), READMEs (both), CLAUDE.md (module map + content
-  line + prompt-stack wording), `docs/context-design.md` (world sources:
+  line + prompt-stack wording), `docs/archive/context-design.md` (world sources:
   "the card's embedded book" only).
 - `cards/Quinn.{en,zh}.json` already ship with embedded books (the exemplar
   of the one-file format) — no merge needed, just move with the rename.

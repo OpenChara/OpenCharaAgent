@@ -15,7 +15,7 @@ garbage.
 
 ## What landed today (review `git log` for detail)
 
-1. **lunamothd supervisor** (`docs/desktop/supervisor.md` is the spec):
+1. **lunamothd supervisor** (`docs/archive/supervisor.md` is the spec):
    resident process owning chara + gateway children; `seq` ring + `rejoin`
    replay (client reconnect resumes in place); single-driver takeover (4408);
    server-side idle driving (the ONLY idle driver) gated by
@@ -55,7 +55,7 @@ You are the planner/integrator. Deterministic coding goes to codex
 brief.md`, tmux-managed, one worktree per branch, briefs staged locally under gitignored `.codex-fleet/`;
 travelling copies live as `docs/handover-*.md` — copy back out to dispatch); you design, review, integrate. Queue, in order:
 
-1. **Dispatch `docs/handover-cards-brief.md`** (ready, includes the
+1. **Dispatch `docs/archive/handover-cards-brief.md`** (ready, includes the
    Quinn default-tag section + themes/ retirement). Branch `cards-one-file`.
    It was aborted mid-exploration today, nothing lost.
 2. **After that merges, implement the web-facing RPC batch yourself** (small,
@@ -63,7 +63,7 @@ travelling copies live as `docs/handover-*.md` — copy back out to dispatch); y
    (sandbox-confined file preview, ~512KB cap), `messaging.get/save {name}`
    (masked secrets), `card.avatar_draft` (2–3 sanitized SVG candidates),
    `weixin.qr {name}` (QR + login-state poll for the web gateway page).
-   Specs: `docs/desktop/webui-needs.md` (the webui track's requirement
+   Specs: `docs/archive/webui-needs.md` (the webui track's requirement
    register — treat it as the contract).
 3. **PTY over WS** (`/chara/<name>/pty`, shell inside the chara's isolation,
    Hermes `/api/pty` shape): write a brief, dispatch to codex. The
@@ -80,11 +80,11 @@ script.
 
 ## Track B — webui successor (front/web + Electron Fable)
 
-Read `docs/desktop/webui-redesign-0612.md` — the self-contained,
+Read `docs/webui-redesign-0612.md` — the self-contained,
 owner-revised task book written by your predecessor; it is the ONLY current
 task statement and includes the owner's decision overrides. Companions:
-`docs/desktop/hermes-ui-notes.md` (design-system reference) and
-`docs/desktop/webui-needs.md` (the backend-gap register you append to —
+`docs/archive/hermes-ui-notes.md` (design-system reference) and
+`docs/archive/webui-needs.md` (the backend-gap register you append to —
 never implement backend yourself; Track A serves it).
 
 Discipline: branch `webui`, own worktree, only `front/web/` + i18n +
