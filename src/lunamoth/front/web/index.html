@@ -8,7 +8,7 @@
 </head>
 <body>
 <div id="app">
-  <aside class="sidebar">
+  <aside class="sidebar" id="sidebar">
     <button class="nav-item active" data-view="board">
       <svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3 2.7-5 6-5s6 2 6 5" opacity=".6"/></svg>
       <span data-i18n="nav-charas">角色</span>
@@ -22,8 +22,8 @@
       <span data-i18n="nav-settings">设置</span>
     </button>
     <div class="spacer"></div>
-    <div class="foot"><i id="conn-dot"></i><span id="version"></span></div>
   </aside>
+  <div class="vsplit" id="sidebar-split" title=""></div>
 
   <div class="main">
     <!-- 角色看板 -->
@@ -93,6 +93,13 @@
                 <span data-lang="en">English</span>
               </div>
             </div>
+            <div class="set-row">
+              <div class="lbl"><span data-i18n="set-display">工具显示</span><small data-i18n="disp-sub"></small></div>
+              <div class="seg" id="display-seg">
+                <span data-disp="product" data-i18n="disp-product">Product</span>
+                <span data-disp="technical" data-i18n="disp-technical">Technical</span>
+              </div>
+            </div>
           </div>
           <div class="settings-pane" id="pane-gateway">
             <h2 data-i18n="set-gateway">网关</h2>
@@ -116,52 +123,66 @@
       </div>
     </div>
 
-    <!-- 对话页 -->
+    <!-- 角色页（对话 | 作品 | 终端 + 右侧面板） -->
     <div class="view" id="view-chat">
-      <div class="chat-root">
+      <div class="chat-root" id="chat-root">
         <div class="chat-col">
           <div class="chat-head">
             <button class="back" id="chat-back">‹</button>
-            <div class="avatar-s" id="chat-avatar"><span id="chat-avatar-glyph"></span><span class="mini-dot" id="chat-dot"></span></div>
+            <button class="avatar-s avatar-btn" id="chat-avatar" title=""><span class="mini-dot" id="chat-dot"></span></button>
             <div class="who"><b id="chat-name"></b><span id="chat-statusword"></span></div>
-            <div class="grow"></div>
-            <div class="seg" id="mode-seg">
-              <span data-mode="live" data-i18n="seg-live">持续运行</span>
-              <span data-mode="chat" data-i18n="seg-chat">对话模式</span>
+            <div class="chat-tabs" id="chat-tabs">
+              <span data-page="chat" class="on" data-i18n="tab-chat">对话</span>
+              <span data-page="works"><i class="unread" id="works-unread"></i><em data-i18n="tab-works">作品</em></span>
+              <span data-page="term" data-i18n="tab-terminal">终端</span>
             </div>
+            <div class="grow"></div>
             <button class="icon-btn warn" id="net-btn" style="display:none" title="">⚠︎⌁</button>
-            <button class="icon-btn" id="drawer-btn" title="">▤</button>
+            <button class="icon-btn on" id="panel-btn" title="">▤</button>
           </div>
-          <div class="stream" id="stream"><div class="stream-inner" id="stream-inner"></div></div>
-          <div class="composer-wrap">
-            <div class="work-status" id="work-status" hidden></div>
-            <div class="palette" id="palette"></div>
-            <div class="composer">
-              <button class="cmd-btn" id="cmd-btn">⌘</button>
-              <textarea id="composer-input" rows="1"></textarea>
-              <button class="send" id="send-btn">↑</button>
+          <div class="chat-pages">
+            <div class="chat-page on" id="page-chat">
+              <div class="stream" id="stream"><div class="stream-inner" id="stream-inner"></div></div>
+              <div class="composer-wrap">
+                <div class="work-status" id="work-status" hidden></div>
+                <div class="engage-bar" id="engage-bar" hidden><i></i></div>
+                <div class="composer">
+                  <textarea id="composer-input" rows="1"></textarea>
+                  <button class="send" id="send-btn">↑</button>
+                </div>
+              </div>
+            </div>
+            <div class="chat-page" id="page-works">
+              <div class="works-head" id="works-chips"></div>
+              <div class="works-body" id="works-list"></div>
+            </div>
+            <div class="chat-page" id="page-term">
+              <div class="term-body" id="term-body"></div>
             </div>
           </div>
         </div>
-        <aside class="drawer" id="drawer">
-          <div class="drawer-tabs" id="drawer-tabs">
-            <span data-p="d-status" class="on" data-i18n="tab-status">状态</span>
-            <span data-p="d-works" data-i18n="tab-works">作品</span>
-            <span data-p="d-memory" data-i18n="tab-memory">记忆</span>
-            <span data-p="d-skills" data-i18n="tab-skills">能力</span>
-            <span data-p="d-terminal" data-i18n="tab-terminal">终端</span>
-            <span data-p="d-gateway" data-i18n="tab-gateway">网关</span>
+        <div class="vsplit" id="panel-split"></div>
+        <aside class="panel" id="panel">
+          <div class="panel-layer on" id="panel-main"></div>
+          <div class="panel-layer" id="panel-page">
+            <div class="panel-page-head">
+              <button class="back" id="panel-page-back">‹</button>
+              <b id="panel-page-title"></b>
+            </div>
+            <div class="panel-page-body" id="panel-page-body"></div>
           </div>
-          <div class="drawer-pane on" id="d-status"></div>
-          <div class="drawer-pane" id="d-works"></div>
-          <div class="drawer-pane" id="d-memory"></div>
-          <div class="drawer-pane" id="d-skills"></div>
-          <div class="drawer-pane" id="d-terminal"><div class="placeholder-pane" data-i18n="d-term-coming"></div></div>
-          <div class="drawer-pane" id="d-gateway"><div class="placeholder-pane" data-i18n="d-gw-coming"></div></div>
         </aside>
       </div>
     </div>
   </div>
+</div>
+
+<!-- 底部轻信息栏：版本 / 连接 / 会话计时 -->
+<div id="statusbar">
+  <span class="grow"></span>
+  <span id="sb-timer"></span>
+  <span id="version"></span>
+  <i id="conn-dot"></i>
 </div>
 
 <!-- 首次启动 -->
@@ -184,9 +205,9 @@
   <div id="fr-setup" class="setup-col" style="display:none"></div>
 </div>
 
-<!-- 新角色流程 -->
+<!-- 新角色工坊（虚化模态层） -->
 <div class="overlay flow-overlay" id="overlay-flow">
-  <div class="flow" id="flow-root"></div>
+  <div class="flow-card"><div class="flow" id="flow-root"></div></div>
 </div>
 
 <!-- 模态 -->
@@ -198,5 +219,6 @@
 <script src="i18n.js"></script>
 <script src="rpc.js"></script>
 <script src="app.js"></script>
+<script src="chat.js"></script>
 </body>
 </html>

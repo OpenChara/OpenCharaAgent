@@ -1,5 +1,7 @@
-/* LunaMoth Desktop renderer — design: docs/desktop/design.md.
-   One hub connection for the board; one CharaClient per open chat. */
+/* LunaMoth Desktop renderer — board/deck/settings/workshop half.
+   Chat (ChatController + right panel + works/term pages) lives in chat.js.
+   One hub connection for the board; one CharaClient per open chat.
+   Design: docs/webui-redesign-0612.md (supersedes docs/desktop/design.md). */
 "use strict";
 
 /* ---------- tiny DOM helpers ---------- */
@@ -36,10 +38,21 @@ function timeAgo(ts) {
   return `${Math.round(s / 86400)} ${t("ago-day")}`;
 }
 
+function fmtClock(epoch) {
+  return new Date(epoch * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+function fmtSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + " MB";
+  if (n >= 1024) return Math.round(n / 1024) + " KB";
+  return n + " B";
+}
+
 function estimateTokens(text) {
   const s = String(text || "");
   let cjk = 0;
-  for (const ch of s) if (ch >= "\u4e00" && ch <= "\u9fff") cjk++;
+  for (const ch of s) if (ch >= "一" && ch <= "鿿") cjk++;
   const other = Math.max(0, s.length - cjk);
   return cjk + Math.floor(other / 4);
 }
@@ -82,7 +95,7 @@ function paletteClass(name) {
 }
 const glyphOf = (name) => (name || "?").trim().slice(0, 1).toUpperCase();
 
-/* ---------- error language (design §3.2: reasons are human words) ---------- */
+/* ---------- error language (reasons are human words) ---------- */
 function errText(err) {
   const kind = err && err.kind ? err.kind : "provider";
   const key = { auth: "err-auth", credit: "err-credit", network: "err-network",
@@ -101,6 +114,18 @@ function dataUriSvg(svg) {
   return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
 }
 
+/* Shared avatar: SVG when the card has one, letter glyph otherwise. */
+function avatarNode(name, card, cls) {
+  const color = card && card.theme_color ? String(card.theme_color) : "";
+  const svg = card && card.avatar_svg ? String(card.avatar_svg) : "";
+  const attrs = { class: (cls || "avatar-s") + (color || svg ? "" : " " + paletteClass(name)) };
+  if (color) attrs.style = `--card-theme:${color}`;
+  const node = el("div", attrs);
+  if (svg) node.appendChild(el("img", { src: dataUriSvg(svg), alt: "" }));
+  else node.appendChild(document.createTextNode(glyphOf(name)));
+  return node;
+}
+
 function cardVisual(c, cls) {
   const color = c && c.theme_color ? String(c.theme_color) : "";
   const svg = c && c.avatar_svg ? String(c.avatar_svg) : "";
@@ -112,6 +137,12 @@ function cardVisual(c, cls) {
   return el("div", attrs, ...children);
 }
 
+/* The deck card behind a living session (frozen cards keep their deck entry). */
+function cardForSession(name) {
+  const cards = (state.hub && state.hub.cards) || [];
+  return cards.find((c) => (c.used_by || []).includes(name)) || null;
+}
+
 /* ---------- global state ---------- */
 const hub = new HubClient();
 const state = {
@@ -119,11 +150,13 @@ const state = {
   view: "board",
   sort: "recent",
   models: null,         // models.list cache
-  chat: null,           // active ChatController
+  chat: null,           // active ChatController (chat.js)
+  pendingChatOpts: null,
   boardTimer: null,
+  display: localStorage.getItem("lm-display") || "product",
 };
 
-/* ============================ THEME & LANG ============================ */
+/* ============================ THEME & LANG & DISPLAY ============================ */
 function applyTheme(pref) {
   const dark = pref === "dark" ||
     (pref !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
@@ -145,22 +178,94 @@ function setLang(code, persist) {
   if (persist && hub.sock.open) hub.call("defaults.set", { ui_lang: code }).catch(() => {});
 }
 
-/* ============================ NAVIGATION ============================ */
+/* Product hides raw payloads (OC creators); Technical shows full I/O. */
+function applyDisplayMode(mode) {
+  state.display = mode === "technical" ? "technical" : "product";
+  try { localStorage.setItem("lm-display", state.display); } catch (e) { /* ok */ }
+  document.body.classList.toggle("technical", state.display === "technical");
+  document.querySelectorAll("#display-seg span").forEach((s) =>
+    s.classList.toggle("on", s.dataset.disp === state.display));
+  if (state.chat) state.chat.onDisplayModeChanged();
+}
+const isTechnical = () => state.display === "technical";
+
+/* ============================ ROUTER ============================
+   #/  #/deck  #/settings  #/chara/<name>[/works|/term] — refresh/back work. */
+function navTo(hash) {
+  if (location.hash === hash) route();
+  else location.hash = hash;
+}
+
 function show(view) {
-  if (state.view === "chat" && view !== "chat" && state.chat) {
-    state.chat.dispose();
-    state.chat = null;
-  }
   state.view = view;
   document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
   $(`view-${view}`).classList.add("active");
   document.querySelectorAll(".nav-item").forEach((n) =>
     n.classList.toggle("active", n.dataset.view === (view === "chat" ? "board" : view)));
-  if (view === "board") refreshHub();
-  if (view === "deck") refreshHub();
+  if (view === "board" || view === "deck") refreshHub();
 }
+
+function route() {
+  const h = location.hash || "#/";
+  const m = h.match(/^#\/chara\/([^/]+)(?:\/(works|term))?$/);
+  if (m) {
+    const name = decodeURIComponent(m[1]);
+    const page = m[2] || "chat";
+    if (state.chat && state.chat.name === name && !state.chat.disposed) {
+      show("chat");
+      state.chat.showPage(page);
+    } else {
+      if (state.chat) { state.chat.dispose(); state.chat = null; }
+      show("chat");
+      state.chat = new ChatController(name, state.pendingChatOpts || {});
+      state.pendingChatOpts = null;
+      state.chat.open(page);
+    }
+    return;
+  }
+  if (state.chat) { state.chat.dispose(); state.chat = null; }
+  show(h === "#/deck" ? "deck" : h === "#/settings" ? "settings" : "board");
+}
+window.addEventListener("hashchange", route);
+
 document.querySelectorAll(".nav-item").forEach((n) =>
-  n.addEventListener("click", () => show(n.dataset.view)));
+  n.addEventListener("click", () => navTo(n.dataset.view === "board" ? "#/" : `#/${n.dataset.view}`)));
+
+function openChat(name, opts) {
+  state.pendingChatOpts = opts || null;
+  navTo(`#/chara/${encodeURIComponent(name)}`);
+}
+
+/* ============================ SPLITTERS（左右栏都可拖宽） ============================ */
+function makeSplit(handle, target, cssVar, storeKey, opts) {
+  const min = opts.min, max = opts.max, rtl = !!opts.rtl;
+  const saved = Number(localStorage.getItem(storeKey) || 0);
+  if (saved) document.documentElement.style.setProperty(cssVar, `${Math.min(max, Math.max(min, saved))}px`);
+  handle.addEventListener("mousedown", (ev) => {
+    ev.preventDefault();
+    const startX = ev.clientX;
+    const startW = target.getBoundingClientRect().width;
+    handle.classList.add("dragging");
+    document.body.classList.add("col-resizing");
+    const move = (e) => {
+      const dx = rtl ? startX - e.clientX : e.clientX - startX;
+      const w = Math.min(max, Math.max(min, startW + dx));
+      document.documentElement.style.setProperty(cssVar, `${w}px`);
+    };
+    const up = () => {
+      handle.classList.remove("dragging");
+      document.body.classList.remove("col-resizing");
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      const w = Math.round(target.getBoundingClientRect().width);
+      try { localStorage.setItem(storeKey, String(w)); } catch (e) { /* ok */ }
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  });
+}
+makeSplit($("sidebar-split"), $("sidebar"), "--sidebar-w", "lm-w-sidebar", { min: 150, max: 320 });
+makeSplit($("panel-split"), $("panel"), "--panel-w", "lm-w-panel", { min: 240, max: 460, rtl: true });
 
 /* ============================ HUB LIFECYCLE ============================ */
 async function refreshHub() {
@@ -173,9 +278,11 @@ async function refreshHub() {
     renderBoard();
     renderDeck();
     renderModelPane();
+    if (state.chat) state.chat.onHubState();
   } catch (e) { /* transient */ }
 }
 
+let _routedOnce = false;
 hub.onReady = async () => {
   $("conn-dot").classList.remove("bad");
   await refreshHub();
@@ -183,6 +290,8 @@ hub.onReady = async () => {
   const savedLang = localStorage.getItem("lm-lang") || d.ui_lang || (navigator.language.startsWith("zh") ? "zh" : "en");
   setLang(savedLang, false);
   applyTheme(localStorage.getItem("lm-theme") || d.ui_theme || "system");
+  applyDisplayMode(state.display);
+  if (!_routedOnce) { _routedOnce = true; route(); }
   if (state.hub && state.hub.first_run) openFirstRun();
 };
 hub.onDown = () => { $("conn-dot").classList.add("bad"); };
@@ -206,7 +315,7 @@ function sessionsSorted() {
 }
 
 function statusOf(s) {
-  // one line per card, exception first (design §3.2)
+  // one line per card, exception first
   if (s.status === "new") return { dot: "off", line: t("st-new"), cls: "" };
   if (s.status === "crashed") return { dot: "err", line: s.error || "crashed", cls: "err" };
   if (s.error && (s.error_kind === "auth" || (s.status !== "attached" && s.status !== "running")))
@@ -218,16 +327,15 @@ function statusOf(s) {
   return { dot: "live", line: t("st-idle-live"), cls: "" };
 }
 
+/* Status words are factual statements only. idle_countdown is mechanism, not
+   mood — it reads as the same register as working (owner decision). */
 function lifeText(life) {
   if (!life) return "";
-  const now = Date.now() / 1000;
-  if (life.state === "working") return t("life-working");
+  if (life.state === "working" || life.state === "idle_countdown") return t("life-working");
   if (life.state === "waiting") return t("life-waiting");
-  if (life.state === "resting") return `${t("life-resting")} · ${timeAgo(life.rest_until)}`;
-  if (life.state === "backoff") return `${t("life-backoff")} · ${life.detail || ""}`;
-  if (life.state === "idle_countdown" && life.next_cycle_at) {
-    return `${t("life-countdown")} · ${durationText(Math.max(0, life.next_cycle_at - now))}`;
-  }
+  if (life.state === "resting" && life.rest_until) return t("life-resting-until", { time: fmtClock(life.rest_until) });
+  if (life.state === "resting") return t("st-resting");
+  if (life.state === "backoff") return `${t("life-backoff")}${life.detail ? " · " + life.detail : ""}`;
   return t("st-idle-live");
 }
 
@@ -274,22 +382,31 @@ function renderBoard() {
   for (const s of list) {
     const live = s.status === "running" || s.status === "attached";
     const st = statusOf(s);
+    const deckCard = cardForSession(s.name);
+    const portrait = el("div", {
+      class: `portrait ${deckCard && (deckCard.avatar_svg || deckCard.theme_color) ? "" : paletteClass(s.char_name)}`,
+      style: deckCard && deckCard.theme_color ? `--card-theme:${deckCard.theme_color}` : "",
+    });
+    if (deckCard && deckCard.avatar_svg) {
+      portrait.appendChild(el("img", { class: "avatar-svg", src: dataUriSvg(deckCard.avatar_svg), alt: "" }));
+    } else {
+      portrait.appendChild(el("div", { class: "glyph" }, glyphOf(s.char_name)));
+    }
+    portrait.appendChild(el("span", { class: `dot ${st.dot}` }));
+    portrait.appendChild(el("div", { class: "hover-acts" },
+      el("button", {
+        title: live ? t("act-sleep") : t("act-wake-up"),
+        onclick: async (ev) => {
+          ev.stopPropagation();
+          try {
+            await hub.call(live ? "session.stop" : "session.start", { name: s.name }, 30000);
+            refreshHub();
+          } catch (e) { toast(e.message, true); }
+        },
+      }, "⏻"),
+      el("button", { title: "⋯", onclick: (ev) => { ev.stopPropagation(); cardMenu(ev, s); } }, "⋯")));
     const card = el("div", { class: "chara-card" + (st.dot === "off" ? " offline" : ""), onclick: () => openChat(s.name) },
-      el("div", { class: `portrait ${paletteClass(s.char_name)}` },
-        el("div", { class: "glyph" }, glyphOf(s.char_name)),
-        el("span", { class: `dot ${st.dot}` }),
-        el("div", { class: "hover-acts" },
-          el("button", {
-            title: live ? t("act-sleep") : t("act-wake-up"),
-            onclick: async (ev) => {
-              ev.stopPropagation();
-              try {
-                await hub.call(live ? "session.stop" : "session.start", { name: s.name }, 30000);
-                refreshHub();
-              } catch (e) { toast(e.message, true); }
-            },
-          }, "⏻"),
-          el("button", { title: "⋯", onclick: (ev) => { ev.stopPropagation(); cardMenu(ev, s); } }, "⋯"))),
+      portrait,
       el("div", { class: "card-body" },
         el("div", { class: "card-name" },
           el("b", null, s.char_name),
@@ -305,7 +422,7 @@ function renderBoard() {
             line.appendChild(el("a", {
               title: s.error_kind === "auth" ? t("board-key-tip") : "",
               style: "cursor:pointer;text-decoration:underline",
-              onclick: (ev) => { ev.stopPropagation(); show("settings"); },
+              onclick: (ev) => { ev.stopPropagation(); navTo("#/settings"); },
             }, t("go-settings")));
           }
           return line;
@@ -347,7 +464,7 @@ function boardErrText(s) {
 }
 
 function cardMenu(ev, s) {
-  // minimal ⋯ menu as a one-off palette near the cursor
+  // minimal ⋯ menu as a one-off floating list near the cursor
   closeMenus();
   const menu = el("div", { class: "palette open", style: `position:fixed;left:${Math.min(ev.clientX, innerWidth - 240)}px;top:${ev.clientY + 8}px;bottom:auto;transform:none;width:220px;z-index:90` },
     el("div", { class: "row", onclick: async () => {
@@ -423,7 +540,9 @@ function openModal(content, wide) {
 }
 function closeModal() { $("modal-layer").classList.remove("open"); }
 $("modal-layer").addEventListener("click", (ev) => { if (ev.target === $("modal-layer")) closeModal(); });
-document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { closeModal(); closeMenus(); } });
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { closeModal(); closeMenus(); closePopovers(); } });
+
+function closePopovers() { document.querySelectorAll(".popover").forEach((p) => p.remove()); }
 
 /* ============================ DECK ============================ */
 function renderDeck() {
@@ -464,18 +583,50 @@ $("deck-search").addEventListener("input", renderDeck);
 $("deck-new").addEventListener("click", () => ensureModel(openCreateFlow));
 $("deck-import").addEventListener("click", () => $("file-input").click());
 
+/* 卡片视图：渲染成卡片，不再展示原始 JSON（开发者从底部折叠拿） */
 async function viewCard(c) {
   try {
     const full = await hub.call("card.read", { path: c.path }, 20000);
     const ext = full.extensions && full.extensions.lunamoth ? full.extensions.lunamoth : {};
-    const avatar = ext.avatar_svg ? el("img", { class: "view-avatar", src: dataUriSvg(ext.avatar_svg), alt: "" }) : null;
+    const card = { name: full.name, theme_color: c.theme_color || ext.theme_color || "",
+                   avatar_svg: c.avatar_svg || ext.avatar_svg || "" };
+    const avatar = avatarNode(full.name, card, "avatar-s");
+    avatar.style.cursor = "pointer";
+    avatar.title = t("av-title");
+    avatar.addEventListener("click", () => { closeModal(); openAvatarEditor(c); });
+    const badges = el("div", { class: "cv-badges" },
+      el("span", { class: "chip" }, full.language || c.lang),
+      c.builtin ? el("span", { class: "chip" }, t("deck-builtin")) : null,
+      ext.embodiment ? el("span", { class: "chip" }, ext.embodiment) : null,
+      ext.toolpack ? el("span", { class: "chip" }, `⚒ ${ext.toolpack}`) : null,
+      c.frozen ? el("span", { class: "chip" }, t("card-frozen-by", { names: (c.used_by || []).join("、") })) : null);
+    const book = full.character_book;
+    const bookN = book && Array.isArray(book.entries) ? book.entries.length : 0;
+    const goals = Array.isArray(ext.goals) ? ext.goals : [];
+    const persona = [full.description, full.personality, full.scenario].filter(Boolean).join("\n\n");
     openModal(el("div", null,
-      el("h2", null, full.name),
-      el("div", { class: "sub" }, c.frozen ? t("card-frozen-by", { names: c.used_by.join("、") }) : (ext.tagline || c.world || "")),
-      avatar,
-      el("div", { class: "memory-text", style: "max-height:46vh;overflow:auto" },
-        [full.description, full.personality, full.scenario, full.first_mes ? "—\n" + full.first_mes : ""]
-          .filter(Boolean).join("\n\n")),
+      el("div", { class: "cv-head" }, avatar,
+        el("div", { class: "cv-id" },
+          el("b", null, full.name),
+          (ext.tagline || c.tagline) ? el("div", { class: "tagline" }, ext.tagline || c.tagline) : null,
+          badges)),
+      persona ? el("div", { class: "cv-block" },
+        el("h4", null, t("cv-persona")),
+        el("div", { class: "memory-text" }, persona)) : null,
+      full.first_mes ? el("div", { class: "cv-block" },
+        el("h4", null, t("cv-first")),
+        el("div", { class: "memory-text" }, full.first_mes)) : null,
+      bookN ? el("div", { class: "cv-block" },
+        el("h4", null, t("cv-world", { n: bookN })),
+        el("div", { class: "tool-chips" },
+          ...book.entries.slice(0, 12).map((e2) =>
+            el("span", { class: "chip" }, (e2.keys || []).slice(0, 2).join(", ") || "•")))) : null,
+      goals.length ? el("div", { class: "cv-block" },
+        el("h4", null, t("cv-goals")),
+        ...goals.slice(0, 6).map((g) => el("div", { class: "goal" }, el("i"), el("span", null, String(g).slice(0, 120))))) : null,
+      full.raw ? el("details", { class: "cv-raw" },
+        el("summary", null, t("cv-raw")),
+        el("pre", null, JSON.stringify(full.raw, null, 2))) : null,
       el("div", { class: "acts", style: "margin-top:16px" },
         el("button", { class: "btn text", onclick: closeModal }, t("cancel")),
         el("div", { class: "grow" }),
@@ -484,7 +635,7 @@ async function viewCard(c) {
           try { await hub.call("card.delete", { path: c.path }, 10000); closeModal(); refreshHub(); }
           catch (e) { toast(e.message, true); }
         } }, t("menu-delete")) : null,
-        el("button", { class: "btn primary", onclick: () => { closeModal(); ensureModel(() => openWakeSheet(c)); } }, t("deck-wake")))));
+        el("button", { class: "btn primary", onclick: () => { closeModal(); ensureModel(() => openWakeSheet(c)); } }, t("deck-wake")))), true);
   } catch (e) { toast(e.message, true); }
 }
 
@@ -499,7 +650,7 @@ async function importCardFile(file) {
     toast(t("imported", { name: file.name }));
     await refreshHub();
     closeFirstRun();
-    show("deck");
+    navTo("#/deck");
   } catch (e) { toast(e.message, true); }
 }
 $("file-input").addEventListener("change", () => {
@@ -529,6 +680,11 @@ function setupPane(opts) {
   const root = el("div", null);
   root.appendChild(el("h1", null, t("setup-title")));
   root.appendChild(el("div", { class: "sub" }, t("setup-sub")));
+  if (!opts.firstrun) {
+    // Hermes 的措辞：默认 vs 热切换分清楚；Fallback 的位置渲染成不回退声明。
+    root.appendChild(el("div", { class: "scope-note" }, t("default-scope")));
+    root.appendChild(el("div", { class: "no-fallback-row" }, "⊘ ", t("no-fallback")));
+  }
 
   const provRows = [];
   function pickProvider(key) {
@@ -614,7 +770,7 @@ function setupPane(opts) {
   testBtn.addEventListener("click", runTest);
 
   const laterBtn = opts.firstrun
-    ? el("button", { class: "btn text", onclick: () => { closeFirstRun(); show("board"); } }, t("later"))
+    ? el("button", { class: "btn text", onclick: () => { closeFirstRun(); navTo("#/"); } }, t("later"))
     : el("span");
   const goBtn = el("button", { class: "btn primary big", onclick: async () => {
     const payload = {
@@ -720,6 +876,10 @@ $("theme-seg").addEventListener("click", (ev) => {
 $("lang-seg").addEventListener("click", (ev) => {
   const s = ev.target.closest("span");
   if (s) setLang(s.dataset.lang, true);
+});
+$("display-seg").addEventListener("click", (ev) => {
+  const s = ev.target.closest("span");
+  if (s) applyDisplayMode(s.dataset.disp);
 });
 $("reveal-home").addEventListener("click", () => {
   if (state.hub) hub.call("open.path", { path: state.hub.home, reveal: true }).catch((e) => toast(e.message, true));
@@ -836,33 +996,25 @@ async function openWakeSheet(card) {
     netSwitch.classList.toggle("on", wantNet);
   } });
 
-  let toolpack = "sandbox";
+  // toolpack：卡片提的是期望，操作员在此授予（可改；toolpacks.list 在需求单）
+  let cardPack = "";
   try {
     const full = await hub.call("card.read", { path: card.path }, 20000);
     const ext = full.raw && full.raw.data && full.raw.data.extensions && full.raw.data.extensions.lunamoth;
-    if (ext && ext.toolpack) toolpack = String(ext.toolpack);
+    if (ext && ext.toolpack) cardPack = String(ext.toolpack);
   } catch (e) { /* keep default */ }
-  const toolNames = ["terminal", "memory", "files", "goals", "skills", "speak", "rest"];
-
-  const adv = el("div", { class: "adv" },
-    el("div", { class: "adv-head", onclick: () => adv.classList.toggle("open") }, t("wake-adv")),
-    el("div", { class: "adv-body" },
-      el("div", { class: "field-row" }, el("label", null, t("wake-iso")), isoSeg),
-      el("div", { class: "field-row" },
-        el("div", { class: "switch-row", style: "font-size:12.5px" },
-          el("b", { style: "font-weight:550" }, t("d-net")),
-          el("small", null, t("d-net-sub")),
-          netSwitch)),
-      el("div", { class: "field-row" },
-        el("label", null, t("wake-tools") + ` · ${toolpack}`),
-        el("div", { class: "tool-chips" }, ...toolNames.map((n) => el("span", { class: "chip" }, n))))));
+  let tpl = $("toolpack-list");
+  if (!tpl) { tpl = el("datalist", { id: "toolpack-list" }); document.body.appendChild(tpl); }
+  tpl.innerHTML = "";
+  for (const v of new Set(["sandbox", cardPack].filter(Boolean))) tpl.appendChild(el("option", { value: v }));
+  const packInput = el("input", { value: cardPack || "sandbox", list: "toolpack-list" });
 
   const goBtn = el("button", { class: "btn primary big", onclick: async () => {
     goBtn.disabled = true;
     try {
       const entry = await hub.call("session.wake", {
         card: card.path, name: nameInput.value.trim(), isolation,
-        model: modelInput.value.trim(), toolpack,
+        model: modelInput.value.trim(), toolpack: packInput.value.trim() || "sandbox",
       }, 60000);
       closeModal();
       await refreshHub();
@@ -879,7 +1031,19 @@ async function openWakeSheet(card) {
     el("div", { class: "field-row" }, el("label", null, t("wake-name")), el("div", { class: "input-like" }, nameInput)),
     el("div", { class: "field-row" }, el("label", null, t("wake-model")),
       el("div", { class: "input-like" }, modelInput), capLine, warnLine),
-    adv,
+    el("div", { class: "field-row" },
+      el("label", null, t("wake-toolpack")),
+      el("div", { class: "input-like" }, packInput,
+        cardPack ? el("span", { class: "cue" }, t("wake-toolpack-card", { name: cardPack })) : null)),
+    el("div", { class: "adv" },
+      el("div", { class: "adv-head", onclick: (ev) => ev.currentTarget.parentNode.classList.toggle("open") }, t("wake-adv")),
+      el("div", { class: "adv-body" },
+        el("div", { class: "field-row" }, el("label", null, t("wake-iso")), isoSeg),
+        el("div", { class: "field-row" },
+          el("div", { class: "switch-row", style: "font-size:12.5px" },
+            el("b", { style: "font-weight:550" }, t("p-net")),
+            el("small", null, t("p-net-sub")),
+            netSwitch)))),
     el("div", { class: "acts", style: "margin-top:18px" },
       el("button", { class: "btn text", onclick: closeModal }, t("cancel")),
       el("div", { class: "grow" }),
@@ -887,710 +1051,9 @@ async function openWakeSheet(card) {
   refreshCaps();
 }
 
-/* ============================ CHAT ============================ */
-function openChat(name, opts) {
-  if (state.chat) { state.chat.dispose(); state.chat = null; }
-  show("chat");
-  state.chat = new ChatController(name, opts || {});
-  state.chat.open();
-}
-
-class ChatController {
-  constructor(name, opts) {
-    this.name = name;
-    this.opts = opts;
-    this.client = new CharaClient(name);
-    this.charName = name;
-    this.mode = "live";
-    this.showThinking = false;
-    this.disposed = false;
-    this.cur = { kind: null, node: null, textNode: null };
-    this.toolChips = null;
-    this.activeTools = new Map();
-    this.pendingSuper = false;
-    this.turnThink = null;
-    this.work = { active: false, phase: "idle", thinkTokens: 0, toolName: "" };
-    this.life = null;
-    this.lifeTimer = null;
-    this.snapTimer = null;
-    this.drawerLoaded = {};
-    try {
-      this.thinkExpanded = localStorage.getItem("lm-chat-thinking-expanded") === "1";
-    } catch (e) {
-      this.thinkExpanded = false;
-    }
-    const entry = (state.hub && state.hub.sessions.find((s) => s.name === name)) || null;
-    if (entry) this.charName = entry.char_name;
-  }
-
-  /* ---- lifecycle ---- */
-  async open() {
-    $("stream-inner").innerHTML = "";
-    this.setWorkState(false);
-    $("chat-name").textContent = this.charName;
-    $("chat-statusword").textContent = t("st-connecting");
-    $("chat-avatar").className = "avatar-s " + paletteClass(this.charName);
-    $("chat-avatar-glyph").textContent = glyphOf(this.charName);
-    $("chat-dot").className = "mini-dot off";
-    $("composer-input").placeholder = t("composer-ph", { name: this.charName });
-    $("drawer").classList.remove("open");
-    this.bindUI();
-    try {
-      await this.client.connect();
-      this.client.onProtocolEvent = (ev) => this.onEvent(ev);
-      this.client.onPermissionAsk = (p) => this.onPermission(p);
-      this.client.onLifeState = (p) => this.onLifeState(p);
-      this.client.onRejoinGap = () => {
-        this.client.clearRejoin();
-        $("stream-inner").innerHTML = "";
-      };
-      this.client.onClose = (ev) => {
-        if (!this.disposed) {
-          this.note((ev && ev.reason) || t("conn-lost"));
-          $("chat-dot").className = "mini-dot off";
-        }
-      };
-      const info = await this.client.attach();
-      if (this.disposed) return;
-      this.lastUserAt = Date.now(); // arriving counts as engagement
-      this.charName = info.char_name || this.charName;
-      this.mode = info.mode || "live";
-      this.showThinking = !!info.show_thinking;
-      $("chat-name").textContent = this.charName;
-      $("chat-dot").className = "mini-dot";
-      this.setStatusWord(t("st-listening"));
-      this.renderModeSeg();
-      this.renderRestored(info.restored || []);
-      this.renderPalette();
-      this.refreshSnapshot();
-      this.snapTimer = setInterval(() => { if (!document.hidden) this.refreshSnapshot(); }, 6000);
-      if (this.opts.netOn) await this.command("/net on", true);
-      await this.handleOpening(info);
-    } catch (e) {
-      if (!this.disposed) this.note(e.message);
-    }
-  }
-
-  dispose() {
-    this.disposed = true;
-    clearInterval(this.lifeTimer);
-    clearInterval(this.snapTimer);
-    const c = this.client;
-    (async () => {
-      try { if (c.streaming) await c.interrupt(); } catch (e) { /* gone */ }
-      try { await c.detach(); } catch (e) { /* gone */ }
-      c.close();
-    })();
-    setTimeout(refreshHub, 600);
-  }
-
-  /* ---- opening decision tree (AttachInfo) ---- */
-  async handleOpening(info) {
-    if (info.opening === "greeting" && info.opening_text) {
-      this.appendCharText(info.opening_text);
-      this.finalize();
-      try { await this.client.sock.call("greet", { text: info.opening_text }, 10000); } catch (e) { /* older server */ }
-    } else if (info.opening === "arrival" && info.opening_text) {
-      await this.runStream(() => this.client.sock.call("event", { text: info.opening_text }));
-    } else if (info.opening === "probe" && info.opening_text) {
-      await this.runStream(() => this.client.send(info.opening_text));
-    }
-  }
-
-  /* ---- restored history ---- */
-  renderRestored(messages) {
-    const inner = $("stream-inner");
-    for (const m of messages.slice(-80)) {
-      if (!m) continue;
-      const content = typeof m.content === "string" ? m.content : "";
-      const hasText = content.trim().length > 0;
-      if (m.role === "user") {
-        if (!hasText) continue;
-        inner.appendChild(el("div", { class: "user-msg" }, el("div", { class: "bubble" }, m.content)));
-      } else if (m.role === "system") {
-        if (hasText && m.kind !== "summary") this.systemLine(content);
-      } else if (m.role === "assistant") {
-        if (m.kind === "think") {
-          if (hasText) {
-            this.appendMuseText(content);
-            this.closeCurrent();
-          }
-          continue;
-        }
-        if (hasText) {
-          this.appendCharText(content);
-          this.closeCurrent();
-        }
-        for (const speak of speakTextsFromMessage(m)) {
-          this.appendCharText(speak, { superChat: true, ts: m.ts || Date.now() / 1000 });
-          this.closeCurrent();
-        }
-      }
-    }
-    this.scrollDown(true);
-  }
-
-  /* ---- streaming protocol events ---- */
-  onEvent(ev) {
-    if (!ev || this.disposed) return;
-    if (ev.type === "text") {
-      this.setWorkState(true, "generate");
-      const isSuper = ev.channel === "say" && this.pendingSuper;
-      if (ev.channel === "say") this.pendingSuper = false;
-      if (ev.channel === "muse") {
-        this.appendMuseText(ev.text);
-      } else {
-        this.appendCharText(ev.text, { superChat: isSuper });
-        // Electron shell: collect say-channel text for a system notification.
-        this.pendingNotify = (this.pendingNotify || "") + ev.text;
-      }
-      this.setStatusWord(t("st-creating"));
-    } else if (ev.type === "think") {
-      this.appendThinking(ev.text);
-    } else if (ev.type === "tool_start") {
-      this.showToolStart(ev);
-    } else if (ev.type === "tool_end") {
-      this.showToolEnd(ev);
-    } else if (ev.type === "notice") {
-      this.note(ev.text || ev.kind);
-    }
-    this.scrollDown();
-  }
-
-  appendCharText(text, opts) {
-    const kind = opts && opts.superChat ? "super" : "say";
-    const ts = opts && opts.ts ? Number(opts.ts) : Date.now() / 1000;
-    if (this.cur.kind !== kind) {
-      this.closeCurrent();
-      this.breakToolGroup();
-      const textDiv = el("div", { class: "text" });
-      const nameLine = el("div", { class: "name" }, this.charName);
-      if (kind === "super") nameLine.appendChild(superBadge());
-      const node = el("div", { class: "char-msg" + (kind === "super" ? " super-chat" : "") },
-        el("div", { class: "avatar-s " + paletteClass(this.charName), style: "font-size:12px" }, glyphOf(this.charName)),
-        el("div", { class: "body" },
-          nameLine,
-          textDiv,
-          kind === "super" ? el("div", { class: "read-mark" }, "") : null));
-      if (kind === "super") node.dataset.speakTs = String(ts);
-      $("stream-inner").appendChild(node);
-      this.cur = { kind, node, textNode: textDiv, raw: "" };
-    }
-    this.cur.raw = (this.cur.raw || "") + text;
-    this.cur.textNode.textContent = this.cur.raw;
-    if (kind === "super") this.markSuperRead(this.cur.node, ts);
-  }
-
-  markSuperRead(node, ts) {
-    if (!node || document.visibilityState !== "visible") return;
-    const mark = node.querySelector(".read-mark");
-    if (mark && mark.textContent) return;
-    hub.call("superchat.read", { name: this.name, ts: Number(ts) || Date.now() / 1000 }, 10000)
-      .then(() => { if (mark) mark.textContent = "✓"; refreshHub(); })
-      .catch(() => {});
-  }
-
-  appendMuseText(text) {
-    if (this.cur.kind !== "muse") {
-      this.closeCurrent();
-      this.breakToolGroup();
-      const textDiv = el("div", { class: "muse-text" });
-      const node = el("div", { class: "muse-msg" },
-        el("div", { class: "muse-label" }, t("muse-label")),
-        textDiv);
-      $("stream-inner").appendChild(node);
-      this.cur = { kind: "muse", node, textNode: textDiv, raw: "" };
-    }
-    this.cur.raw = (this.cur.raw || "") + text;
-    this.cur.textNode.textContent = this.cur.raw;
-  }
-
-  appendThinking(text) {
-    if (this.cur.kind !== "think") {
-      this.closeCurrent();
-      this.breakToolGroup();
-      if (this.turnThink && this.turnThink.node && this.turnThink.node.isConnected) {
-        this.cur = this.turnThink;
-      } else {
-        const head = el("button", { class: "think-head streaming" });
-        const body = el("div", { class: "think-body" });
-        const node = el("div", { class: "think-block streaming" }, head, body);
-        head.onclick = () => this.toggleThinkingExpanded();
-        $("stream-inner").appendChild(node);
-        this.cur = { kind: "think", node, head, body, raw: "", tokens: 0 };
-        this.turnThink = this.cur;
-      }
-    }
-    this.cur.raw = (this.cur.raw || "") + text;
-    this.cur.tokens = this.cur.raw ? Math.max(1, estimateTokens(this.cur.raw)) : 0;
-    this.cur.node.dataset.tokens = String(this.cur.tokens);
-    this.cur.body.textContent = this.cur.raw;
-    this.applyThinkState(this.cur.node, true);
-    this.setWorkState(true, "think", { thinkTokens: this.cur.tokens });
-  }
-
-  closeCurrent() {
-    if ((this.cur.kind === "say" || this.cur.kind === "super") && this.cur.raw) {
-      this.cur.textNode.innerHTML = mdRender(this.cur.raw);
-      if (this.cur.kind === "super") this.markSuperRead(this.cur.node, Number(this.cur.node.dataset.speakTs || 0));
-    }
-    this.cur = { kind: null, node: null, textNode: null };
-  }
-
-  applyThinkState(node, streaming) {
-    if (!node) return;
-    const tokens = Number(node.dataset.tokens || 0) || 0;
-    const head = node.querySelector(".think-head");
-    const body = node.querySelector(".think-body");
-    node.classList.toggle("streaming", !!streaming);
-    if (head) {
-      head.classList.toggle("streaming", !!streaming);
-      head.textContent = streaming
-        ? `✶ ${t("thinking-live", { n: tokens })}`
-        : `${t("thinking-done", { n: tokens })} ${this.thinkExpanded ? "▾" : "▸"}`;
-    }
-    if (body) body.style.display = this.thinkExpanded ? "block" : "none";
-  }
-
-  toggleThinkingExpanded() {
-    this.thinkExpanded = !this.thinkExpanded;
-    try { localStorage.setItem("lm-chat-thinking-expanded", this.thinkExpanded ? "1" : "0"); } catch (e) { /* ok */ }
-    this.updateThinkingBlocks();
-  }
-
-  updateThinkingBlocks() {
-    $("stream-inner").querySelectorAll(".think-block").forEach((node) =>
-      this.applyThinkState(node, node.classList.contains("streaming")));
-  }
-
-  finalizeThinkingBlocks() {
-    $("stream-inner").querySelectorAll(".think-block.streaming").forEach((node) => {
-      node.classList.remove("streaming");
-      this.applyThinkState(node, false);
-    });
-  }
-
-  ensureToolGroup() {
-    if (this.toolChips && this.toolChips.isConnected) return this.toolChips;
-    this.closeCurrent();
-    const node = el("div", { class: "tool-chip-line" });
-    $("stream-inner").appendChild(node);
-    this.toolChips = node;
-    return node;
-  }
-
-  breakToolGroup() {
-    this.toolChips = null;
-  }
-
-  toolKey(ev) {
-    return `${Number(ev.index || 0)}:${ev.name || "?"}`;
-  }
-
-  showToolStart(ev) {
-    this.closeCurrent();
-    const name = ev.name || "?";
-    const group = this.ensureToolGroup();
-    const detail = el("div", { class: "tool-detail" }, ev.preview || "");
-    const button = el("button", { class: "tool-chip running" },
-      el("span", { class: "spin" }), el("span", null, `⚙ ${name}`));
-    const item = el("div", { class: "tool-chip-item" }, button, detail);
-    button.onclick = () => item.classList.toggle("open");
-    group.appendChild(item);
-    this.activeTools.set(this.toolKey(ev), { item, button, detail, name });
-    this.setWorkState(true, "tool", { toolName: name });
-    this.setStatusWord(t("st-creating"));
-  }
-
-  showToolEnd(ev) {
-    const name = ev.name || "?";
-    const key = this.toolKey(ev);
-    let rec = this.activeTools.get(key);
-    if (!rec) {
-      const group = this.ensureToolGroup();
-      const detail = el("div", { class: "tool-detail" });
-      const button = el("button", { class: "tool-chip" });
-      const item = el("div", { class: "tool-chip-item" }, button, detail);
-      button.onclick = () => item.classList.toggle("open");
-      group.appendChild(item);
-      rec = { item, button, detail, name };
-    }
-    const ok = ev.ok !== false;
-    rec.button.className = "tool-chip " + (ok ? "ok" : "err");
-    rec.button.textContent = `⚙ ${name} ${ok ? "✓" : "✗"} · ${durationText(ev.duration)}`;
-    rec.detail.textContent = ev.summary || t("tool-no-summary");
-    rec.item.classList.toggle("has-detail", !!(ev.summary || "").trim());
-    this.activeTools.delete(key);
-    if (name === "speak" && ok) this.pendingSuper = true;
-    if (this.activeTools.size) {
-      const next = this.activeTools.values().next().value;
-      this.setWorkState(true, "tool", { toolName: next ? next.name : "" });
-    } else {
-      this.setWorkState(true, "generate");
-    }
-  }
-
-  systemLine(text, cls) {
-    if (!text) return;
-    this.closeCurrent();
-    this.breakToolGroup();
-    $("stream-inner").appendChild(el("div", { class: "sys-note" + (cls ? " " + cls : "") }, String(text).slice(0, 240)));
-  }
-
-  idleDivider() {
-    this.systemLine(t("idle-divider"), "idle-divider");
-  }
-
-  setWorkState(active, phase, detail) {
-    const node = $("work-status");
-    if (!node) return;
-    if (!active) {
-      this.work = { active: false, phase: "idle", thinkTokens: 0, toolName: "" };
-      node.hidden = true;
-      node.textContent = "";
-      node.className = "work-status";
-      return;
-    }
-    this.work = {
-      active: true,
-      phase: phase || this.work.phase || "generate",
-      thinkTokens: detail && "thinkTokens" in detail ? detail.thinkTokens : (this.work.thinkTokens || 0),
-      toolName: detail && "toolName" in detail ? detail.toolName : (this.work.toolName || ""),
-      lifeText: detail && "lifeText" in detail ? detail.lifeText : (this.work.lifeText || ""),
-    };
-    node.hidden = false;
-    node.className = "work-status " + this.work.phase;
-    if (this.work.phase === "think") {
-      node.textContent = t("work-thinking", { n: this.work.thinkTokens || 0 });
-    } else if (this.work.phase === "tool") {
-      node.textContent = t("work-tool", { name: this.work.toolName || "tool" });
-    } else if (this.work.phase === "life") {
-      node.textContent = (detail && detail.lifeText) || this.work.lifeText || t("life-countdown");
-    } else {
-      node.textContent = t("work-generating");
-    }
-  }
-
-  finalize() {
-    this.closeCurrent();
-    this.finalizeThinkingBlocks();
-    this.activeTools.clear();
-    this.breakToolGroup();
-    this.pendingSuper = false;
-    this.turnThink = null;
-    if (!(this.life && this.life.state === "working")) this.setWorkState(false);
-    // Electron shell: surface what was said while the window wasn't watched.
-    if (this.pendingNotify && window.lunamothNative && !document.hasFocus())
-      window.lunamothNative.notify(this.charName, this.pendingNotify.trim().slice(0, 200));
-    this.pendingNotify = "";
-    this.setStatusWord(t("st-listening"));
-    this.scrollDown();
-  }
-
-  note(text) {
-    if (!text) return;
-    this.systemLine(text);
-  }
-
-  scrollDown(force) {
-    const sc = $("stream");
-    const nearBottom = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 160;
-    if (force || nearBottom) sc.scrollTop = sc.scrollHeight;
-  }
-
-  setStatusWord(word) { $("chat-statusword").textContent = word; }
-
-  /* ---- driving turns ---- */
-  async runStream(fn) {
-    this.setSending(true);
-    this.turnThink = null;
-    this.setWorkState(true, "generate");
-    try {
-      await fn();
-    } catch (e) {
-      if (!this.disposed) this.note(e.message);
-    } finally {
-      if (!this.disposed) {
-        this.finalize();
-        this.setSending(false);
-        this.refreshSnapshot();
-      }
-    }
-  }
-
-  async sendUser(text) {
-    this.lastUserAt = Date.now();
-    $("stream-inner").appendChild(el("div", { class: "user-msg" }, el("div", { class: "bubble" }, text)));
-    this.scrollDown(true);
-    await this.runStream(() => this.client.send(text));
-  }
-
-  onLifeState(life) {
-    this.life = life || null;
-    this.renderLifeState();
-    if (!this.lifeTimer) this.lifeTimer = setInterval(() => this.renderLifeState(), 1000);
-  }
-
-  renderLifeState() {
-    if (!this.life) return;
-    if (this.life.state === "working") {
-      this.setWorkState(true, "generate");
-      this.setStatusWord(t("life-working"));
-      return;
-    }
-    this.setWorkState(true, "life", { lifeText: lifeText(this.life) });
-    this.setStatusWord(lifeText(this.life));
-  }
-
-  async command(line, quiet) {
-    try {
-      const reply = await this.client.command(line);
-      if (!quiet && reply && reply.text) this.note(reply.text);
-      this.refreshSnapshot();
-      return reply;
-    } catch (e) {
-      if (!quiet) this.note(e.message);
-      return null;
-    }
-  }
-
-  /* ---- snapshot -> header + drawer ---- */
-  async refreshSnapshot() {
-    if (!this.client.open || this.client.streaming) return;
-    let snap;
-    try { snap = await this.client.snapshot(); } catch (e) { return; }
-    if (this.disposed) return;
-    this.snap = snap;
-    this.mode = snap.mode || this.mode;
-    this.showThinking = !!snap.show_thinking;
-    this.renderModeSeg();
-    $("net-btn").style.display = snap.net_on ? "none" : "flex";
-    $("net-btn").title = t("net-off-tip");
-    if (snap.rest_until && snap.rest_until * 1000 > Date.now()) this.setStatusWord(t("st-resting"));
-    if ($("drawer").classList.contains("open")) this.renderDrawerStatus();
-  }
-
-  renderModeSeg() {
-    document.querySelectorAll("#mode-seg span").forEach((s) =>
-      s.classList.toggle("on", s.dataset.mode === this.mode));
-  }
-
-  /* ---- drawer ---- */
-  async openDrawerTab(tab) {
-    document.querySelectorAll("#drawer-tabs span").forEach((s) => s.classList.toggle("on", s.dataset.p === tab));
-    document.querySelectorAll(".drawer-pane").forEach((p) => p.classList.toggle("on", p.id === tab));
-    if (tab === "d-status") this.renderDrawerStatus();
-    if (tab === "d-works") this.renderDrawerWorks();
-    if (tab === "d-memory" || tab === "d-skills") this.renderDrawerExtras(tab);
-  }
-
-  renderDrawerStatus() {
-    const snap = this.snap;
-    const pane = $("d-status");
-    pane.innerHTML = "";
-    if (!snap) return;
-    const pct = snap.context_max ? Math.min(100, Math.round(100 * snap.context_tokens / snap.context_max)) : 0;
-    pane.appendChild(el("div", { class: "dsec" },
-      el("h4", null, t("d-context")),
-      el("div", { class: "ctx-big" },
-        el("div", { class: "ring", style: `--p:${pct}` }),
-        el("div", { class: "nums" },
-          el("b", null, `${pct}%`),
-          el("div", null, `${(snap.context_tokens / 1000).toFixed(1)}k / ${(snap.context_max / 1000).toFixed(0)}k`)),
-        el("button", { class: "btn soft", onclick: () => this.command("/compact") }, t("d-tidy")))));
-    const memPct = snap.memory_max ? Math.min(100, Math.round(100 * snap.memory_chars / snap.memory_max)) : 0;
-    pane.appendChild(el("div", { class: "dsec" },
-      el("h4", null, t("d-memory")),
-      el("div", { class: "membar" },
-        el("div", { class: "lbl" }, el("span", null, t("d-memory")), el("span", null, `${snap.memory_chars} / ${snap.memory_max}`)),
-        el("div", { class: "bar" }, el("i", { style: `width:${memPct}%` })))));
-    pane.appendChild(el("div", { class: "dsec" },
-      el("h4", null, t("d-sandbox")),
-      el("div", { class: "sandbox-card" },
-        el("div", { class: "top" }, isoGlyph(snap.isolation), el("small", null, snap.model)),
-        el("div", { class: "paths" },
-          el("code", null, snap.workspace_root || ""),
-          el("code", null, snap.sandbox_root || "")))));
-    const netSwitch = el("button", { class: "switch" + (snap.net_on ? " on" : ""), onclick: async () => {
-      await this.command(snap.net_on ? "/net off" : "/net on", true);
-    } });
-    pane.appendChild(el("div", { class: "dsec" },
-      el("h4", null, t("d-net")),
-      el("div", { class: "switch-row" },
-        el("b", { style: "font-weight:550" }, t("d-net")),
-        el("small", null, t("d-net-sub")),
-        netSwitch)));
-  }
-
-  async renderDrawerWorks() {
-    const pane = $("d-works");
-    let works = [];
-    try { works = await hub.call("works.list", { name: this.name }, 20000); } catch (e) { /* */ }
-    pane.innerHTML = "";
-    if (!works.length) {
-      pane.appendChild(el("div", { class: "placeholder-pane" }, t("d-empty-works")));
-    } else {
-      let lastDay = "";
-      const icons = { image: "▣", web: "❖", audio: "♪", text: "≣", code: "⌨", file: "▢" };
-      for (const w of works) {
-        const day = new Date(w.mtime * 1000).toLocaleDateString();
-        if (day !== lastDay) {
-          lastDay = day;
-          const today = new Date().toLocaleDateString();
-          const yest = new Date(Date.now() - 86400000).toLocaleDateString();
-          pane.appendChild(el("div", { class: "day-label" }, day === today ? t("today") : day === yest ? t("yesterday") : day));
-        }
-        pane.appendChild(el("div", { class: "work-row", onclick: () => hub.call("works.open", { path: w.path }).catch((e) => toast(e.message, true)) },
-          el("div", { class: "wicon" }, icons[w.kind] || "▢"),
-          el("div", { class: "winfo" },
-            el("b", null, w.name),
-            el("span", null, new Date(w.mtime * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))),
-          el("button", { class: "reveal", title: "Finder", onclick: (ev) => {
-            ev.stopPropagation();
-            hub.call("works.open", { path: w.path, reveal: true }).catch((e) => toast(e.message, true));
-          } }, "⌖")));
-      }
-    }
-    pane.appendChild(el("button", { class: "drawer-foot-link", onclick: () => {
-      if (this.snap) hub.call("open.path", { path: this.snap.sandbox_root }).catch((e) => toast(e.message, true));
-    } }, t("open-sandbox")));
-  }
-
-  async renderDrawerExtras(tab) {
-    let extras = null;
-    try { extras = await hub.call("chara.extras", { name: this.name }, 20000); } catch (e) { return; }
-    if (tab === "d-memory") {
-      const pane = $("d-memory");
-      pane.innerHTML = "";
-      pane.appendChild(el("div", { class: "dsec" },
-        el("h4", null, t("d-mem-own")),
-        el("div", { class: "memory-text" }, extras.memory || t("d-empty-mem"))));
-      pane.appendChild(el("div", { class: "dsec" },
-        el("h4", null, t("d-mem-user")),
-        el("div", { class: "memory-text" }, extras.user_memory || t("d-empty-mem"))));
-    } else {
-      const pane = $("d-skills");
-      pane.innerHTML = "";
-      const snap = this.snap || {};
-      pane.appendChild(el("div", { class: "dsec" },
-        el("h4", null, t("d-toolpack")),
-        el("div", { class: "tool-chips" },
-          ...["terminal", "memory", "files", "goals", "skills", "speak", "rest"].map((n) => el("span", { class: "chip" }, n)))));
-      const goals = (extras.goals && (Array.isArray(extras.goals) ? extras.goals : extras.goals.goals)) || [];
-      pane.appendChild(el("div", { class: "dsec" },
-        el("h4", null, t("d-goals")),
-        ...(goals.length
-          ? goals.slice(0, 12).map((g) => el("div", { class: "goal" }, el("i"), el("span", null,
-              typeof g === "string" ? g : (g.text || g.title || JSON.stringify(g)).slice(0, 120))))
-          : [el("div", { class: "placeholder-pane" }, t("d-empty-goals"))])));
-    }
-  }
-
-  /* ---- permission requests, inline ---- */
-  onPermission(p) {
-    const box = el("div", { class: "sec", style: "max-width:430px;margin-left:40px" },
-      el("h3", null, `🔐 ${p.kind}`),
-      el("div", { class: "memory-text" }, p.reason || p.detail || ""),
-      el("div", { class: "acts", style: "margin-top:10px" },
-        el("button", { class: "btn soft", onclick: () => { this.client.permissionReply(p.id, false).catch(() => {}); box.remove(); } }, "✗"),
-        el("div", { class: "grow" }),
-        el("button", { class: "btn primary", onclick: () => { this.client.permissionReply(p.id, true).catch(() => {}); box.remove(); } }, "✓")));
-    $("stream-inner").appendChild(box);
-    this.scrollDown();
-  }
-
-  /* ---- composer & UI bindings ---- */
-  setSending(streaming) {
-    $("send-btn").textContent = streaming ? "■" : "↑";
-    $("send-btn").className = streaming ? "stop" : "send";
-  }
-
-  renderPalette() {
-    const rows = [
-      [t("cmd-compact"), "/compact", () => this.command("/compact")],
-      [t("cmd-quiet"), "/quiet 600", () => this.command("/quiet 600")],
-      [t("cmd-reasoning"), "/reasoning", () => this.command("/reasoning")],
-      [t("cmd-thinking"), "/thinking", async () => {
-        this.showThinking = !this.showThinking;
-        await this.command(`/thinking ${this.showThinking ? "on" : "off"}`);
-      }],
-      [t("cmd-net"), "/net", async () => {
-        const on = this.snap && this.snap.net_on;
-        await this.command(on ? "/net off" : "/net on");
-      }],
-    ];
-    const pal = $("palette");
-    pal.innerHTML = "";
-    for (const [label, raw, fn] of rows) {
-      pal.appendChild(el("div", { class: "row", onclick: () => { pal.classList.remove("open"); fn(); } },
-        el("span", null, label), el("span", { class: "raw" }, raw)));
-    }
-    pal.appendChild(el("div", { class: "row danger", onclick: () => {
-      pal.classList.remove("open");
-      if (confirm(t("reset-confirm"))) {
-        this.command("/reset").then(() => { $("stream-inner").innerHTML = ""; });
-      }
-    } }, el("span", null, t("cmd-reset")), el("span", { class: "raw" }, "/reset")));
-    pal.appendChild(el("div", { class: "hint" }, t("cmd-hint")));
-  }
-
-  bindUI() {
-    const input = $("composer-input");
-    input.value = "";
-    input.oninput = () => {
-      input.style.height = "auto";
-      input.style.height = Math.min(input.scrollHeight, 130) + "px";
-    };
-    input.onkeydown = (ev) => {
-      if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) {
-        ev.preventDefault();
-        this.submit();
-      }
-    };
-    $("send-btn").onclick = () => {
-      if (this.client.streaming) this.client.interrupt().catch(() => {});
-      else this.submit();
-    };
-    $("chat-back").onclick = () => show("board");
-    $("cmd-btn").onclick = () => $("palette").classList.toggle("open");
-    $("drawer-btn").onclick = () => {
-      $("drawer").classList.toggle("open");
-      $("drawer-btn").classList.toggle("on");
-      if ($("drawer").classList.contains("open")) this.openDrawerTab(document.querySelector("#drawer-tabs span.on").dataset.p);
-    };
-    $("drawer-tabs").onclick = (ev) => {
-      const s = ev.target.closest("span");
-      if (s) this.openDrawerTab(s.dataset.p);
-    };
-    $("mode-seg").onclick = async (ev) => {
-      const s = ev.target.closest("span");
-      if (!s || s.dataset.mode === this.mode) return;
-      this.mode = s.dataset.mode;
-      this.renderModeSeg();
-      await this.command(`/mode ${this.mode}`, true);
-    };
-    $("net-btn").onclick = () => this.command("/net on");
-  }
-
-  async submit() {
-    const input = $("composer-input");
-    const text = input.value.trim();
-    if (!text || this.client.streaming) return;
-    input.value = "";
-    input.style.height = "auto";
-    $("palette").classList.remove("open");
-    if (text.startsWith("/")) {
-      const reply = await this.command(text);
-      if (reply && reply.text) this.note(reply.text);
-      return;
-    }
-    await this.sendUser(text);
-  }
-}
-
-/* ============================ CREATE FLOW ============================ */
+/* ============================ CREATE FLOW（工坊：讲述 → 成形 → 落卡） ============================ */
+/* AI 重写链只跟这些段；名字对/用户设定/视觉/embodiment 单独渲染。 */
 const SECTION_DEFS = [
-  ["name", "sec-name"],
   ["description", "sec-description"],
   ["first_mes", "sec-first"],
   ["world_entries", "sec-world"],
@@ -1601,6 +1064,8 @@ const SECTION_DEFS = [
 function normalizeDraft(d) {
   const draft = Object.assign({}, d || {});
   draft.name = String(draft.name || "");
+  draft.user_name = String(draft.user_name || "");
+  draft.user_persona = String(draft.user_persona || "");
   draft.description = String(draft.description || draft.appearance || "");
   draft.first_mes = String(draft.first_mes || "");
   if (!Array.isArray(draft.world_entries)) {
@@ -1631,6 +1096,9 @@ function openCreateFlow() {
   renderTellStep(root, flow);
 }
 function closeCreateFlow() { $("overlay-flow").classList.remove("open"); }
+$("overlay-flow").addEventListener("click", (ev) => {
+  if (ev.target === $("overlay-flow")) closeCreateFlow();
+});
 
 function flowSteps(active) {
   const names = [t("flow-tell"), t("flow-shape")];
@@ -1680,6 +1148,20 @@ function safeSvgForPreview(svg) {
     !/<\s*\/?\s*text(?:\s|>|\/)/i.test(s) &&
     !/\son[a-zA-Z0-9_.:-]*\s*=/.test(s) &&
     !/\b(?:href|xlink:href)\s*=\s*["']\s*(?!#)[^"']+["']|url\(\s*["']?\s*(?!#)[^)]+/i.test(s);
+}
+
+/* user_name / user_persona ride extensions.lunamoth (engine support: 需求单 #9) */
+async function injectUserFields(path, flow) {
+  if (!flow.draft.user_name && !flow.draft.user_persona) return;
+  try {
+    const full = await hub.call("card.read", { path }, 20000);
+    if (!full.raw || !full.raw.data) return;
+    const ext = full.raw.data.extensions = full.raw.data.extensions || {};
+    const lm = ext.lunamoth = ext.lunamoth || {};
+    lm.user_name = flow.draft.user_name;
+    lm.user_persona = flow.draft.user_persona;
+    await hub.call("card.save", { data: full.raw, path }, 20000);
+  } catch (e) { /* the card itself is saved; user fields are best-effort */ }
 }
 
 function renderTellStep(root, flow) {
@@ -1737,7 +1219,10 @@ function renderShapeStep(root, flow) {
       const key = secEl.dataset.sec;
       const text = secEl.querySelector(".sec-text").textContent;
       putSection(flow.draft, key, text);
-      flow.versions[key][flow.versions[key].length - 1] = text;
+      if (flow.versions[key]) flow.versions[key][flow.versions[key].length - 1] = text;
+    });
+    inner.querySelectorAll("[data-plain]").forEach((node) => {
+      flow.draft[node.dataset.plain] = node.textContent.trim();
     });
   }
 
@@ -1751,51 +1236,19 @@ function renderShapeStep(root, flow) {
     inner.appendChild(el("div", { class: "draft-note" }, flow.draft.notes.join(" · ")));
   }
 
-  const avatarBox = el("div", { class: "avatar-preview" });
-  function refreshAvatarBox() {
-    avatarBox.innerHTML = "";
-    avatarBox.appendChild(safeSvgForPreview(flow.draft.avatar_svg)
-      ? el("img", { src: dataUriSvg(flow.draft.avatar_svg), alt: "" })
-      : el("span", null, glyphOf(flow.draft.name)));
+  // 1. 名字对：chara | 用户（鼓励改写的放最上）
+  function plainSec(key, labelKey, value) {
+    return el("div", { class: "sec" },
+      el("h3", null, t(labelKey)),
+      el("div", { class: "sec-text", contenteditable: "plaintext-only", "data-plain": key }, value || ""));
   }
-  refreshAvatarBox();
-  const svgText = el("textarea", { class: "svg-edit", placeholder: "<svg …" });
-  svgText.value = flow.draft.avatar_svg || "";
-  svgText.addEventListener("input", () => {
-    flow.draft.avatar_svg = svgText.value;
-    refreshAvatarBox();
-  });
-  const themeChip = el("div", { class: "theme-chip", style: `--card-theme:${flow.draft.theme_color || "#5B9FD4"}` }, t("theme-preview"));
-  const colorInput = el("input", { type: "color", value: flow.draft.theme_color || "#5B9FD4" });
-  colorInput.addEventListener("input", () => {
-    flow.draft.theme_color = colorInput.value.toUpperCase();
-    themeChip.style.cssText = `--card-theme:${flow.draft.theme_color}`;
-  });
-  const visualSec = el("div", { class: "sec visual-sec" },
-    el("h3", null, t("sec-visual")),
-    el("div", { class: "visual-row" },
-      avatarBox,
-      el("label", null, t("theme-color"), colorInput),
-      themeChip),
-    el("label", { class: "svg-label" }, t("avatar-svg-field"), svgText));
-  inner.appendChild(visualSec);
+  inner.appendChild(el("div", { class: "name-pair" },
+    plainSec("name", "sec-name", flow.draft.name),
+    plainSec("user_name", "sec-user-name", flow.draft.user_name)));
+  // 2. 用户自己的设定
+  inner.appendChild(plainSec("user_persona", "sec-user-persona", flow.draft.user_persona));
 
-  const embodiment = el("div", { class: "sec embodiment-sec" },
-    el("h3", null, t("sec-embodiment")),
-    el("div", { class: "embodiment-grid" },
-      ...["literal", "actor"].map((mode) => {
-        const opt = el("div", { class: "emb-option" + (flow.draft.embodiment === mode ? " on" : "") },
-          el("b", null, mode === "literal" ? "literal" : "actor"),
-          el("span", null, t("emb-" + mode)));
-        opt.addEventListener("click", () => {
-          flow.draft.embodiment = mode;
-          inner.querySelectorAll(".emb-option").forEach((n) => n.classList.remove("on"));
-          opt.classList.add("on");
-        });
-        return opt;
-      })));
-  inner.appendChild(embodiment);
-
+  // 3+4. chara 设定与其余（带 AI 版本链：原文→AI 稿→v2→手改，可回退）
   for (const [key, labelKey] of SECTION_DEFS) {
     const versions = flow.versions[key];
     const current = versions[versions.length - 1];
@@ -1835,6 +1288,51 @@ function renderShapeStep(root, flow) {
       textDiv));
   }
 
+  // 视觉与 embodiment 放最后（其余）
+  const avatarBox = el("div", { class: "avatar-preview" });
+  function refreshAvatarBox() {
+    avatarBox.innerHTML = "";
+    avatarBox.appendChild(safeSvgForPreview(flow.draft.avatar_svg)
+      ? el("img", { src: dataUriSvg(flow.draft.avatar_svg), alt: "" })
+      : el("span", null, glyphOf(flow.draft.name)));
+  }
+  refreshAvatarBox();
+  const svgText = el("textarea", { class: "svg-edit", placeholder: "<svg …" });
+  svgText.value = flow.draft.avatar_svg || "";
+  svgText.addEventListener("input", () => {
+    flow.draft.avatar_svg = svgText.value;
+    refreshAvatarBox();
+  });
+  const themeChip = el("div", { class: "theme-chip", style: `--card-theme:${flow.draft.theme_color || "#5B9FD4"}` }, t("theme-preview"));
+  const colorInput = el("input", { type: "color", value: flow.draft.theme_color || "#5B9FD4" });
+  colorInput.addEventListener("input", () => {
+    flow.draft.theme_color = colorInput.value.toUpperCase();
+    themeChip.style.cssText = `--card-theme:${flow.draft.theme_color}`;
+  });
+  inner.appendChild(el("div", { class: "sec visual-sec" },
+    el("h3", null, t("sec-visual")),
+    el("div", { class: "visual-row" },
+      avatarBox,
+      el("label", null, t("theme-color"), colorInput),
+      themeChip),
+    el("label", { class: "svg-label" }, t("avatar-svg-field"), svgText)));
+
+  const embodiment = el("div", { class: "sec embodiment-sec" },
+    el("h3", null, t("sec-embodiment")),
+    el("div", { class: "embodiment-grid" },
+      ...["literal", "actor"].map((mode) => {
+        const opt = el("div", { class: "emb-option" + (flow.draft.embodiment === mode ? " on" : "") },
+          el("b", null, mode === "literal" ? "literal" : "actor"),
+          el("span", null, t("emb-" + mode)));
+        opt.addEventListener("click", () => {
+          flow.draft.embodiment = mode;
+          inner.querySelectorAll(".emb-option").forEach((n) => n.classList.remove("on"));
+          opt.classList.add("on");
+        });
+        return opt;
+      })));
+  inner.appendChild(embodiment);
+
   root.appendChild(inner);
   root.appendChild(el("div", { class: "flow-bar" },
     el("button", { class: "btn text", onclick: () => { collect(); renderTellStep(root, flow); } }, t("back")),
@@ -1842,7 +1340,8 @@ function renderShapeStep(root, flow) {
     el("button", { class: "btn soft", onclick: async () => {
       collect();
       try {
-        await hub.call("card.from_draft", { draft: flow.draft, origin: flow.origin, as_draft: true }, 30000);
+        const r = await hub.call("card.from_draft", { draft: flow.draft, origin: flow.origin, as_draft: true }, 30000);
+        await injectUserFields(r.path, flow);
         toast(t("saved"));
         refreshHub();
       } catch (e) { toast(rpcErrText(e), true); }
@@ -1851,6 +1350,7 @@ function renderShapeStep(root, flow) {
       collect();
       try {
         const r = await hub.call("card.from_draft", { draft: flow.draft, origin: flow.origin }, 30000);
+        await injectUserFields(r.path, flow);
         await refreshHub();
         closeCreateFlow();
         const card = (state.hub.cards || []).find((c) => c.path === r.path) ||
@@ -1859,7 +1359,7 @@ function renderShapeStep(root, flow) {
           el("h2", null, t("card-made")),
           el("div", { class: "sub" }, t("wake-now-q")),
           el("div", { class: "acts", style: "margin-top:14px" },
-            el("button", { class: "btn text", onclick: () => { closeModal(); show("deck"); } }, t("later-deck")),
+            el("button", { class: "btn text", onclick: () => { closeModal(); navTo("#/deck"); } }, t("later-deck")),
             el("div", { class: "grow" }),
             el("button", { class: "btn primary big", onclick: () => { closeModal(); openWakeSheet(card); } }, t("deck-wake")))));
       } catch (e) { toast(rpcErrText(e), true); }

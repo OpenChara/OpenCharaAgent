@@ -2,11 +2,26 @@
    CharaClient (one living chat — the existing per-session gateway protocol). */
 "use strict";
 
+/* The CLI prints …/#token=X&ws=Y. We claim those once into sessionStorage and
+   hand the hash over to the router (#/chara/<name>…), so refresh/back work. */
 const BOOT = (() => {
   const params = new URLSearchParams(location.hash.slice(1));
+  let token = params.get("token") || "";
+  let wsPort = params.get("ws") || "";
+  if (token) {
+    try {
+      sessionStorage.setItem("lm-boot", JSON.stringify({ token, ws: wsPort }));
+    } catch (e) { /* private mode: keep in memory only */ }
+    history.replaceState(null, "", "#/");
+  } else {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem("lm-boot") || "null");
+      if (saved) { token = saved.token || ""; wsPort = saved.ws || ""; }
+    } catch (e) { /* corrupt */ }
+  }
   return {
-    token: params.get("token") || "",
-    wsPort: params.get("ws") || location.port,
+    token,
+    wsPort: wsPort || location.port,
     host: location.hostname || "127.0.0.1",
   };
 })();
