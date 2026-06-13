@@ -697,7 +697,13 @@ class CharaChild:
                     # "自发循环退避 · chara child exited" the operator kept seeing
                     # on every app restart). Only a model error while the child
                     # is still ALIVE is a genuine idle error.
-                    child_gone = self.proc is None or self.proc.returncode is not None
+                    # "child exited" can arrive (the stdout pipe closes) a beat
+                    # BEFORE proc.wait() sets returncode — so match the message
+                    # too, not just the returncode, or the race re-emits the
+                    # spurious "Idle backoff · chara child exited".
+                    msg0 = str(exc)
+                    child_gone = (self.proc is None or self.proc.returncode is not None
+                                  or "child exited" in msg0)
                     if self._stopping or child_gone:
                         return
                     msg = str(exc)

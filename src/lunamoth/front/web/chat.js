@@ -925,13 +925,23 @@ class ChatController {
   }
 
   renderLifeState() {
-    const life = this.life;
     const root = $("chat-root");
-    if (!life) return;
     if (this.client.streaming) {
       root.setAttribute("data-life", "working");
       return;
     }
+    // Autonomy off (the board/in-chat switch): the chara never self-works, so
+    // any stale autonomous life state (e.g. a past "backoff") must not linger —
+    // show a calm, factual "autonomy off".
+    const entry = this.entry();
+    if (entry && entry.paused) {
+      root.setAttribute("data-life", "");
+      this.setStatusWord(t("st-paused"));
+      $("composer-input").placeholder = t("composer-ph", { name: this.charName });
+      return;
+    }
+    const life = this.life;
+    if (!life) return;
     root.setAttribute("data-life", lifeAttr(life));
     this.setStatusWord(this.lifeWord(life));
     const resting = life.state === "resting";
