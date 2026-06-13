@@ -228,6 +228,93 @@ def test_anchor_refuses_when_only_the_head_remains():
     assert llm.calls == 0  # bailed before any summarizer spend
 
 
+# ---- prune old tool outputs in the LIVE window (audit #13) ------------------------------
+
+
+def _tool_pair(ctx, call_id, name, content):
+    ctx.add_message({"role": "assistant", "content": "", "tool_calls": [
+        {"id": call_id, "type": "function", "function": {"name": name, "arguments": "{}"}}]})
+    ctx.add_message({"role": "tool", "tool_call_id": call_id, "content": content})
+
+
+def test_live_prune_one_lines_old_tool_results():
+    # A fat old tool result in the live window is collapsed to a factual one-liner
+    # — its full content stays on disk, not in the in-memory API view.
+    ctx = ContextBuffer(max_tokens=10_000_000)
+    _tool_pair(ctx, "c1", "terminal", "OUTPUT\n" * 4000)  # ~28 KB, old
+    _fill(ctx, 10, 800)  # push it well past the protected tail
+    assert compaction.prune_live_tool_outputs(ctx) is True
+    tool_msg = next(m for m in ctx.messages if m.get("tool_call_id") == "c1")
+    assert tool_msg["content"].startswith("[terminal output pruned")
+    assert len(tool_msg["content"]) < 300  # the 28 KB payload is gone from the live window
+
+
+def test_live_prune_keeps_recent_tail_results_verbatim():
+    # A tool result inside the protected tail must NOT be pruned (it is recent work).
+    ctx = ContextBuffer(max_tokens=10_000_000)
+    _fill(ctx, 4, 200)
+    _tool_pair(ctx, "fresh", "read_file", "RECENT\n" * 400)  # newest, in the tail
+    before = ctx.messages[-1]["content"]
+    compaction.prune_live_tool_outputs(ctx)
+    assert ctx.messages[-1]["content"] == before  # untouched
+
+
+def test_live_prune_dedups_identical_old_results():
+    # The same file read twice: the OLDER copy collapses to a back-reference,
+    # the newer one is one-lined (both outside the tail) — no 6 KB duplicate.
+    ctx = ContextBuffer(max_tokens=10_000_000)
+    body = "SAME CONTENT\n" * 1000
+    _tool_pair(ctx, "a", "read_file", body)
+    _tool_pair(ctx, "b", "read_file", body)  # identical
+    _fill(ctx, 12, 800)  # both pushed past the tail
+    assert compaction.prune_live_tool_outputs(ctx) is True
+    older = next(m for m in ctx.messages if m.get("tool_call_id") == "a")
+    assert "duplicate tool output" in older["content"]
+
+
+def test_live_prune_is_idempotent():
+    ctx = ContextBuffer(max_tokens=10_000_000)
+    _tool_pair(ctx, "c1", "terminal", "OUT\n" * 4000)
+    _fill(ctx, 10, 800)
+    assert compaction.prune_live_tool_outputs(ctx) is True
+    assert compaction.prune_live_tool_outputs(ctx) is False  # nothing left to prune
+    assert len([m for m in ctx.messages if str(m.get("content", "")).startswith("[terminal output pruned")]) == 1
+
+
+def test_live_prune_noop_on_short_or_no_tool_outputs():
+    ctx = ContextBuffer(max_tokens=10_000_000)
+    _fill(ctx, 20, 500)  # plain chatter, no tool results
+    assert compaction.prune_live_tool_outputs(ctx) is False
+    ctx2 = ContextBuffer(max_tokens=10_000_000)
+    _tool_pair(ctx2, "c1", "read_file", "tiny")  # under the 200-char floor
+    _fill(ctx2, 10, 500)
+    assert compaction.prune_live_tool_outputs(ctx2) is False
+
+
+def test_compact_skips_llm_when_live_prune_alone_suffices():
+    # If one-lining old tool outputs drops the window back under threshold,
+    # compaction returns True WITHOUT spending a summarizer call.
+    ctx = ContextBuffer(max_tokens=10_000_000)
+    _tool_pair(ctx, "c1", "terminal", "X" * 60_000)  # one giant old result dominates
+    _fill(ctx, 6, 300)  # a small recent tail
+    llm = FakeLLM(summary="UNUSED")
+    assert _cp(ctx, 4000, llm) is True
+    assert llm.calls == 0  # no LLM summary needed — pruning alone did it
+    assert any(str(m.get("content", "")).startswith("[terminal output pruned") for m in ctx.messages)
+    assert not any(m.get("kind") == "summary" for m in ctx.messages)  # no summary row written
+
+
+def test_live_prune_does_not_persist():
+    # Pruning narrows the in-memory view only; like trim(), it must not re-persist.
+    persisted = []
+    ctx = ContextBuffer(max_tokens=10_000_000, persist=persisted.append)
+    _tool_pair(ctx, "c1", "terminal", "OUT\n" * 4000)
+    _fill(ctx, 10, 800)
+    n = len(persisted)
+    compaction.prune_live_tool_outputs(ctx)
+    assert len(persisted) == n  # zero new persist calls
+
+
 # ---- real usage preferred over the char heuristic (audit #8) ----------------------------
 
 
