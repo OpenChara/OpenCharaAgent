@@ -15,6 +15,7 @@ the hub reports comes from the documented stable interfaces: session dirs,
 from __future__ import annotations
 
 import base64
+import binascii
 import dataclasses
 import json
 import logging
@@ -26,6 +27,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -568,6 +570,25 @@ def _clean_theme_color(value: Any) -> str:
     return ""
 
 
+def _clean_theme(value: Any, legacy: Any = None) -> dict[str, str]:
+    """Normalize the dual theme `{primary, secondary}`; back-compat with the
+    legacy single `theme_color`. Returns only the keys that have a valid color
+    (an empty dict when nothing is set)."""
+    primary = ""
+    secondary = ""
+    if isinstance(value, dict):
+        primary = _clean_theme_color(value.get("primary"))
+        secondary = _clean_theme_color(value.get("secondary"))
+    if not primary:
+        primary = _clean_theme_color(legacy)
+    out: dict[str, str] = {}
+    if primary:
+        out["primary"] = primary
+    if secondary:
+        out["secondary"] = secondary
+    return out
+
+
 def _string_field(obj: dict[str, Any], key: str) -> str:
     value = obj.get(key)
     if not isinstance(value, str) or not value.strip():
@@ -672,15 +693,150 @@ def draft_card_from_inspiration(defaults: dict[str, str], inspiration: str, mode
 
 # ---- cards ---------------------------------------------------------------------
 
-_AVATAR_DRAFT_SYSTEM = """You design small decorative SVG avatars for a character card.
-Reply with STRICT JSON ONLY: one object, no markdown, no comments, no trailing prose:
-{"candidates": [{"avatar_svg": string, "theme_color": string}, ...]}
+_AVATAR_GENERATE_SYSTEM = """You design one small decorative SVG avatar for a character card.
+Reply with the raw SVG markup ONLY — no markdown fences, no commentary, no JSON.
 
 Requirements:
-- exactly 3 candidates, each a clearly DIFFERENT visual idea for the same character.
-- theme_color: a hex color like "#5B9FD4"; honor a color the user asks for, otherwise vary it per candidate.
-- avatar_svg: a SMALL decorative SVG, viewBox "0 0 64 64", <=1500 chars, flat geometric shapes, no text elements,
-  no scripts, no event attributes, no external references, and using that candidate's theme color."""
+- a SMALL decorative SVG, viewBox "0 0 64 64", <=1500 characters.
+- flat geometric shapes only; NO text elements, NO scripts, NO event attributes (on*=), NO external references.
+- start the output with "<svg" and end with "</svg>"."""
+
+
+def _strip_svg_fence(raw: str) -> str:
+    """Pull the <svg>…</svg> out of a model reply (markdown fence tolerant)."""
+    s = (raw or "").strip()
+    if s.startswith("```"):
+        s = re.sub(r"^```[a-zA-Z]*\s*", "", s)
+        s = re.sub(r"\s*```$", "", s).strip()
+    start = s.lower().find("<svg")
+    if start == -1:
+        return s
+    end = s.lower().rfind("</svg>")
+    if end == -1:
+        return s[start:]
+    return s[start:end + len("</svg>")]
+
+
+# ---- avatar sidecar storage --------------------------------------------------
+# The avatar is a SEPARATE file beside the card (the card stays the soul; the
+# avatar is presentation). Supported uploads: png/jpg/jpeg/svg.
+_AVATAR_EXTS = ("png", "jpg", "jpeg", "svg")
+_AVATAR_MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "svg": "image/svg+xml"}
+_AVATAR_MAX_BYTES = 1024 * 1024  # ~1MB cap
+# Magic-byte sniff so an uploaded ".png" really is one (defence in depth).
+_AVATAR_MAGIC = {"png": b"\x89PNG\r\n\x1a\n", "jpg": b"\xff\xd8\xff", "jpeg": b"\xff\xd8\xff"}
+
+
+def _avatar_sidecar_path(card_path: Path, ext: str) -> Path:
+    return card_path.with_name(f"{card_path.stem}.avatar.{ext}")
+
+
+def _writable_card_path(path: str) -> Path:
+    """A user-deck JSON card path we may edit, or a visible error."""
+    p = Path(str(path or ""))
+    if not p.is_file():
+        raise RpcError(-32035, f"no such card: {path}")
+    if user_cards_dir() not in p.parents:
+        raise RpcError(-32031, "only cards in the user deck can be edited")
+    if p.suffix.lower() != ".json":
+        raise RpcError(-32031, "avatar editing needs a JSON card (PNG cards are read-only here)")
+    return p
+
+
+def _avatar_data_uri(card_path: Path, card: "CharacterCard") -> str:
+    """Resolve a card's avatar to a data-URI: sidecar first, inline SVG fallback, else ''."""
+    sidecar = card.avatar_path()
+    if sidecar is not None:
+        ext = sidecar.suffix.lower().lstrip(".")
+        mime = _AVATAR_MIME.get(ext, "application/octet-stream")
+        data = base64.b64encode(sidecar.read_bytes()).decode("ascii")
+        return f"data:{mime};base64,{data}"
+    ext = card.extensions.get("lunamoth") if isinstance(card.extensions, dict) else None
+    if isinstance(ext, dict):
+        svg, _note = _sanitize_avatar_svg(ext.get("avatar_svg"))
+        if svg:
+            return "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg)
+    return ""
+
+
+def avatar_read(path: str) -> dict[str, Any]:
+    """The card's avatar as a data-URI an <img> can use (sidecar preferred)."""
+    p = Path(str(path or ""))
+    if not p.is_file():
+        raise RpcError(-32035, f"no such card: {path}")
+    try:
+        card = CharacterCard.load(p)
+    except Exception as exc:  # noqa: BLE001
+        raise RpcError(-32035, f"unreadable card: {exc}") from exc
+    return {"data_uri": _avatar_data_uri(p, card) or None}
+
+
+def avatar_upload(path: str, data_b64: str, ext: str) -> dict[str, Any]:
+    """Validate an uploaded avatar, write it as a sidecar, point the card at it.
+
+    Accepts png/jpg/jpeg/svg, caps at ~1MB. SVG must pass the same safety
+    checks as a generated one (script/foreignObject/text/event-handler/
+    external-ref free, viewBox 0 0 64 64). The inline `avatar_svg` fallback is
+    dropped once a sidecar exists — the sidecar is now the source of truth."""
+    target = _writable_card_path(path)
+    ext = str(ext or "").strip().lower().lstrip(".")
+    if ext == "jpeg":
+        ext = "jpeg"  # keep the extension the caller chose; mime is the same
+    if ext not in _AVATAR_EXTS:
+        raise RpcError(-32602, f"unsupported avatar type: .{ext} (allowed: {', '.join(_AVATAR_EXTS)})")
+    try:
+        raw = base64.b64decode(str(data_b64 or ""), validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise RpcError(-32602, f"avatar data is not valid base64: {exc}") from exc
+    if not raw:
+        raise RpcError(-32602, "avatar data is empty")
+    if len(raw) > _AVATAR_MAX_BYTES:
+        raise HubRpcError(-32602, "avatar is too large (max 1MB)",
+                          {"kind": "avatar_size", "detail": f"{len(raw)} bytes"})
+    if ext == "svg":
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise RpcError(-32602, f"SVG is not valid UTF-8: {exc}") from exc
+        svg, note = _sanitize_avatar_svg(text)
+        if not svg:
+            raise HubRpcError(-32050, "the SVG did not pass the safety checks",
+                              {"kind": "avatar_svg", "detail": note})
+        payload = svg.encode("utf-8")
+    else:
+        magic = _AVATAR_MAGIC.get(ext)
+        if magic and not raw.startswith(magic):
+            raise HubRpcError(-32602, f"the file does not look like a .{ext} image",
+                              {"kind": "avatar_type", "detail": "magic-byte mismatch"})
+        payload = raw
+    # One sidecar per card: remove any stale sidecar of a different extension.
+    for old in _AVATAR_EXTS:
+        sc = _avatar_sidecar_path(target, old)
+        if sc.name != _avatar_sidecar_path(target, ext).name and sc.exists():
+            try:
+                sc.unlink()
+            except OSError:
+                pass
+    sidecar = _avatar_sidecar_path(target, ext)
+    sidecar.write_bytes(payload)
+    # Point the card at the sidecar; drop the inline fallback (sidecar wins now).
+    raw_card = json.loads(target.read_text(encoding="utf-8"))
+    if not isinstance(raw_card, dict):
+        raise RpcError(-32602, "card is not a JSON object")
+    data = raw_card.get("data")
+    if not isinstance(data, dict):
+        data = raw_card["data"] = {}
+    ext_root = data.get("extensions")
+    if not isinstance(ext_root, dict):
+        ext_root = data["extensions"] = {}
+    lm = ext_root.get("lunamoth")
+    if not isinstance(lm, dict):
+        lm = ext_root["lunamoth"] = {}
+    lm["avatar_file"] = sidecar.name
+    lm.pop("avatar_svg", None)
+    target.write_text(json.dumps(raw_card, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"path": str(target), "avatar_file": sidecar.name,
+            "data_uri": f"data:{_AVATAR_MIME[ext]};base64,{base64.b64encode(payload).decode('ascii')}"}
 
 
 def _persona_summary_for_avatar(card_path: str) -> str:
@@ -696,46 +852,27 @@ def _persona_summary_for_avatar(card_path: str) -> str:
     return "\n".join(bits)
 
 
-def avatar_draft(defaults: dict[str, str], description: str = "", card_path: str = "",
-                 model: str = "") -> dict[str, Any]:
-    """Regenerate avatar candidates for an existing card (the deck's avatar editor).
+def avatar_generate(defaults: dict[str, str], description: str = "", card_path: str = "",
+                    model: str = "") -> dict[str, Any]:
+    """Generate exactly ONE sanitized avatar SVG with the GLOBAL DEFAULT model.
 
-    Unsafe SVG candidates are dropped, never repaired; zero usable candidates
-    is a visible error, not a fallback image.
-    """
+    No candidate picker, no fallback image: an unusable result is a visible
+    error. The caller confirms (uploads it as the sidecar) or cancels."""
     description = (description or "").strip()
     if not description and not card_path:
-        raise RpcError(-32602, "card.avatar_draft needs a description or card_path")
+        raise RpcError(-32602, "card.avatar_generate needs a description or card_path")
     parts: list[str] = []
     if card_path:
         parts.append("Character:\n" + _persona_summary_for_avatar(card_path))
     if description:
         parts.append("Requested direction:\n" + description)
-    raw = _complete(defaults, _AVATAR_DRAFT_SYSTEM, "\n\n".join(parts), model=model,
-                    max_tokens=4096, temperature=0.9, response_format={"type": "json_object"})
-    try:
-        obj = json.loads(raw.strip())
-    except json.JSONDecodeError as exc:
-        raise HubRpcError(-32050, f"the model did not return strict JSON ({exc.msg})",
-                          {"kind": "draft_json", "detail": str(exc)}) from exc
-    candidates = obj.get("candidates") if isinstance(obj, dict) else None
-    if not isinstance(candidates, list) or not candidates:
-        raise _invalid_draft("candidates must be a non-empty array")
-    kept: list[dict[str, str]] = []
-    notes: list[str] = []
-    for cand in candidates[:3]:
-        if not isinstance(cand, dict):
-            notes.append("candidate dropped: not an object")
-            continue
-        svg, note = _sanitize_avatar_svg(cand.get("avatar_svg"))
-        if not svg:
-            notes.append(note)
-            continue
-        kept.append({"avatar_svg": svg, "theme_color": _clean_theme_color(cand.get("theme_color"))})
-    if not kept:
-        raise HubRpcError(-32050, "the model returned no usable avatar candidates",
-                          {"kind": "draft_schema", "detail": "; ".join(notes) or "all candidates dropped"})
-    return {"candidates": kept, "notes": notes}
+    raw = _complete(defaults, _AVATAR_GENERATE_SYSTEM, "\n\n".join(parts), model=model,
+                    max_tokens=2048, temperature=0.9)
+    svg, note = _sanitize_avatar_svg(_strip_svg_fence(raw))
+    if not svg:
+        raise HubRpcError(-32050, "the model returned no usable avatar",
+                          {"kind": "avatar_svg", "detail": note or "empty"})
+    return {"avatar_svg": svg}
 
 
 def _card_sources() -> dict[str, list[str]]:
@@ -765,8 +902,10 @@ def _card_entry(path: Path, builtin: bool, refs: dict[str, list[str]]) -> dict[s
     avatar_svg = ""
     tagline = ""
     embodiment = ""
+    theme = card.theme_colors()
+    avatar_uri = _avatar_data_uri(path, card)
     if isinstance(ext, dict):
-        theme_color = _clean_theme_color(ext.get("theme_color"))
+        theme_color = theme.get("primary", "")
         avatar_svg = _sanitize_avatar_svg(ext.get("avatar_svg"))[0]
         tagline = str(ext.get("tagline") or "")
         embodiment = str(ext.get("embodiment") or "")
@@ -789,7 +928,9 @@ def _card_entry(path: Path, builtin: bool, refs: dict[str, list[str]]) -> dict[s
         "creator_notes": (card.creator_notes or "")[:300],
         "tagline": tagline[:160],
         "theme_color": theme_color,
+        "theme": {"primary": theme.get("primary", ""), "secondary": theme.get("secondary", "")},
         "avatar_svg": avatar_svg,
+        "avatar_uri": avatar_uri,
         "embodiment": embodiment if embodiment in ("literal", "actor") else "",
     }
 
@@ -877,11 +1018,19 @@ def _sanitize_card_extensions(card: dict[str, Any]) -> None:
         lunamoth["avatar_svg"] = svg
     else:
         lunamoth.pop("avatar_svg", None)
-    color = _clean_theme_color(lunamoth.get("theme_color"))
-    if color:
-        lunamoth["theme_color"] = color
+    # avatar_file (sidecar reference): keep only a bare, traversal-free filename.
+    af = lunamoth.get("avatar_file")
+    if isinstance(af, str) and af.strip() and "/" not in af and "\\" not in af and ".." not in af:
+        lunamoth["avatar_file"] = af.strip()
     else:
-        lunamoth.pop("theme_color", None)
+        lunamoth.pop("avatar_file", None)
+    # Dual theme {primary, secondary}; fold a legacy theme_color into primary.
+    theme = _clean_theme(lunamoth.get("theme"), lunamoth.get("theme_color"))
+    if theme:
+        lunamoth["theme"] = theme
+    else:
+        lunamoth.pop("theme", None)
+    lunamoth.pop("theme_color", None)
     if lunamoth.get("embodiment") not in ("literal", "actor"):
         lunamoth["embodiment"] = "literal"
 
@@ -900,10 +1049,13 @@ def _safe_extensions_for_ui(extensions: dict[str, Any]) -> dict[str, Any]:
         safe["avatar_svg"] = svg
     else:
         safe.pop("avatar_svg", None)
-    color = _clean_theme_color(safe.get("theme_color"))
-    if color:
-        safe["theme_color"] = color
+    theme = _clean_theme(safe.get("theme"), safe.get("theme_color"))
+    if theme:
+        safe["theme"] = theme
+        # Mirror primary into the legacy field so older renderers still color.
+        safe["theme_color"] = theme["primary"]
     else:
+        safe.pop("theme", None)
         safe.pop("theme_color", None)
     if safe.get("embodiment") not in ("literal", "actor"):
         safe["embodiment"] = ""
@@ -1891,9 +2043,9 @@ def draft_to_card(draft: dict[str, Any], origin_text: str = "", as_draft: bool =
         ext["toolpack"] = str(draft["toolpack_hint"])
     if draft.get("tagline"):
         ext["tagline"] = str(draft["tagline"]).strip()
-    color = _clean_theme_color(draft.get("theme_color"))
-    if color:
-        ext["theme_color"] = color
+    theme = _clean_theme(draft.get("theme"), draft.get("theme_color"))
+    if theme:
+        ext["theme"] = theme
     svg, _note = _sanitize_avatar_svg(draft.get("avatar_svg"))
     if svg:
         ext["avatar_svg"] = svg
@@ -2078,10 +2230,16 @@ class HubDispatcher:
             return weixin_qr(self._meta(p))
         if method == "weixin.qr_status":
             return weixin_qr_status(self._meta(p), str(p.get("qrcode") or ""))
-        if method == "card.avatar_draft":
-            return avatar_draft(load_defaults(), description=str(p.get("description") or ""),
-                                card_path=str(p.get("card_path") or p.get("path") or ""),
-                                model=str(p.get("model") or "") or _aux_model("avatar"))
+        if method == "card.avatar_generate":
+            # Uses the GLOBAL DEFAULT model (not the aux 'avatar' model).
+            return avatar_generate(load_defaults(), description=str(p.get("description") or ""),
+                                   card_path=str(p.get("card_path") or p.get("path") or ""),
+                                   model=str(p.get("model") or ""))
+        if method == "card.avatar_upload":
+            return avatar_upload(str(p.get("path") or ""), str(p.get("data_b64") or ""),
+                                 str(p.get("ext") or ""))
+        if method == "card.avatar_read":
+            return avatar_read(str(p.get("path") or ""))
         if method == "cards.list":
             return list_cards()
         if method == "card.read":

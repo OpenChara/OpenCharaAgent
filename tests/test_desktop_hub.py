@@ -375,7 +375,10 @@ def test_card_save_roundtrips_new_lunamoth_extension_fields():
     raw = result("card.read", {"path": r["path"]})["raw"]
     ext = raw["data"]["extensions"]["lunamoth"]
     assert ext["avatar_svg"].startswith("<svg")
-    assert ext["theme_color"] == "#7C5CFF"
+    # Presentation theme is now the dual {primary, secondary}; legacy single
+    # theme_color folds into primary on save.
+    assert ext["theme"]["primary"] == "#7C5CFF"
+    assert "theme_color" not in ext
     assert ext["embodiment"] == "actor"
     assert "tempo" not in ext
     assert ext["tagline"] == "A gentle keeper of orbital lanterns"

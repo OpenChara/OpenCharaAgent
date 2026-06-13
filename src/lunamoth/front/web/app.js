@@ -130,25 +130,45 @@ function dataUriSvg(svg) {
   return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
 }
 
-/* Shared avatar: SVG when the card has one, letter glyph otherwise. */
+/* The dual theme (presentation, not soul). Reads the new {primary,secondary}
+   and falls back to the legacy single theme_color (= primary). */
+function themeOf(card) {
+  const th = card && card.theme && typeof card.theme === "object" ? card.theme : {};
+  const primary = String(th.primary || (card && card.theme_color) || "");
+  const secondary = String(th.secondary || "");
+  return { primary, secondary };
+}
+function themeStyle(card) {
+  const { primary, secondary } = themeOf(card);
+  if (!primary) return "";
+  return `--card-theme:${primary}` + (secondary ? `;--card-theme-2:${secondary}` : "");
+}
+/* The avatar image source: sidecar data-URI first, then a portable inline SVG. */
+function avatarSrc(card) {
+  if (card && card.avatar_uri) return String(card.avatar_uri);
+  if (card && card.avatar_svg) return dataUriSvg(String(card.avatar_svg));
+  return "";
+}
+
+/* Shared avatar: image when the card has one, letter glyph otherwise. */
 function avatarNode(name, card, cls) {
-  const color = card && card.theme_color ? String(card.theme_color) : "";
-  const svg = card && card.avatar_svg ? String(card.avatar_svg) : "";
-  const attrs = { class: (cls || "avatar-s") + (color || svg ? "" : " " + paletteClass(name)) };
-  if (color) attrs.style = `--card-theme:${color}`;
+  const style = themeStyle(card);
+  const src = avatarSrc(card);
+  const attrs = { class: (cls || "avatar-s") + (style || src ? "" : " " + paletteClass(name)) };
+  if (style) attrs.style = style;
   const node = el("div", attrs);
-  if (svg) node.appendChild(el("img", { src: dataUriSvg(svg), alt: "" }));
+  if (src) node.appendChild(el("img", { src, alt: "" }));
   else node.appendChild(document.createTextNode(glyphOf(name)));
   return node;
 }
 
 function cardVisual(c, cls) {
-  const color = c && c.theme_color ? String(c.theme_color) : "";
-  const svg = c && c.avatar_svg ? String(c.avatar_svg) : "";
+  const style = themeStyle(c);
+  const src = avatarSrc(c);
   const attrs = { class: cls || "face" };
-  if (color) attrs.style = `--card-theme:${color}`;
+  if (style) attrs.style = style;
   const children = [];
-  if (svg) children.push(el("img", { class: "avatar-svg", src: dataUriSvg(svg), alt: "" }));
+  if (src) children.push(el("img", { class: "avatar-svg", src, alt: "" }));
   else children.push(el("div", { class: "glyph" }, glyphOf(c && c.name)));
   return el("div", attrs, ...children);
 }
@@ -517,12 +537,14 @@ function renderBoard() {
     const live = (s.status === "running" || s.status === "attached") && !s.paused;
     const st = statusOf(s);
     const deckCard = cardForSession(s.name);
+    const portraitSrc = avatarSrc(deckCard);
+    const portraitStyle = themeStyle(deckCard);
     const portrait = el("div", {
-      class: `portrait ${deckCard && (deckCard.avatar_svg || deckCard.theme_color) ? "" : paletteClass(s.char_name)}`,
-      style: deckCard && deckCard.theme_color ? `--card-theme:${deckCard.theme_color}` : "",
+      class: `portrait ${portraitSrc || portraitStyle ? "" : paletteClass(s.char_name)}`,
+      style: portraitStyle,
     });
-    if (deckCard && deckCard.avatar_svg) {
-      portrait.appendChild(el("img", { class: "avatar-svg", src: dataUriSvg(deckCard.avatar_svg), alt: "" }));
+    if (portraitSrc) {
+      portrait.appendChild(el("img", { class: "avatar-svg", src: portraitSrc, alt: "" }));
     } else {
       portrait.appendChild(el("div", { class: "glyph" }, glyphOf(s.char_name)));
     }
@@ -926,8 +948,9 @@ async function viewCard(c) {
   const isJson = !!full.raw;
   // builtin cards the backend refuses to save; frozen USER cards stay editable
   const editable = !c.builtin && isJson;
-  const card = { name: full.name, theme_color: c.theme_color || ext.theme_color || "",
-                 avatar_svg: c.avatar_svg || ext.avatar_svg || "" };
+  const card = { name: full.name, theme: c.theme || (ext.theme || null),
+                 theme_color: c.theme_color || ext.theme_color || "",
+                 avatar_uri: c.avatar_uri || "", avatar_svg: c.avatar_svg || ext.avatar_svg || "" };
   const avatar = avatarNode(full.name, card, "avatar-s");
   avatar.style.cursor = "pointer";
   avatar.title = t("av-title");
@@ -1571,8 +1594,16 @@ function normalizeDraft(d) {
   }
   if (!Array.isArray(draft.seed_goals)) draft.seed_goals = Array.isArray(draft.goals) ? draft.goals : [];
   draft.tagline = String(draft.tagline || "");
-  draft.theme_color = /^#[0-9a-fA-F]{6}$/.test(String(draft.theme_color || "")) ? String(draft.theme_color).toUpperCase() : "#5B9FD4";
+  const isHex = (v) => /^#[0-9a-fA-F]{6}$/.test(String(v || ""));
+  const th = draft.theme && typeof draft.theme === "object" ? draft.theme : {};
+  const primary = isHex(th.primary) ? String(th.primary).toUpperCase()
+    : (isHex(draft.theme_color) ? String(draft.theme_color).toUpperCase() : "#5B9FD4");
+  const secondary = isHex(th.secondary) ? String(th.secondary).toUpperCase() : "";
+  draft.theme = { primary, secondary };
+  delete draft.theme_color;
   draft.avatar_svg = String(draft.avatar_svg || "");
+  // A pending sidecar upload (raster avatar chosen before the card exists).
+  draft.pending_avatar = draft.pending_avatar || null;
   draft.embodiment = draft.embodiment === "actor" ? "actor" : "literal";
   return draft;
 }
@@ -1644,6 +1675,219 @@ function safeSvgForPreview(svg) {
     !/\b(?:href|xlink:href)\s*=\s*["']\s*(?!#)[^"']+["']|url\(\s*["']?\s*(?!#)[^)]+/i.test(s);
 }
 
+/* ---------- shared avatar controls (presentation editor) ----------
+   ONE builder for both the create flow and the deck editor. `work` is the
+   live model: { name, avatar_uri, avatar_svg, pending_avatar, theme }.
+   pending_avatar = a chosen raster file not yet on disk: {data_b64, ext, mime}.
+   No raw-SVG textarea — just preview, Upload, AI 生成 (loading → confirm/cancel),
+   and two theme-color pickers. opts.cardPath (optional) gives the generator the
+   character's persona for context; opts.disabled greys the editor (builtin). */
+const AVATAR_UPLOAD_MAX = 1024 * 1024;
+const AVATAR_EXTS = ["png", "jpg", "jpeg", "svg"];
+
+function buildAvatarControls(work, opts) {
+  opts = opts || {};
+  const disabled = !!opts.disabled;
+  work.theme = work.theme || { primary: "", secondary: "" };
+
+  const preview = el("div", { class: "av-preview" });
+  function previewSrc() {
+    if (work.pending_avatar) return `data:${work.pending_avatar.mime};base64,${work.pending_avatar.data_b64}`;
+    if (work.avatar_uri) return String(work.avatar_uri);
+    if (safeSvgForPreview(work.avatar_svg)) return dataUriSvg(work.avatar_svg);
+    return "";
+  }
+  function refresh() {
+    preview.innerHTML = "";
+    preview.style.cssText = themeStyle(work) || "";
+    const src = previewSrc();
+    if (src) preview.appendChild(el("img", { src, alt: "" }));
+    else preview.appendChild(document.createTextNode(glyphOf(work.name)));
+  }
+  refresh();
+
+  // ---- Upload (png/jpg/jpeg/svg) ----
+  const fileInput = el("input", { type: "file", accept: ".png,.jpg,.jpeg,.svg,image/png,image/jpeg,image/svg+xml",
+    style: "display:none" });
+  const uploadBtn = el("button", { class: "btn soft" }, t("av-upload"));
+  const upNote = el("div", { class: "av-note", style: "margin-top:6px" });
+  uploadBtn.disabled = disabled;
+  uploadBtn.addEventListener("click", () => { if (!disabled) fileInput.click(); });
+  fileInput.addEventListener("change", () => {
+    upNote.className = "av-note"; upNote.textContent = "";
+    const f = fileInput.files && fileInput.files[0];
+    fileInput.value = "";
+    if (!f) return;
+    const ext = (f.name.split(".").pop() || "").toLowerCase();
+    if (!AVATAR_EXTS.includes(ext)) {
+      upNote.className = "av-note err"; upNote.textContent = t("av-up-type"); return;
+    }
+    if (f.size > AVATAR_UPLOAD_MAX) {
+      upNote.className = "av-note err"; upNote.textContent = t("av-up-size"); return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const b64 = String(reader.result || "").split(",")[1] || "";
+      const mime = ext === "svg" ? "image/svg+xml" : (ext === "png" ? "image/png" : "image/jpeg");
+      // SVG safety is verified server-side on save; raster goes through as-is.
+      work.pending_avatar = { data_b64: b64, ext, mime };
+      work.avatar_uri = ""; work.avatar_svg = "";
+      refresh();
+    };
+    reader.onerror = () => { upNote.className = "av-note err"; upNote.textContent = t("av-up-read"); };
+    reader.readAsDataURL(f);
+  });
+
+  // ---- AI 生成 → loading (思考 Ns) → confirm/cancel ----
+  const aiDesc = el("input", { placeholder: t("av-ai-desc-ph") });
+  const aiBtn = el("button", { class: "btn soft" }, t("av-ai-go"));
+  const aiNote = el("div", { class: "av-note", style: "margin-top:6px" });
+  const aiActs = el("div", { class: "av-ai-confirm" });
+  aiBtn.disabled = disabled; aiDesc.disabled = disabled;
+  let thinkTimer = null;
+  function stopThinking() { if (thinkTimer) { clearInterval(thinkTimer); thinkTimer = null; } }
+  aiBtn.addEventListener("click", async () => {
+    if (disabled) return;
+    aiBtn.disabled = true; aiDesc.disabled = true;
+    aiActs.innerHTML = "";
+    aiNote.className = "av-note thinking";
+    const startedAt = Date.now();
+    const tick = () => { aiNote.textContent = t("av-ai-thinking", { n: Math.max(1, Math.round((Date.now() - startedAt) / 1000)) }); };
+    tick(); stopThinking(); thinkTimer = setInterval(tick, 1000);
+    let r;
+    try {
+      r = await hub.call("card.avatar_generate",
+        { card_path: opts.cardPath || "", description: aiDesc.value.trim() }, 180000);
+    } catch (e) {
+      stopThinking();
+      aiNote.className = "av-note err"; aiNote.textContent = rpcErrText(e);
+      aiBtn.disabled = false; aiDesc.disabled = false;
+      return;
+    }
+    stopThinking();
+    aiBtn.disabled = false; aiDesc.disabled = false;
+    const svg = String((r && r.avatar_svg) || "");
+    if (!safeSvgForPreview(svg)) {
+      aiNote.className = "av-note err"; aiNote.textContent = t("av-ai-bad"); return;
+    }
+    // Stage the result for confirm/cancel (do NOT touch work yet).
+    aiNote.className = "av-note"; aiNote.textContent = t("av-ai-confirm-q");
+    const thumb = el("div", { class: "av-cand", style: themeStyle(work) }, el("img", { src: dataUriSvg(svg), alt: "" }));
+    const confirmBtn = el("button", { class: "btn primary" }, t("av-ai-confirm-yes"));
+    const cancelBtn = el("button", { class: "btn text" }, t("av-ai-confirm-no"));
+    confirmBtn.addEventListener("click", () => {
+      // Confirmed: an SVG result is stored inline; the card editor will save it
+      // as the sidecar (uploads svg → sidecar) on save.
+      work.avatar_svg = svg; work.avatar_uri = ""; work.pending_avatar = null;
+      aiActs.innerHTML = ""; aiNote.textContent = ""; refresh();
+    });
+    cancelBtn.addEventListener("click", () => { aiActs.innerHTML = ""; aiNote.textContent = ""; });
+    aiActs.innerHTML = "";
+    aiActs.appendChild(thumb);
+    aiActs.appendChild(el("div", { class: "av-ai-confirm-acts" }, confirmBtn, cancelBtn));
+  });
+
+  // ---- two theme color pickers (applied LIVE) ----
+  function picker(slot, fallback) {
+    const cur = /^#[0-9a-fA-F]{6}$/.test(String(work.theme[slot] || ""))
+      ? String(work.theme[slot]).toUpperCase() : fallback;
+    const input = el("input", { type: "color", value: cur });
+    input.disabled = disabled;
+    if (!work.theme[slot] && slot === "primary") work.theme.primary = fallback;
+    input.addEventListener("input", () => { work.theme[slot] = input.value.toUpperCase(); refresh(); });
+    return input;
+  }
+  const primaryPick = picker("primary", "#5B9FD4");
+  const secondaryPick = picker("secondary", "#FFFFFF");
+  // Secondary starts blank unless the card already declares one.
+  if (!work.theme.secondary) secondaryPick.classList.add("av-color-unset");
+  const clearSecondary = el("button", { class: "btn text tiny", title: t("av-color-clear") }, "×");
+  clearSecondary.disabled = disabled;
+  clearSecondary.addEventListener("click", () => {
+    work.theme.secondary = ""; secondaryPick.classList.add("av-color-unset"); refresh();
+  });
+  secondaryPick.addEventListener("input", () => secondaryPick.classList.remove("av-color-unset"));
+
+  const node = el("div", { class: "av-controls" },
+    el("div", { class: "av-top" }, preview,
+      el("div", { class: "av-side" },
+        el("div", { class: "av-sec" }, el("h4", null, t("av-image")),
+          el("div", { class: "av-row" }, uploadBtn), upNote, fileInput),
+        el("div", { class: "av-sec" }, el("h4", null, t("av-ai")),
+          el("div", { class: "av-ai-row" }, aiDesc, aiBtn), aiNote, aiActs))),
+    el("div", { class: "av-sec" }, el("h4", null, t("av-colors")),
+      el("div", { class: "av-color-row" },
+        el("label", { class: "av-color" }, el("span", null, t("av-color-primary")), primaryPick),
+        el("label", { class: "av-color" }, el("span", null, t("av-color-secondary")), secondaryPick, clearSecondary))));
+  return { node, refresh };
+}
+
+/* The new avatar/theme editor for a deck card. Soul untouched: only the avatar
+   (sidecar) and the dual theme. Upload → sidecar; AI 生成 → confirm → sidecar.
+   Builtin cards are read-only (copy first). */
+async function openAvatarEditor(deckCard) {
+  let full;
+  try {
+    full = await hub.call("card.read", { path: deckCard.path }, 20000);
+  } catch (e) { toast(rpcErrText(e), true); return; }
+  if (!full.raw || !full.raw.data) { toast(t("av-png-note"), true); return; }
+  const data = full.raw.data;
+  const ext0 = (data.extensions && data.extensions.lunamoth) || {};
+  const theme0 = themeOf({ theme: ext0.theme, theme_color: ext0.theme_color });
+  const work = {
+    name: full.name,
+    avatar_uri: String(deckCard.avatar_uri || ""),
+    avatar_svg: "",            // sidecar/inline is authoritative; staged only on change
+    pending_avatar: null,
+    theme: { primary: theme0.primary || "", secondary: theme0.secondary || "" },
+  };
+  const builtin = !!deckCard.builtin;
+  const { node } = buildAvatarControls(work, { cardPath: deckCard.path, disabled: builtin });
+
+  const saveBtn = el("button", { class: "btn primary" }, t("save"));
+  saveBtn.disabled = builtin;
+  saveBtn.addEventListener("click", async () => {
+    saveBtn.disabled = true;
+    try {
+      // 1) avatar: a new file (upload or confirmed SVG) goes to the sidecar.
+      if (work.pending_avatar) {
+        await hub.call("card.avatar_upload",
+          { path: deckCard.path, data_b64: work.pending_avatar.data_b64, ext: work.pending_avatar.ext }, 30000);
+      } else if (work.avatar_svg) {
+        const b64 = btoa(unescape(encodeURIComponent(work.avatar_svg)));
+        await hub.call("card.avatar_upload", { path: deckCard.path, data_b64: b64, ext: "svg" }, 30000);
+      }
+      // 2) theme: write the dual theme back into the card (re-read to avoid
+      //    clobbering the avatar_file the upload just set).
+      const fresh = await hub.call("card.read", { path: deckCard.path }, 20000);
+      const fdata = (fresh.raw && fresh.raw.data) || data;
+      const lm = (fdata.extensions = fdata.extensions || {}).lunamoth = (fdata.extensions.lunamoth || {});
+      const th = { primary: work.theme.primary || "", secondary: work.theme.secondary || "" };
+      if (th.primary || th.secondary) lm.theme = th; else delete lm.theme;
+      delete lm.theme_color;
+      await hub.call("card.save", { data: fresh.raw, path: deckCard.path }, 20000);
+      toast(t("saved"));
+      closeModal();
+      await refreshHub();
+      if (state.chat) state.chat.refreshIdentity();
+    } catch (e) {
+      saveBtn.disabled = false;
+      toast(rpcErrText(e), true);
+    }
+  });
+
+  openModal(el("div", null,
+    el("h2", null, `${full.name} · ${t("av-title")}`),
+    builtin ? el("div", { class: "av-note amber", style: "margin-bottom:12px" }, t("av-builtin-note")) : null,
+    (!builtin && deckCard.frozen) ? el("div", { class: "av-note", style: "margin-bottom:12px" },
+      t("av-frozen-note", { names: (deckCard.used_by || []).join("、") })) : null,
+    node,
+    el("div", { class: "acts", style: "margin-top:14px" },
+      el("button", { class: "btn text", onclick: closeModal }, t("cancel")),
+      el("div", { class: "grow" }),
+      saveBtn)), true);
+}
+
 /* user_name / user_persona ride extensions.lunamoth (engine support: 需求单 #9) */
 async function injectUserFields(path, flow) {
   if (!flow.draft.user_name && !flow.draft.user_persona) return;
@@ -1656,6 +1900,17 @@ async function injectUserFields(path, flow) {
     lm.user_persona = flow.draft.user_persona;
     await hub.call("card.save", { data: full.raw, path }, 20000);
   } catch (e) { /* the card itself is saved; user fields are best-effort */ }
+}
+
+/* A raster avatar chosen during creation becomes the card's sidecar once the
+   card exists on disk. (SVG avatars ride the draft inline and are sidecar'd by
+   from_draft's avatar_svg path; raster needs this upload step.) */
+async function injectPendingAvatar(path, flow) {
+  const pa = flow.draft.pending_avatar;
+  if (!pa || !pa.data_b64) return;
+  try {
+    await hub.call("card.avatar_upload", { path, data_b64: pa.data_b64, ext: pa.ext }, 30000);
+  } catch (e) { toast(rpcErrText(e), true); }
 }
 
 function renderTellStep(root, flow) {
@@ -1744,6 +1999,7 @@ function renderShapeStep(root, flow) {
     inner.querySelectorAll("[data-plain]").forEach((node) => {
       flow.draft[node.dataset.plain] = node.textContent.trim();
     });
+    if (flow._syncAvatar) flow._syncAvatar();
   }
 
   // the telling never disappears — that is this step's core reassurance
@@ -1808,34 +2064,25 @@ function renderShapeStep(root, flow) {
       textDiv));
   }
 
-  // 视觉与 embodiment 放最后（其余）
-  const avatarBox = el("div", { class: "avatar-preview" });
-  function refreshAvatarBox() {
-    avatarBox.innerHTML = "";
-    avatarBox.appendChild(safeSvgForPreview(flow.draft.avatar_svg)
-      ? el("img", { src: dataUriSvg(flow.draft.avatar_svg), alt: "" })
-      : el("span", null, glyphOf(flow.draft.name)));
-  }
-  refreshAvatarBox();
-  const svgText = el("textarea", { class: "svg-edit", placeholder: "<svg …" });
-  svgText.value = flow.draft.avatar_svg || "";
-  svgText.addEventListener("input", () => {
-    flow.draft.avatar_svg = svgText.value;
-    refreshAvatarBox();
-  });
-  const themeChip = el("div", { class: "theme-chip", style: `--card-theme:${flow.draft.theme_color || "#5B9FD4"}` }, t("theme-preview"));
-  const colorInput = el("input", { type: "color", value: flow.draft.theme_color || "#5B9FD4" });
-  colorInput.addEventListener("input", () => {
-    flow.draft.theme_color = colorInput.value.toUpperCase();
-    themeChip.style.cssText = `--card-theme:${flow.draft.theme_color}`;
-  });
+  // 视觉（头像 + 双主题色）：与卡片编辑器共用一套控件。上传/AI 生成在卡片落地
+  // 后才能写 sidecar——这里把选择暂存在 draft 上，from_draft 之后再上传。
+  const avWork = {
+    name: flow.draft.name,
+    avatar_uri: "",
+    avatar_svg: flow.draft.avatar_svg || "",
+    pending_avatar: flow.draft.pending_avatar || null,
+    theme: flow.draft.theme || { primary: "#5B9FD4", secondary: "" },
+  };
+  const { node: avNode } = buildAvatarControls(avWork, {});
+  // Mirror the live edits back onto the draft so collect()/save sees them.
+  flow._syncAvatar = () => {
+    flow.draft.avatar_svg = avWork.avatar_svg || "";
+    flow.draft.pending_avatar = avWork.pending_avatar || null;
+    flow.draft.theme = { primary: avWork.theme.primary || "", secondary: avWork.theme.secondary || "" };
+  };
   inner.appendChild(el("div", { class: "sec visual-sec" },
     el("h3", null, t("sec-visual")),
-    el("div", { class: "visual-row" },
-      avatarBox,
-      el("label", null, t("theme-color"), colorInput),
-      themeChip),
-    el("label", { class: "svg-label" }, t("avatar-svg-field"), svgText)));
+    avNode));
 
   const embodiment = el("div", { class: "sec embodiment-sec" },
     el("h3", null, t("sec-embodiment")),
@@ -1862,6 +2109,7 @@ function renderShapeStep(root, flow) {
       try {
         const r = await hub.call("card.from_draft", { draft: flow.draft, origin: flow.origin, as_draft: true }, 30000);
         await injectUserFields(r.path, flow);
+        await injectPendingAvatar(r.path, flow);
         toast(t("saved"));
         refreshHub();
       } catch (e) { toast(rpcErrText(e), true); }
@@ -1871,6 +2119,7 @@ function renderShapeStep(root, flow) {
       try {
         const r = await hub.call("card.from_draft", { draft: flow.draft, origin: flow.origin }, 30000);
         await injectUserFields(r.path, flow);
+        await injectPendingAvatar(r.path, flow);
         await refreshHub();
         closeCreateFlow();
         const card = (state.hub.cards || []).find((c) => c.path === r.path) ||

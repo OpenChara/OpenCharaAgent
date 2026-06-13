@@ -110,6 +110,11 @@ body.col-resizing *{cursor:col-resize !important}
   background:radial-gradient(circle at 50% 30%, rgba(255,255,255,.22), transparent 36%),
     linear-gradient(165deg, rgba(8,23,39,.88), var(--card-theme));
 }
+/* Dual theme: when a secondary color is set, blend both. */
+.portrait[style*="--card-theme-2"]{
+  background:radial-gradient(circle at 50% 30%, rgba(255,255,255,.22), transparent 36%),
+    linear-gradient(165deg, var(--card-theme), var(--card-theme-2));
+}
 .dot{
   position:absolute; right:12px; bottom:12px; width:11px; height:11px; border-radius:50%;
   border:2px solid rgba(255,255,255,.9);
@@ -201,6 +206,7 @@ body.col-resizing *{cursor:col-resize !important}
 }
 .avatar-s img{width:100%;height:100%;object-fit:contain;border-radius:inherit}
 .avatar-s[style*="--card-theme"]{background:linear-gradient(160deg, rgba(8,23,39,.85), var(--card-theme))}
+.avatar-s[style*="--card-theme-2"]{background:linear-gradient(160deg, var(--card-theme), var(--card-theme-2))}
 .avatar-btn{border:none;cursor:pointer;padding:0}
 .avatar-btn:hover{box-shadow:0 0 0 2px color-mix(in srgb, var(--chara-accent) 28%, transparent)}
 .avatar-s .mini-dot{
@@ -657,6 +663,10 @@ body.dark .ctx-big .ctx-ring.hot{background:conic-gradient(var(--amber) calc(var
   background:radial-gradient(circle at 50% 35%, rgba(255,255,255,.24), transparent 34%),
     linear-gradient(165deg, rgba(8,23,39,.88), var(--card-theme));
 }
+.spine .face[style*="--card-theme-2"]{
+  background:radial-gradient(circle at 50% 35%, rgba(255,255,255,.24), transparent 34%),
+    linear-gradient(165deg, var(--card-theme), var(--card-theme-2));
+}
 .spine .face .glyph{
   position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
   font-size:44px; font-weight:200; color:rgba(255,255,255,.85);
@@ -783,33 +793,45 @@ details.cv-raw pre{
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
 
-/* ---------- 头像编辑器 ---------- */
-.av-top{display:flex; gap:18px; align-items:center; margin-bottom:14px}
+/* ---------- 头像 / 主题编辑器（presentation only） ---------- */
+.av-top{display:flex; gap:18px; align-items:flex-start; margin-bottom:14px}
+.av-side{flex:1; min-width:0}
 .av-preview{
   width:96px;height:96px;border-radius:22px;flex:none;display:flex;align-items:center;justify-content:center;
   background:linear-gradient(160deg,rgba(91,159,212,.12),rgba(20,40,60,.05));
   box-shadow:inset 0 0 0 1px var(--hairline-2); color:var(--text-3); font-size:36px;
 }
+.av-preview[style*="--card-theme"]{background:linear-gradient(160deg, rgba(8,23,39,.85), var(--card-theme))}
+.av-preview[style*="--card-theme-2"]{background:linear-gradient(160deg, var(--card-theme), var(--card-theme-2))}
 .av-preview img{width:84px;height:84px;object-fit:contain}
 .av-sec{margin-bottom:14px}
 .av-sec h4{font-size:11px;font-weight:600;color:var(--text-3);text-transform:uppercase;letter-spacing:.7px;margin-bottom:7px}
+.av-row{display:flex; gap:8px; align-items:center}
 .av-note{font-size:11.5px;color:var(--text-3);line-height:1.6;overflow-wrap:anywhere}
 .av-note.amber{color:var(--amber)}
 .av-note.err{color:var(--red)}
+.av-note.thinking{color:var(--accent); animation:av-pulse 1.4s ease-in-out infinite}
+@keyframes av-pulse{0%,100%{opacity:.55}50%{opacity:1}}
 .av-ai-row{display:flex; gap:7px; align-items:center}
 .av-ai-row input{
   flex:1; min-width:0; font:inherit; font-size:12px; padding:6px 10px; border-radius:7px;
   border:1px solid var(--hairline); background:var(--panel); color:var(--text); outline:none;
 }
 .av-ai-row input:focus{border-color:var(--accent)}
-.av-cands{display:flex; gap:8px; margin-top:9px}
+.av-ai-confirm{display:flex; gap:12px; align-items:center; margin-top:9px; flex-wrap:wrap}
+.av-ai-confirm-acts{display:flex; gap:8px; align-items:center}
 .av-cand{
-  width:56px; height:56px; border:1px solid var(--hairline-2); border-radius:14px; cursor:pointer;
-  padding:6px; display:flex; align-items:center; justify-content:center;
+  width:56px; height:56px; border:1px solid var(--hairline-2); border-radius:14px;
+  padding:6px; display:flex; align-items:center; justify-content:center; flex:none;
   background:linear-gradient(160deg, rgba(8,23,39,.85), var(--card-theme,#5B9FD4));
 }
-.av-cand:hover{box-shadow:0 0 0 2px var(--accent)}
+.av-cand[style*="--card-theme-2"]{background:linear-gradient(160deg, var(--card-theme), var(--card-theme-2))}
 .av-cand img{width:100%; height:100%; object-fit:contain}
+.av-color-row{display:flex; gap:18px; flex-wrap:wrap}
+.av-color{display:flex; align-items:center; gap:8px; font-size:12px; color:var(--text-2)}
+.av-color input[type=color]{width:42px;height:30px;border:1px solid var(--hairline);border-radius:8px;background:none;padding:2px;cursor:pointer}
+.av-color input[type=color].av-color-unset{opacity:.45}
+.btn.tiny{padding:2px 8px;font-size:15px;line-height:1}
 
 /* ---------- 网关（右侧面板「网关」页） ---------- */
 .gw-plats{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px}
@@ -971,22 +993,8 @@ details.cv-raw pre{
 .sec .sec-text:focus{background:rgba(91,159,212,.05)}
 .name-pair{display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px}
 .name-pair .sec{margin-bottom:0}
-.visual-row{display:flex; align-items:center; gap:14px; flex-wrap:wrap}
-.avatar-preview{
-  width:76px;height:76px;border-radius:17px;display:flex;align-items:center;justify-content:center;
-  background:linear-gradient(160deg,rgba(91,159,212,.12),rgba(20,40,60,.05));
-  box-shadow:inset 0 0 0 1px var(--hairline-2); color:var(--text-3); font-size:28px;
-}
-.avatar-preview img{width:66px;height:66px;object-fit:contain}
-.visual-row label{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2)}
-.visual-row input[type=color]{width:42px;height:30px;border:1px solid var(--hairline);border-radius:8px;background:none;padding:2px}
-.theme-chip{font-size:12px;color:#fff;background:var(--card-theme);border-radius:99px;padding:6px 12px;box-shadow:0 6px 18px rgba(10,30,50,.14)}
-.svg-label{display:block;margin-top:10px;font-size:12px;color:var(--text-2)}
-.svg-edit{
-  width:100%;min-height:72px;margin-top:5px;border:1px solid var(--hairline-2);border-radius:8px;
-  background:rgba(20,40,60,.025);color:var(--text-2);font:11px/1.45 var(--mono);padding:8px;resize:vertical;outline:none;
-}
-.svg-edit:focus{border-color:var(--accent)}
+/* the create-flow visual step reuses .av-controls (the shared avatar editor) */
+.visual-sec .av-controls{margin-top:4px}
 .embodiment-grid{display:grid; grid-template-columns:1fr 1fr; gap:9px}
 .emb-option{border:1px solid var(--hairline-2); border-radius:10px; padding:10px 11px; cursor:pointer; background:rgba(20,40,60,.025)}
 .emb-option.on{border-color:var(--accent); background:var(--accent-soft); box-shadow:0 0 0 1px var(--accent)}
@@ -1138,8 +1146,7 @@ body.dark .draft-badge{background:rgba(35,42,49,.85); color:var(--text)}
 body.dark .palette .row:hover{background:rgba(91,159,212,.14)}
 body.dark .tell-box{background:var(--panel); color:var(--text)}
 body.dark .emb-option{background:rgba(255,255,255,.035); border-color:var(--hairline)}
-body.dark .avatar-preview,body.dark .av-preview{background:rgba(255,255,255,.05)}
-body.dark .svg-edit{background:rgba(255,255,255,.035);border-color:var(--hairline)}
+body.dark .av-preview{background:rgba(255,255,255,.05)}
 body.dark .settings-nav button.on{background:rgba(91,159,212,.18)}
 body.dark .empty-state{color:var(--text-3)}
 body.dark .check-row{background:rgba(255,255,255,.05)}

@@ -14,6 +14,16 @@ from .worldinfo import Lorebook, apply_macros, entry_to_book_dict
 _CJK = re.compile(r"[\u4e00-\u9fff]")
 
 
+_HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
+def _clean_hex(value: Any) -> str:
+    """An #RRGGBB color (upper-cased), or '' — presentation only, never raises."""
+    if isinstance(value, str) and _HEX_RE.match(value.strip()):
+        return value.strip().upper()
+    return ""
+
+
 def detect_language(source_path: str = "", text: str = "") -> str:
     """A card's language comes from the card, not a user toggle.
 
@@ -152,6 +162,55 @@ class CharacterCard:
         else:
             out.pop("goals", None)
         return out
+
+    def theme_colors(self) -> dict[str, str]:
+        """The card's dual theme `{primary, secondary}` (presentation, not soul).
+
+        Lives in `extensions.lunamoth.theme = {"primary": "#RRGGBB",
+        "secondary": "#RRGGBB"}`. Back-compat: a card carrying only the legacy
+        single `theme_color` is read as `{primary: that, secondary: ""}`. Bad
+        or missing values come back empty (the renderer falls back to a glyph
+        palette). Never raises — a malformed theme must not break a card.
+        """
+        ext = self.extensions.get("lunamoth")
+        if not isinstance(ext, dict):
+            return {"primary": "", "secondary": ""}
+        primary = ""
+        secondary = ""
+        theme = ext.get("theme")
+        if isinstance(theme, dict):
+            primary = _clean_hex(theme.get("primary"))
+            secondary = _clean_hex(theme.get("secondary"))
+        if not primary:
+            primary = _clean_hex(ext.get("theme_color"))
+        return {"primary": primary, "secondary": secondary}
+
+    def avatar_file(self) -> str:
+        """Relative filename of the avatar sidecar, or '' (presentation field).
+
+        The avatar is a separate file beside the card (png/jpg/jpeg/svg);
+        `extensions.lunamoth.avatar_file` holds its name. Traversal-bearing
+        values (path separators / parent refs) are refused — the sidecar must
+        sit in the card's own directory.
+        """
+        ext = self.extensions.get("lunamoth")
+        if not isinstance(ext, dict):
+            return ""
+        val = ext.get("avatar_file")
+        if not isinstance(val, str):
+            return ""
+        name = val.strip()
+        if not name or "/" in name or "\\" in name or ".." in name:
+            return ""
+        return name
+
+    def avatar_path(self) -> Path | None:
+        """The resolved sidecar path if it exists on disk, else None."""
+        name = self.avatar_file()
+        if not name or not self.source_path:
+            return None
+        p = Path(self.source_path).parent / name
+        return p if p.is_file() else None
 
     def render_system(self, user: str = "User") -> str:
         """Build the persona system block, roughly the way SillyTavern composes it."""

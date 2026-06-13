@@ -1,5 +1,5 @@
 """Web-facing hub RPC batch: works.read, messaging.get/save (masked secrets),
-card.avatar_draft, weixin.qr / weixin.qr_status (server/hub.py).
+card.avatar_generate/upload/read, weixin.qr / weixin.qr_status (server/hub.py).
 
 Everything runs against a temp LUNAMOTH_HOME; no network (provider and iLink
 HTTP calls are monkeypatched)."""
@@ -154,52 +154,137 @@ def test_messaging_save_merges_per_the_web_form_contract():
     assert "wecom" not in on_disk["adapters"]
 
 
-# ---- card.avatar_draft -------------------------------------------------------------
+# ---- avatar: generate / upload / read ---------------------------------------------
 
 GOOD_SVG = '<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="20" fill="#7C5CFF"/></svg>'
+# A 1x1 transparent PNG (valid magic bytes).
+PNG_1PX = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+           b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00"
+           b"\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82")
 
 
-def test_avatar_draft_keeps_safe_candidates_and_notes_dropped(monkeypatch):
+def _b64(data):
+    import base64
+    return base64.b64encode(data).decode("ascii")
+
+
+def _make_user_card(name="Tester"):
+    """A minimal editable JSON card in the user deck; returns its path."""
+    out = result("card.save", {"data": {"spec": "chara_card_v3", "spec_version": "3.0",
+                                         "data": {"name": name, "description": "d"}}})
+    return out["path"]
+
+
+def test_avatar_generate_uses_the_default_model_single_svg(monkeypatch):
     set_defaults()
-    canned = {"candidates": [
-        {"avatar_svg": GOOD_SVG, "theme_color": "#7c5cff"},
-        {"avatar_svg": '<svg viewBox="0 0 64 64"><script>x</script></svg>', "theme_color": "#000000"},
-        {"avatar_svg": GOOD_SVG.replace("circle", "rect"), "theme_color": "nope"},
-    ]}
-    monkeypatch.setattr(H, "_complete", lambda *a, **k: json.dumps(canned))
-    out = result("card.avatar_draft", {"description": "a quiet blue moth"})
-    assert len(out["candidates"]) == 2
-    assert out["candidates"][0]["theme_color"] == "#7C5CFF"
-    assert out["candidates"][1]["theme_color"] == ""  # invalid color cleaned, svg kept
-    assert any("script" in n for n in out["notes"])
+    seen = {}
+
+    def fake_complete(defaults, system, user, **kw):
+        seen["model"] = kw.get("model", "")
+        seen["defaults_model"] = defaults.get("model")
+        seen["rf"] = kw.get("response_format")
+        return "```svg\n" + GOOD_SVG + "\n```"  # fence-tolerant
+
+    monkeypatch.setattr(H, "_complete", fake_complete)
+    out = result("card.avatar_generate", {"description": "a quiet blue moth"})
+    assert out["avatar_svg"].startswith("<svg")
+    assert "candidates" not in out          # single result, no picker
+    assert seen["model"] == ""              # uses the GLOBAL DEFAULT model, not an aux model
+    assert seen["defaults_model"] == "test/model"
+    assert seen["rf"] is None               # plain SVG, not json_object
 
 
-def test_avatar_draft_all_dropped_is_a_visible_error(monkeypatch):
+def test_avatar_generate_unusable_is_a_visible_error(monkeypatch):
     set_defaults()
-    canned = {"candidates": [{"avatar_svg": "<div>nope</div>", "theme_color": "#123456"}]}
-    monkeypatch.setattr(H, "_complete", lambda *a, **k: json.dumps(canned))
-    err = rpc_error("card.avatar_draft", {"description": "x"})
-    assert err["code"] == -32050
+    monkeypatch.setattr(H, "_complete", lambda *a, **k: "<div>not an svg</div>")
+    err = rpc_error("card.avatar_generate", {"description": "x"})
+    assert err["code"] == -32050           # no fabricated fallback image
 
 
-def test_avatar_draft_needs_input():
+def test_avatar_generate_needs_input():
     set_defaults()
-    assert rpc_error("card.avatar_draft", {})["code"] == -32602
+    assert rpc_error("card.avatar_generate", {})["code"] == -32602
 
 
-def test_avatar_draft_reads_card_summary(monkeypatch):
+def test_avatar_generate_reads_card_summary(monkeypatch):
     set_defaults()
     seen = {}
 
     def fake_complete(defaults, system, user, **kw):
         seen["user"] = user
-        return json.dumps({"candidates": [{"avatar_svg": GOOD_SVG, "theme_color": "#7C5CFF"}]})
+        return GOOD_SVG
 
     monkeypatch.setattr(H, "_complete", fake_complete)
     card = str(H.bundled_cards_dir() / "Quinn.en.json")
-    out = result("card.avatar_draft", {"card_path": card, "description": "rounder"})
-    assert out["candidates"]
-    assert "Name: Quinn" in seen["user"] and "rounder" in seen["user"]
+    result("card.avatar_generate", {"card_path": card, "description": "rounder"})
+    assert "Character:" in seen["user"]
+
+
+def test_avatar_upload_svg_writes_sidecar_and_points_card():
+    set_defaults()
+    path = _make_user_card()
+    out = result("card.avatar_upload", {"path": path, "data_b64": _b64(GOOD_SVG.encode()), "ext": "svg"})
+    assert out["avatar_file"].endswith(".avatar.svg")
+    sidecar = os.path.join(os.path.dirname(path), out["avatar_file"])
+    assert os.path.isfile(sidecar)
+    raw = json.loads(open(path, encoding="utf-8").read())
+    lm = raw["data"]["extensions"]["lunamoth"]
+    assert lm["avatar_file"] == out["avatar_file"]
+    assert "avatar_svg" not in lm           # inline fallback dropped once a sidecar exists
+    # avatar_read resolves the sidecar to a data-URI.
+    read = result("card.avatar_read", {"path": path})
+    assert read["data_uri"].startswith("data:image/svg+xml")
+
+
+def test_avatar_upload_png_validates_magic_and_stores_as_is():
+    set_defaults()
+    path = _make_user_card("PngCard")
+    out = result("card.avatar_upload", {"path": path, "data_b64": _b64(PNG_1PX), "ext": "png"})
+    assert out["avatar_file"].endswith(".avatar.png")
+    read = result("card.avatar_read", {"path": path})
+    assert read["data_uri"].startswith("data:image/png;base64,")
+
+
+def test_avatar_upload_rejects_unsafe_svg():
+    set_defaults()
+    path = _make_user_card("BadSvg")
+    bad = '<svg viewBox="0 0 64 64"><script>alert(1)</script></svg>'
+    err = rpc_error("card.avatar_upload", {"path": path, "data_b64": _b64(bad.encode()), "ext": "svg"})
+    assert err["code"] == -32050
+
+
+def test_avatar_upload_rejects_bad_type_and_oversize():
+    set_defaults()
+    path = _make_user_card("Limits")
+    assert rpc_error("card.avatar_upload",
+                     {"path": path, "data_b64": _b64(b"GIF89a"), "ext": "gif"})["code"] == -32602
+    big = _b64(b"\x89PNG\r\n\x1a\n" + b"x" * (1024 * 1024 + 10))
+    assert rpc_error("card.avatar_upload", {"path": path, "data_b64": big, "ext": "png"})["code"] == -32602
+
+
+def test_avatar_upload_png_magic_mismatch_is_an_error():
+    set_defaults()
+    path = _make_user_card("FakePng")
+    err = rpc_error("card.avatar_upload",
+                    {"path": path, "data_b64": _b64(b"not a png at all"), "ext": "png"})
+    assert err["code"] == -32602
+
+
+def test_avatar_upload_refuses_builtin_card():
+    set_defaults()
+    builtin = str(H.bundled_cards_dir() / "Quinn.en.json")
+    err = rpc_error("card.avatar_upload",
+                    {"path": builtin, "data_b64": _b64(GOOD_SVG.encode()), "ext": "svg"})
+    assert err["code"] == -32031
+
+
+def test_avatar_read_falls_back_to_inline_svg():
+    set_defaults()
+    # A user card that declares an inline avatar_svg but no sidecar.
+    out = result("card.save", {"data": {"spec": "chara_card_v3", "spec_version": "3.0",
+        "data": {"name": "Inline", "extensions": {"lunamoth": {"avatar_svg": GOOD_SVG}}}}})
+    read = result("card.avatar_read", {"path": out["path"]})
+    assert read["data_uri"].startswith("data:image/svg+xml")
 
 
 # ---- weixin.qr / weixin.qr_status --------------------------------------------------
@@ -378,18 +463,27 @@ def test_aux_models_persist_and_route(monkeypatch):
     # survives an unrelated defaults write (raw-preserving save)
     pub = result("defaults.set", {"model": "main/model"})
     assert pub["aux_models"]["avatar"] == "small/fast"
-    # the avatar RPC falls back to the aux model when none is passed
+    # cards.draft falls back to the aux 'draft' model when none is passed
     seen = {}
+    canned = json.dumps({"name": "N", "description": "x" * 200, "first_mes": "hi",
+                         "world_entries": [{"keys": ["a"], "content": "c", "constant": False},
+                                           {"keys": ["b"], "content": "d", "constant": False}],
+                         "seed_goals": ["g"], "tagline": "t", "theme_color": "#5B9FD4",
+                         "avatar_svg": GOOD_SVG})
 
     def fake_complete(defaults, system, user, model="", **kw):
         seen["model"] = model
-        return json.dumps({"candidates": [{"avatar_svg": GOOD_SVG, "theme_color": "#7C5CFF"}]})
+        return canned
 
     monkeypatch.setattr(H, "_complete", fake_complete)
-    result("card.avatar_draft", {"description": "a moth"})
-    assert seen["model"] == "small/fast"
-    result("card.avatar_draft", {"description": "a moth", "model": "explicit/win"})
+    result("cards.draft", {"inspiration": "a moth"})
+    assert seen["model"] == "big/writer"
+    result("cards.draft", {"inspiration": "a moth", "model": "explicit/win"})
     assert seen["model"] == "explicit/win"
+    # avatar_generate uses the GLOBAL DEFAULT model, NOT the aux 'avatar' model.
+    monkeypatch.setattr(H, "_complete", lambda *a, **k: (seen.update(avg=k.get("model", "")) or GOOD_SVG))
+    result("card.avatar_generate", {"description": "a moth"})
+    assert seen["avg"] == ""
     # empty value clears back to "use the main model"; unknown task is an error
     pub = result("defaults.set", {"aux_models": {"avatar": ""}})
     assert "avatar" not in pub["aux_models"]

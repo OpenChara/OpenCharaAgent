@@ -4,9 +4,8 @@
    Idle driving is SERVER-SIDE only (supervisor) — this file never calls idle. */
 "use strict";
 
-/* ============================ AVATAR EDITOR ============================
-   点头像即编辑：三条路径 — AI 重新生成（card.avatar_draft）、改主题色（纯前端）、
-   直接改 SVG。保存写回卡册原卡 extensions.lunamoth。 */
+/* The avatar/theme editor (openAvatarEditor) now lives in app.js — it edits
+   the presentation only (sidecar avatar + dual theme), soul untouched. */
 /* Encode text into a QR image data-URL locally (vendored qrcode-generator).
    Returns "" if the encoder is unavailable or the text won't fit. */
 function qrDataUrl(text) {
@@ -21,142 +20,6 @@ function qrDataUrl(text) {
   }
 }
 
-function recolorSvg(svg, newColor) {
-  const counts = {};
-  const re = /(?:fill|stroke)\s*=\s*["'](#[0-9a-fA-F]{3,8})["']/g;
-  let m;
-  while ((m = re.exec(svg))) {
-    const c = m[1].toLowerCase();
-    counts[c] = (counts[c] || 0) + 1;
-  }
-  const dom = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
-  if (!dom) return svg;
-  return svg.replaceAll(new RegExp(dom[0], "gi"), newColor);
-}
-
-async function openAvatarEditor(deckCard) {
-  let full;
-  try {
-    full = await hub.call("card.read", { path: deckCard.path }, 20000);
-  } catch (e) { toast(rpcErrText(e), true); return; }
-  if (!full.raw || !full.raw.data) { toast("PNG cards: avatar editing needs a JSON card", true); return; }
-  const data = full.raw.data;
-  const ext0 = (data.extensions && data.extensions.lunamoth) || {};
-  const work = {
-    svg: String(ext0.avatar_svg || ""),
-    color: /^#[0-9a-fA-F]{6}$/.test(String(ext0.theme_color || "")) ? String(ext0.theme_color).toUpperCase() : "#5B9FD4",
-  };
-
-  const preview = el("div", { class: "av-preview" });
-  function refresh() {
-    preview.innerHTML = "";
-    preview.style.cssText = `--card-theme:${work.color}`;
-    if (safeSvgForPreview(work.svg)) preview.appendChild(el("img", { src: dataUriSvg(work.svg), alt: "" }));
-    else preview.appendChild(document.createTextNode(glyphOf(full.name)));
-  }
-  refresh();
-
-  const svgText = el("textarea", { class: "svg-edit", placeholder: "<svg viewBox=\"0 0 64 64\" …" });
-  svgText.value = work.svg;
-  svgText.addEventListener("input", () => { work.svg = svgText.value; refresh(); });
-
-  const colorInput = el("input", { type: "color", value: work.color });
-  colorInput.addEventListener("input", () => {
-    const next = colorInput.value.toUpperCase();
-    if (work.svg) {
-      work.svg = recolorSvg(work.svg, next);
-      svgText.value = work.svg;
-    }
-    work.color = next;
-    refresh();
-  });
-
-  const saveBtn = el("button", { class: "btn primary" }, t("save"));
-  if (deckCard.builtin) saveBtn.disabled = true;
-  saveBtn.addEventListener("click", async () => {
-    saveBtn.disabled = true;
-    try {
-      const ext = data.extensions = data.extensions || {};
-      const lm = ext.lunamoth = ext.lunamoth || {};
-      lm.avatar_svg = work.svg;
-      lm.theme_color = work.color;
-      await hub.call("card.save", { data: full.raw, path: deckCard.path }, 20000);
-      toast(t("saved"));
-      closeModal();
-      await refreshHub();
-      if (state.chat) state.chat.refreshIdentity();
-    } catch (e) {
-      saveBtn.disabled = false;
-      toast(rpcErrText(e), true);
-    }
-  });
-
-  /* AI 重新生成：card.avatar_draft（已落地）。生成可达 30–60s；关掉模态即放弃。
-     零可用候选 = 后端可见错误（by design），原样展示。 */
-  const aiDesc = el("input", { placeholder: t("av-ai-desc-ph") });
-  const aiBtn = el("button", { class: "btn soft" }, t("av-ai-go"));
-  const aiNote = el("div", { class: "av-note", style: "margin-top:6px" });
-  const aiCands = el("div", { class: "av-cands" });
-  // closeModal 只摘掉 open class，内容仍挂着——「还在看」要同时验 class 与归属。
-  const modalLive = () => root.isConnected && $("modal-layer").classList.contains("open");
-  aiBtn.addEventListener("click", async () => {
-    aiBtn.disabled = true;
-    aiNote.className = "av-note";
-    aiNote.textContent = t("av-ai-generating");
-    aiCands.innerHTML = "";
-    let r;
-    try {
-      r = await hub.call("card.avatar_draft",
-        { card_path: deckCard.path, description: aiDesc.value.trim() }, 180000);
-    } catch (e) {
-      if (modalLive()) { aiNote.className = "av-note err"; aiNote.textContent = rpcErrText(e); }
-      aiBtn.disabled = false;
-      return;
-    }
-    aiBtn.disabled = false;
-    if (!modalLive()) return; // 模态已关：放弃这次生成
-    aiNote.textContent = t("av-ai-pick");
-    for (const cand of (r.candidates || []).slice(0, 3)) {
-      const svg = String(cand.avatar_svg || "");
-      if (!safeSvgForPreview(svg)) continue;
-      const color = /^#[0-9a-fA-F]{6}$/.test(String(cand.theme_color || ""))
-        ? String(cand.theme_color).toUpperCase() : work.color;
-      const thumb = el("button", { class: "av-cand", style: `--card-theme:${color}` },
-        el("img", { src: dataUriSvg(svg), alt: "" }));
-      thumb.addEventListener("click", () => {
-        work.svg = svg;
-        work.color = color;
-        svgText.value = svg;
-        colorInput.value = color;
-        refresh();
-      });
-      aiCands.appendChild(thumb);
-    }
-  });
-
-  const root = el("div", null,
-    el("h2", null, `${full.name} · ${t("av-title")}`),
-    deckCard.builtin ? el("div", { class: "av-note amber", style: "margin-bottom:12px" }, t("av-builtin-note")) : null,
-    (!deckCard.builtin && deckCard.frozen) ? el("div", { class: "av-note", style: "margin-bottom:12px" },
-      t("av-frozen-note", { names: (deckCard.used_by || []).join("、") })) : null,
-    el("div", { class: "av-top" }, preview,
-      el("div", { style: "flex:1;min-width:0" },
-        el("div", { class: "av-sec" },
-          el("h4", null, t("av-ai")),
-          el("div", { class: "av-ai-row" }, aiDesc, aiBtn),
-          aiNote, aiCands),
-        el("div", { class: "av-sec" },
-          el("h4", null, t("av-color")),
-          colorInput))),
-    el("div", { class: "av-sec" },
-      el("h4", null, t("av-svg")),
-      svgText),
-    el("div", { class: "acts", style: "margin-top:14px" },
-      el("button", { class: "btn text", onclick: closeModal }, t("cancel")),
-      el("div", { class: "grow" }),
-      saveBtn));
-  openModal(root, true);
-}
 
 /* ============================ GATEWAY（右侧面板「网关」页） ============================ */
 const GW_MASK = "••••••••"; // hub.py _SECRET_MASK：后端给秘密字段回显的掩码

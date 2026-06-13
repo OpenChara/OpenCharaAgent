@@ -51,3 +51,51 @@ def test_plain_card_without_bundle_gets_empty_defaults(tmp_path):
     p.write_text(json.dumps({"name": "Plain", "description": "hi", "first_mes": "hello"}))
     card = CharacterCard.load(str(p))
     assert card.defaults() == {}  # -> agent falls back to safe global defaults
+
+
+# ---- presentation: dual theme + avatar sidecar (not the soul) ----------------
+
+def _card(ext):
+    return CharacterCard.from_card_dict({"data": {"name": "X", "extensions": {"lunamoth": ext}}})
+
+
+def test_dual_theme_parsed():
+    card = _card({"theme": {"primary": "#000000", "secondary": "#ff0000"}})
+    assert card.theme_colors() == {"primary": "#000000", "secondary": "#FF0000"}
+
+
+def test_dual_theme_back_compat_from_single_theme_color():
+    # A card carrying only the legacy single color reads as primary, blank secondary.
+    card = _card({"theme_color": "#5b9fd4"})
+    assert card.theme_colors() == {"primary": "#5B9FD4", "secondary": ""}
+
+
+def test_dual_theme_new_field_wins_over_legacy():
+    card = _card({"theme": {"primary": "#112233", "secondary": "#445566"}, "theme_color": "#999999"})
+    assert card.theme_colors()["primary"] == "#112233"
+
+
+def test_dual_theme_malformed_is_blank_never_raises():
+    card = _card({"theme": {"primary": "nope", "secondary": 5}})
+    assert card.theme_colors() == {"primary": "", "secondary": ""}
+    assert _card({}).theme_colors() == {"primary": "", "secondary": ""}
+
+
+def test_avatar_file_reference_and_traversal_guard(tmp_path):
+    p = tmp_path / "c.json"
+    p.write_text(json.dumps({"data": {"name": "X",
+        "extensions": {"lunamoth": {"avatar_file": "c.avatar.png"}}}}))
+    (tmp_path / "c.avatar.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    card = CharacterCard.load(str(p))
+    assert card.avatar_file() == "c.avatar.png"
+    assert card.avatar_path() == tmp_path / "c.avatar.png"
+    # A traversal-bearing reference is refused (the sidecar must sit beside the card).
+    bad = _card({"avatar_file": "../secret.png"})
+    assert bad.avatar_file() == ""
+
+
+def test_avatar_path_none_when_sidecar_missing(tmp_path):
+    p = tmp_path / "c.json"
+    p.write_text(json.dumps({"data": {"name": "X",
+        "extensions": {"lunamoth": {"avatar_file": "c.avatar.png"}}}}))
+    assert CharacterCard.load(str(p)).avatar_path() is None  # referenced but not on disk
