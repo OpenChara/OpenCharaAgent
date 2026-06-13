@@ -1376,9 +1376,10 @@ def session_entry(meta: S.SessionMeta, supervisor: Any | None = None) -> dict[st
     if isinstance(child_status, dict) and child_status.get("state") == "crashed":
         status = "crashed"
         error = str(child_status.get("detail") or "crashed")
-    # Autonomous running OFF (board toggle, persisted): the board reflects the
-    # operator's intent even if the child is momentarily up for a chat/view.
-    paused = (meta.root / "autonomy_paused").exists()
+    # Autonomy is the chara's persisted `mode` (live = autonomous, chat = plain
+    # chat agent) — the ONE switch the board and the in-chat panel both flip.
+    # `paused` = autonomy off; the board shows it even while the child is up.
+    paused = str(cfg.get("mode") or "live") != "live"
     if paused and status != "crashed":
         status = "paused"
     return {
@@ -1962,7 +1963,7 @@ class HubDispatcher:
                 _await_supervisor(self.supervisor, self.supervisor.set_autonomy(meta.name, on))
             else:
                 from .supervisor import Supervisor
-                Supervisor.set_paused(meta, not on)
+                Supervisor.set_mode_on_disk(meta, "live" if on else "chat")
             return session_entry(meta, self.supervisor)
         if method == "gateway.start":
             meta = self._meta(p)

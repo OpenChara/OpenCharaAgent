@@ -478,33 +478,30 @@ def test_gateway_clean_exit_zero_stops(monkeypatch, tmp_path):
     assert gw.info.state == "stopped" and gw.info.error_message == ""
 
 
-def test_autonomy_pause_marker_round_trip(tmp_path):
-    """The board on/off persists as a marker; entering never changes it."""
+def test_autonomy_is_the_persisted_mode(tmp_path):
+    """Autonomy = the chara's mode (live|chat) on disk; there is no separate
+    pause flag. is_autonomous reads it, set_mode_on_disk flips it."""
     from lunamoth.server.supervisor import Supervisor
     from lunamoth.session.sessions import SessionMeta
-
-    meta = SessionMeta(name="p")
-    # point the session root at a temp dir
-    object.__setattr__(meta, "name", "p")
     import lunamoth.session.sessions as S
-    root = tmp_path / "sessions" / "p"
-    root.mkdir(parents=True)
-    # SessionMeta.root derives from sessions_dir()/name — patch sessions_dir
+
+    (tmp_path / "sessions" / "p").mkdir(parents=True)
     orig = S.sessions_dir
     S.sessions_dir = lambda: tmp_path / "sessions"
     try:
-        assert Supervisor.is_paused(meta) is False
-        Supervisor.set_paused(meta, True)
-        assert Supervisor.is_paused(meta) is True
-        Supervisor.set_paused(meta, False)
-        assert Supervisor.is_paused(meta) is False
+        meta = SessionMeta(name="p")
+        assert Supervisor.is_autonomous(meta) is True   # default live
+        Supervisor.set_mode_on_disk(meta, "chat")
+        assert Supervisor.is_autonomous(meta) is False
+        Supervisor.set_mode_on_disk(meta, "live")
+        assert Supervisor.is_autonomous(meta) is True
     finally:
         S.sessions_dir = orig
 
 
-def test_set_autonomy_toggles_the_same_marker_the_board_reads(tmp_path, monkeypatch):
-    """The in-chat autonomy switch and the board's status must agree: both go
-    through the one persisted pause marker (the inner/outer conflict fix)."""
+def test_set_autonomy_and_the_board_agree_via_mode(tmp_path, monkeypatch):
+    """The in-chat autonomy switch and the board status both go through the one
+    persisted mode — inner and outer can never disagree."""
     monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
     from lunamoth.server import hub as H
     from lunamoth.server.supervisor import Supervisor
@@ -515,7 +512,6 @@ def test_set_autonomy_toggles_the_same_marker_the_board_reads(tmp_path, monkeypa
     entry = H.wake(card_path=str(H.bundled_cards_dir() / "Quinn.zh.json"))
     meta = S.load_session(entry["name"])
 
-    # no supervisor → the hub flips the marker directly; the board reads it back
     out = []
     d = H.HubDispatcher(lambda f: out.append(f) or True)
     def call(method, params):
@@ -524,8 +520,8 @@ def test_set_autonomy_toggles_the_same_marker_the_board_reads(tmp_path, monkeypa
         return r["result"]
 
     call("chara.set_autonomy", {"name": meta.name, "on": False})
-    assert Supervisor.is_paused(meta) is True
-    assert call("sessions.list", {})[0]["paused"] is True   # board agrees: off
+    assert Supervisor.is_autonomous(meta) is False
+    assert call("sessions.list", {})[0]["paused"] is True    # board: autonomy off
     call("chara.set_autonomy", {"name": meta.name, "on": True})
-    assert Supervisor.is_paused(meta) is False
-    assert call("sessions.list", {})[0]["paused"] is False  # board agrees: on
+    assert Supervisor.is_autonomous(meta) is True
+    assert call("sessions.list", {})[0]["paused"] is False   # board: autonomy on

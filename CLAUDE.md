@@ -230,9 +230,26 @@ into the session's card, key stripped.)
 
 ## Chara life (what already exists — build on it, don't reinvent)
 
+- **Autonomy is ONE switch = `mode` (live|chat).** This is the single top-level
+  control (board toggle, in-chat panel switch, `/mode`, TUI) — there is NO
+  separate pause flag. `live` = autonomous (the full lifecycle below); `chat` =
+  a plain chat agent that NEVER works on its own. The supervisor's idle loop
+  fires cycles ONLY when `mode == live`. The board's start/stop sets mode AND
+  starts/stops the resident child (off saves tokens); the in-chat switch flips
+  mode via `chara.set_autonomy` without killing the chat you're in. The board's
+  `paused` field = `mode != live`. Never reintroduce a second autonomy concept.
+- **The autonomous lifecycle (mode=live):** startup → greeting (first meeting)
+  → CONVERSATION mode (present + spoke within `quiet` → "waiting · back to its
+  own work in N min"); on detach / the engagement window lapsing → SELF-WORK
+  mode. In self-work the chara's non-`speak` output is `muse` (panoramic only),
+  only `speak`/superchat reaches the user/gateway, and it picks its own next
+  wake. Self-work alternates working ↔ the idle gap (the "beat of its own
+  life", `patience`). Entering/leaving the room does NOT change a self-working
+  chara — only SPEAKING returns it to conversation (a neutral "[operator
+  entered]" is injected before that first message; leaving conversation after
+  speaking injects "[operator left]" and it returns to self-work).
 - A **chara** is persistent: daemon via `start`/`start-all`, attach/detach.
-  Presence is a fact (`user_present`); `/mode live|chat` is how it behaves
-  while watched.
+  Presence is a fact (`user_present`).
 - **Its own pace**: `patience` (seconds between spontaneous cycles —
   `Settings.patience`, default 600, card hook `extensions.lunamoth.patience`,
   `/patience`; precedence operator > card > default. NEVER reintroduce tiny

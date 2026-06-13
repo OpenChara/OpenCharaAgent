@@ -665,18 +665,18 @@ class CharaChild:
                 self.restart.note_healthy_if_due()
                 snap = await self.snapshot(silent=True)
                 # Autonomous running is OFF (operator toggled it off on the
-                # board): the child stays up for chat/view but fires NO cycles.
-                # Entering the room cannot turn this back on — only the board.
-                if Supervisor.is_paused(self.meta):
+                # AUTONOMY is the chara's `mode`: live = autonomous (the full
+                # lifecycle below), chat = a plain chat agent that NEVER works on
+                # its own. Off → no cycles ever; entering to chat can't turn it
+                # on, only the board/in-chat autonomy switch (which flips mode).
+                if str(snap.get("mode") or "live") != "live":
                     self._emit_life(LifeState("waiting"))
                     await asyncio.sleep(1.0)
                     continue
-                # While a present user is in chat mode, its own work waits. When
-                # no user is present, background life always continues.
-                if snap.get("user_present") and str(snap.get("mode") or "live") != "live":
-                    self._emit_life(LifeState("waiting"))
-                    await asyncio.sleep(1.0)
-                    continue
+                # Autonomous (mode=live). Conversation vs self-work is the
+                # engagement window: present + recently spoke → conversation
+                # ("waiting · back to its own work in N min", via IdleGate);
+                # left or the window lapsed → self-work cycles fire below.
                 st = self.idle.life_state(snap or {})
                 self._emit_life(st)
                 if not self.idle.ready(snap or {}) or self._client_stream_ids:
@@ -698,7 +698,7 @@ class CharaChild:
                     # on every app restart). Only a model error while the child
                     # is still ALIVE is a genuine idle error.
                     child_gone = self.proc is None or self.proc.returncode is not None
-                    if self._stopping or Supervisor.is_paused(self.meta) or child_gone:
+                    if self._stopping or child_gone:
                         return
                     msg = str(exc)
                     self.idle.mark_idle_error(msg)
@@ -973,24 +973,28 @@ class Supervisor:
         return child
 
     @staticmethod
-    def _paused_path(meta: S.SessionMeta) -> Path:
-        return meta.root / "autonomy_paused"
+    def is_autonomous(meta: S.SessionMeta) -> bool:
+        """Autonomy is the chara's persisted `mode`: live = autonomous, chat =
+        plain chat agent. This is THE single autonomy switch (board, in-chat,
+        and TUI all flip it); there is no separate pause flag."""
+        try:
+            cfg = json.loads(meta.config_path.read_text(encoding="utf-8"))
+            return str(cfg.get("mode") or "live") == "live"
+        except (OSError, json.JSONDecodeError):
+            return True  # default live
 
-    @classmethod
-    def is_paused(cls, meta: S.SessionMeta) -> bool:
-        """Operator turned the chara's autonomous running OFF (persists across
-        restarts). Entering to chat/view never changes it; only the board
-        on/off toggle does."""
-        return cls._paused_path(meta).exists()
-
-    @classmethod
-    def set_paused(cls, meta: S.SessionMeta, paused: bool) -> None:
-        path = cls._paused_path(meta)
-        if paused:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("", encoding="utf-8")
-        else:
-            path.unlink(missing_ok=True)
+    @staticmethod
+    def set_mode_on_disk(meta: S.SessionMeta, mode: str) -> None:
+        """Persist mode (live|chat) into the session config — used for a chara
+        whose child isn't running. A running child is told via its /mode
+        command so the live agent + snapshot update too."""
+        try:
+            cfg = json.loads(meta.config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            cfg = {}
+        cfg["mode"] = "live" if mode == "live" else "chat"
+        meta.config_path.parent.mkdir(parents=True, exist_ok=True)
+        meta.config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def gateway(self, name: str) -> GatewayChild:
         meta = S.load_session(name)
@@ -1003,32 +1007,37 @@ class Supervisor:
         return gw
 
     async def start_chara(self, name: str) -> dict[str, Any]:
+        # Board "on" = autonomous + resident: mode live, start the child.
         child = self.child(name)
-        Supervisor.set_paused(child.meta, False)  # board "on" resumes autonomy
+        Supervisor.set_mode_on_disk(child.meta, "live")
         return await child.start()
 
     async def stop_chara(self, name: str) -> dict[str, Any]:
+        # Board "off" = not autonomous + stopped (saves tokens): mode chat,
+        # stop the child. Entering to chat later starts a plain chat agent.
         child = self.child(name)
-        Supervisor.set_paused(child.meta, True)  # board "off" pauses autonomy and persists it
+        Supervisor.set_mode_on_disk(child.meta, "chat")
         return await child.stop()
 
     async def set_autonomy(self, name: str, on: bool) -> dict[str, Any]:
-        """Toggle autonomous running WITHOUT touching the child process — so the
-        in-chat 'autonomy' switch matches the board's, but doesn't kill the chat
-        you're in. The persisted pause marker is the single source of truth; the
-        idle loop reads it each tick (≤1s) and reflects it."""
+        """Flip autonomy (mode live|chat) WITHOUT killing the chat you're in —
+        the in-chat switch. A running child is told via its /mode command so the
+        live agent + snapshot update immediately; a stopped child gets the
+        config write (and is started if turning autonomy on)."""
         child = self.child(name)
-        Supervisor.set_paused(child.meta, not on)
-        if on:
-            # resuming: schedule the next cycle from now so it doesn't fire
-            # instantly, and start the child if it isn't running.
-            if child.proc is None or child.proc.returncode is not None:
-                await child.start()
-            else:
+        mode = "live" if on else "chat"
+        Supervisor.set_mode_on_disk(child.meta, mode)
+        if child.proc is not None and child.proc.returncode is None:
+            with contextlib.suppress(Exception):
+                await child.private_call("command", {"line": f"/mode {mode}"}, timeout=10.0)
+            child._snap_cache = None
+            if on:
                 snap = await child.snapshot(silent=True)
-                child.idle.schedule_after(snap or {})
-        else:
-            child._emit_life(LifeState("waiting"))
+                child.idle.schedule_after(snap or {})  # resume from now, not instantly
+            else:
+                child._emit_life(LifeState("waiting"))
+        elif on:
+            await child.start()
         return child.status()
 
     def chara_status(self, name: str) -> dict[str, Any] | None:
