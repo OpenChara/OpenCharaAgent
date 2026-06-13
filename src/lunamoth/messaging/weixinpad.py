@@ -4,9 +4,8 @@ Unlike the iLink/ClawBot adapter in ``weixin.py`` — which is Tencent-official 
 gated behind a grayscale rollout, so its QR "scans to nothing" for most accounts —
 WeChatPadPro produces a REAL device-login QR that works on ANY WeChat account.
 This is the "AstrBot one-QR" path. The trade-off is ban risk: WeChatPadPro speaks
-the unofficial WeChat iPad protocol (see the README setup note + docs/archive/
-wechat-personal-research.md). LunaMoth only TALKS to the user-run container over
-HTTP/WS; it does not vendor or run it.
+the unofficial WeChat iPad protocol (see the README setup note). LunaMoth only
+TALKS to the user-run container over HTTP/WS; it does not vendor or run it.
 
 Pinned API surface
 ------------------

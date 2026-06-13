@@ -1,7 +1,6 @@
 /* ============================================================
-   LunaMoth Desktop renderer — visual baseline: docs/desktop/mockup.html,
-   redesigned per docs/webui-redesign-0612.md (panel, tabs, mood layer).
-   Tokens first; no raw hex inside components (Hermes DESIGN.md rule).
+   LunaMoth Desktop renderer styles.
+   Tokens first; no raw hex inside components.
    ============================================================ */
 :root{
   --accent:#5B9FD4; --accent-deep:#3E7FB4; --accent-soft:#EAF4FB; --accent-glow:#EAFAFF;

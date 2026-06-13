@@ -1,6 +1,25 @@
-# Hermes-agent parity audit — hardening LunaMoth's commodity subsystems
+# LunaMoth — open work
 
-Date: 2026-06-13. Read-only audit of `src/lunamoth/` against
+This is the ONE surviving doc after the 2026-06-13 docs cleanup. The settled
+design specs (prompt machine, desktop, supervisor) and the historical research
+(hermes UI/code study, WeChat research, the webui task book) were deleted — their
+conclusions live in `CLAUDE.md`, the code, and git history. What's kept here is
+only what's still *open*: the engineering hardening backlog (Part 1) and the
+deferred product ideas worth remembering (Part 2).
+
+> **Verify before starting — several items have LANDED since this audit was
+> written (2026-06-13):** #27 (chara child 3-strike auto-restart — `CharaChild`
+> now has `RestartBackoff`), #30 (inbound dedup — `MessageDeduplicator` in both
+> the gateway and the in-child host), #31 (outbound send containment — bounded
+> retry + `DeliveryDeferred`, tested). The gateway also moved in-process
+> (`server/messaging_host.py` shares the chara's one agent), so GatewayChild's
+> backoff concern in #27 is moot. Re-check each item against current code.
+
+---
+
+# Part 1 — Engineering hardening (hermes-parity)
+
+Read-only audit of `src/lunamoth/` against
 `reference/hermes-agent` (the cloned upstream). Scope: the commodity agent
 infrastructure only (llm loop, compaction/context, tools, server, messaging).
 The innovation core (presence, chara life, cards, world info, curriculum) has
@@ -219,3 +238,50 @@ file is *ahead* of hermes' pty handling in care); zombie-aware
 4. P3s opportunistically (#3 parallel exec last among the roadmap four — it
    is a throughput feature, not a correctness fix, and serial execution is
    currently load-bearing for the audit trail's ordering).
+
+---
+
+# Part 2 — Deferred product ideas (worth considering)
+
+Salvaged from the deleted desktop design doc, the webui needs register, and the
+hermes-desktop study — product directions deliberately deferred. These overlap
+with `CLAUDE.md`'s roadmap (card market, remote access, the chara curriculum);
+that roadmap is the source of truth for *direction*, this is the concrete UI/
+product backlog behind it.
+
+- **Menu-bar resident** *(the designer's "most wanted")* — a mac menu-bar moth
+  icon; close the window and the chara stays alive; a badge = a chara is waiting
+  for you; click = a mini board. The ultimate "lives in your computer" form.
+  The Electron shell shipped; this is the next shell step.
+- **Card-defined custom life-state words** — let a card override the displayed
+  `life.state` word (a statue's "resting" could read "weathering"), via
+  `extensions.lunamoth`. The engine keeps factual defaults; the card customizes.
+  (Engine-side stance/flavor text was already stripped — only factual state
+  words remain, so this is purely a card-override hook.)
+- **Artifacts backtrace** — file → the tool call / session message that produced
+  it; inline "work cards" in the chat stream. Needs a backend file↔tool-call
+  mapping (today works live only on the drawer shelf).
+- **Let the chara paint its own portrait** — when the avatar slot is left empty
+  at creation, the chara's first goal can be "paint myself a portrait." An
+  artist's rite of passage that also solves the asset problem.
+- **Weekly digest** — a quiet weekly summary (from existing goals + transcript)
+  instead of an infinite feed.
+- **Notifications & quiet hours** — waiting-for-you → system notification;
+  respect night DND (a slot is already reserved in Settings · General).
+- **Remote VPS residence** — over the existing `serve` WS+token: the desktop
+  connects to a backend on an always-on server; the chara lives there, the
+  desktop is just a window. (Same as the roadmap's remote-TUI-client item.)
+- **Card / pack marketplace** — one-click package (card + embedded world book) +
+  a shareable index. (Same as the roadmap's card-market item.)
+- **Multi-chara visiting** — charas on one machine visiting each other; the
+  `say|muse` protocol already supports multiple audiences. Far-future.
+- **Voice (STT/TTS)** — hermes has the full chain to port; a big "aliveness"
+  boost, but only after the core stabilizes.
+- **Multimodal** — detected and shown as "not enabled this version"; the skeleton
+  is left in place for it.
+- **Avatar image upload** — v1 is SVG-only (data-URI size limits); raster upload
+  later.
+- **Panel polish leftovers** — memory entry-level editing and goal checkbox
+  editing in the chat drawer are still read-only; a board-level context ring +
+  ⚡ high-load chip needs `serve` to expose a lightweight last-activity / resource
+  sample.

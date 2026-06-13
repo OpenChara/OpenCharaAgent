@@ -1,7 +1,6 @@
 /* LunaMoth Desktop renderer — board/deck/settings/workshop half.
    Chat (ChatController + right panel + works/term pages) lives in chat.js.
-   One hub connection for the board; one CharaClient per open chat.
-   Design: docs/webui-redesign-0612.md (supersedes docs/desktop/design.md). */
+   One hub connection for the board; one CharaClient per open chat. */
 "use strict";
 
 /* ---------- tiny DOM helpers ---------- */

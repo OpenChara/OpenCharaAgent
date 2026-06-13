@@ -35,14 +35,12 @@ It is the synthesis of three projects — clone them under `reference/`
   counterpart first and port its solution shape AND its edge cases —
   hermes's scars are the maturity we lack. Architecture stays ours; never
   inherit its fallback-model logic. Parity checklist:
-  `docs/archive/hermes-parity-audit.md`.
+  `docs/OPEN-WORK.md` (Part 1).
 - **SillyTavern/SillyTavern** — character cards / world books / prompt layering
   (we stay card- and world-book-compatible; ST content is the import format).
 - **farion1231/cc-switch** — session/roster ergonomics, remote access.
 
-(History: began as an SCP-079 fan recreation, long since generalized; the
-SCP-079 card has been removed and no SCP-derived content ships any longer. The
-default card is Quinn 小Q, the owner-authored digital intern — selected via the
+(The default card is Quinn 小Q, the owner-authored digital intern — selected via the
 card-tag `"default"` convention (no character name in src/; without the tag,
 sorted order wins). The two bundled cards are LunaMoth 月蛾 (the flagship
 example) and Quinn 小Q (the default).)
@@ -101,11 +99,11 @@ uvx ruff check --select F src/lunamoth tests   # lint (unused imports, undefined
 - **No chord shortcuts in the TUI** — everything is a `/command`; Ctrl+C is the
   only key (safety quit).
 - README is split EN (`README.md`) / zh (`README.zh-CN.md`) — update BOTH.
-- docs/ root holds ONLY the active cross-machine handover/task files (one
-  per running track; delete once absorbed). Settled design specs and research
-  live under `docs/archive/` (`context-design.md` = the prompt machine,
-  `design.md` + `supervisor.md` = web/desktop). Work logs belong in git
-  history and agent memory, never in docs.
+- docs/ holds ONE file: `docs/OPEN-WORK.md` (Part 1 = the hermes-parity
+  hardening backlog; Part 2 = deferred product ideas). The settled design specs
+  and historical research were deleted 2026-06-13 — their conclusions live in
+  this file, the code, and git history. Work logs belong in git history and
+  agent memory, never in docs.
 
 ## Module map (src/lunamoth/ — domain subpackages)
 
@@ -195,8 +193,8 @@ zero internal deps; `obs/` imports only `config`.
     breaks ESC sequences — every arrow read as bare Esc and quit the launcher).
   - `wizard.py` — plain-terminal first-run setup. `art.py` — the blue wordmark.
   - `web/` — the desktop renderer (no build step: index.html/style.css/i18n.js/
-    rpc.js/app.js), a pure protocol client served by `lunamoth desktop`. Design:
-    `docs/archive/design.md`. UI chrome bilingual zh/en + light/dark; a chara's
+    rpc.js/app.js), a pure protocol client served by `lunamoth desktop`.
+    UI chrome bilingual zh/en + light/dark; a chara's
     words stay in the card's language. Idle driving is SERVER-SIDE only
     (supervisor.py) — web clients render life.state and must never drive idle.
 
@@ -205,7 +203,7 @@ content file (world embedded as `character_book`); standalone ST world books
 are an IMPORT format only (web upload recognizes them → `card.merge_world`
 folds them into a card), never a runtime source.
 
-## The prompt stack (the machine that runs a chara — full spec: docs/archive/context-design.md)
+## The prompt stack (the machine that runs a chara)
 
 Every API request is assembled as **three zones**:
 
@@ -283,8 +281,8 @@ into the session's card, key stripped.)
 ## Roadmap (OPEN work only — shipped things live in the module map and git history)
 
 **A. For OC creators (inspiration → living chara, fast)**
-1. Card studio / deck UX iteration — Track B owns it
-   (`docs/webui-redesign-0612.md` + the owner's issue list).
+1. Card studio / deck UX iteration (the webui redesign shipped; further polish
+   tracked in `docs/OPEN-WORK.md` Part 2).
 2. Card/persona market: `lunamoth-pack.json` + git-repo index (Claude Code
    marketplace model); ST PNG import already works.
 
@@ -301,7 +299,7 @@ into the session's card, key stripped.)
    existing `stream_event` channel to make charas aware of a living world.
 
 **C. For developers / agent users**
-1. **hermes parity burn-down** (`docs/archive/hermes-parity-audit.md`):
+1. **hermes parity burn-down** (`docs/OPEN-WORK.md` Part 1):
    8 P1s in flight; then the P2 batches (llm robustness, runner output
    hygiene, compaction boundaries, tool-loop guardrails, messaging dedup,
    chara auto-restart). Multi-key management RPC rides this track too.
