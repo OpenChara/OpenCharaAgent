@@ -310,6 +310,7 @@ class ChatController {
       this.client.onProtocolEvent = (ev) => this.onEvent(ev);
       this.client.onPermissionAsk = (p) => this.onPermission(p);
       this.client.onPeerMessage = (p) => this.onPeerMessage(p);
+      this.client.onTurnEnd = () => this.onTurnEnd();
       this.client.onLifeState = (p) => this.onLifeState(p);
       this.client.onRejoinGap = () => {
         // Ring couldn't replay (child restarted → seq reset). Just forget the
@@ -846,6 +847,7 @@ class ChatController {
   async runStream(fn) {
     this.setSending(true);
     this.turnThink = null;
+    this._appTurn = true;   // app-driven: this runStream owns finalize()
     this.setWorkState(true, "generate");
     try {
       await fn();
@@ -857,7 +859,17 @@ class ChatController {
         this.setSending(false);
         this.refreshSnapshot();
       }
+      this._appTurn = false;
     }
+  }
+
+  // A turn the app did NOT drive (self-work / WeChat / idle) streamed events
+  // that switched the "generating…" indicator on; without an app-side runStream
+  // to call finalize(), it would stick forever (the "still generating after
+  // rest" bug). The backend's turn_end signal is that missing completion.
+  onTurnEnd() {
+    if (this.disposed || this._appTurn) return;  // app turns finalize via runStream
+    if (this.work && this.work.active) this.finalize();
   }
 
   async sendUser(text) {

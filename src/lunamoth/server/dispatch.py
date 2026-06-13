@@ -387,6 +387,7 @@ class JsonRpcDispatcher:
                 except Exception:
                     _log.exception("closing interrupted %s stream failed", kind)
         finally:
+            self._emit("turn_end", {"kind": kind, "interrupted": interrupted})
             with self._lock:
                 if threading.current_thread() is self._stream_thread:
                     self._stream_thread = None
@@ -461,6 +462,11 @@ class JsonRpcDispatcher:
             if wants_response:
                 self._write_frame(error_response(rid, -32000, f"{kind} failed: {exc}"))
         finally:
+            # Tell observers the turn ended. Crucial for turns the client didn't
+            # initiate (supervisor idle/self-work, a WeChat-driven turn): the
+            # window turns its "generating…" indicator ON from the event stream
+            # but has no completion to turn it OFF without this signal.
+            self._emit("turn_end", {"kind": kind, "interrupted": interrupted})
             with self._lock:
                 if threading.current_thread() is self._stream_thread:
                     self._stream_thread = None
