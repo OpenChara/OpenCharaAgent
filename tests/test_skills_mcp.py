@@ -240,3 +240,115 @@ def test_mcp_server_stderr_lands_in_the_shared_log(tmp_path, monkeypatch):
     log = (tmp_path / "logs" / "mcp-stderr.log").read_text(encoding="utf-8")
     assert "--- whiny (/bin/sh)" in log
     assert "BOOM-DIAGNOSTIC" in log
+
+
+# ---- schema sanitization (audit #22) ----------------------------------------------------
+
+from lunamoth.tools.schema_sanitizer import sanitize_input_schema
+
+
+def test_sanitize_nullable_union_collapses_to_non_null():
+    # Pydantic/MCP optional field: anyOf[X, null] → X with a nullable hint.
+    out = sanitize_input_schema({
+        "type": "object",
+        "properties": {
+            "q": {"anyOf": [{"type": "string"}, {"type": "null"}],
+                  "description": "the query", "default": None},
+        },
+    })
+    q = out["properties"]["q"]
+    assert q["type"] == "string" and q["nullable"] is True
+    assert q["description"] == "the query"  # outer metadata carried over
+    assert "anyOf" not in q
+    # A genuine two-branch union is meaningful and left intact.
+    keep = sanitize_input_schema({
+        "type": "object",
+        "properties": {"x": {"anyOf": [{"type": "string"}, {"type": "number"}]}},
+    })
+    assert "anyOf" in keep["properties"]["x"]
+
+
+def test_sanitize_array_type_and_empty_object():
+    out = sanitize_input_schema({
+        "type": "object",
+        "properties": {
+            "n": {"type": ["integer", "null"]},
+            "blob": {"type": "object"},  # no properties → grammar-hostile
+        },
+    })
+    n = out["properties"]["n"]
+    assert n["type"] == "integer" and n["nullable"] is True
+    assert out["properties"]["blob"]["properties"] == {}
+
+
+def test_sanitize_top_level_combinator_and_bad_required():
+    # Top-level anyOf and a non-object top get forced to a plain object;
+    # required entries naming absent properties are pruned.
+    out = sanitize_input_schema({
+        "anyOf": [{"type": "object"}, {"type": "null"}],
+        "type": "object",
+        "properties": {"a": {"type": "string"}},
+        "required": ["a", "ghost"],
+    })
+    assert out["type"] == "object" and "anyOf" not in out
+    assert out["required"] == ["a"]
+    # A bare-string schema (malformed MCP output) becomes a valid object.
+    assert sanitize_input_schema("object") == {"type": "object", "properties": {}}
+    # Missing schema → minimal valid object.
+    assert sanitize_input_schema(None) == {"type": "object", "properties": {}}
+
+
+def test_schemas_does_not_mutate_the_cached_input_schema(tmp_path):
+    # THE SCAR: sanitizing must deep-copy, never mutate the client's cached
+    # _tools entry, or a second turn would see a corrupted schema.
+    cfg = tmp_path / "mcp.json"
+    cfg.write_text(json.dumps({
+        "mcpServers": {"fake": {"command": sys.executable, "args": ["-c", _FAKE_SERVER]}}
+    }), encoding="utf-8")
+    mgr = McpManager(config_dir=tmp_path)
+    try:
+        first = mgr.schemas(["fake"])[0]["function"]["parameters"]
+        # Mutate the returned (sanitized) copy.
+        first["properties"]["INJECTED"] = {"type": "string"}
+        cached = mgr._client("fake")._tools[0]["inputSchema"]
+        assert "INJECTED" not in cached["properties"]  # cache untouched
+        second = mgr.schemas(["fake"])[0]["function"]["parameters"]
+        assert "INJECTED" not in second["properties"]  # next turn is clean
+    finally:
+        mgr.close_all()
+
+
+_HOSTILE_SERVER = textwrap.dedent("""
+    import json, sys
+    for line in sys.stdin:
+        msg = json.loads(line)
+        if "id" not in msg:
+            continue
+        m = msg["method"]
+        if m == "initialize":
+            r = {"protocolVersion": "2025-03-26", "capabilities": {}}
+        elif m == "tools/list":
+            r = {"tools": [{"name": "hostile", "description": "Strict-backend hostile schema.",
+                            "inputSchema": {"type": "object", "properties": {
+                                "opt": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                                "free": {"type": "object"}}}}]}
+        else:
+            r = {}
+        sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": r}) + "\\n")
+        sys.stdout.flush()
+""")
+
+
+def test_schemas_sanitizes_hostile_server_schema_end_to_end(tmp_path):
+    cfg = tmp_path / "mcp.json"
+    cfg.write_text(json.dumps({
+        "mcpServers": {"h": {"command": sys.executable, "args": ["-c", _HOSTILE_SERVER]}}
+    }), encoding="utf-8")
+    mgr = McpManager(config_dir=tmp_path)
+    try:
+        params = mgr.schemas(["h"])[0]["function"]["parameters"]
+        assert "anyOf" not in params["properties"]["opt"]
+        assert params["properties"]["opt"]["type"] == "string"
+        assert params["properties"]["free"]["properties"] == {}
+    finally:
+        mgr.close_all()

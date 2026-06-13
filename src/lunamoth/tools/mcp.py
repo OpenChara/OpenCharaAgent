@@ -34,6 +34,7 @@ from typing import Any, NoReturn
 
 from ..config import ROOT, SANDBOX_ROOT
 from ..obs import get_logger
+from .schema_sanitizer import sanitize_input_schema
 
 _log = get_logger("mcp")
 
@@ -301,7 +302,9 @@ class McpManager:
                     "function": {
                         "name": f"mcp__{server}__{t['name']}",
                         "description": (t.get("description") or "")[:1000],
-                        "parameters": t.get("inputSchema") or {"type": "object", "properties": {}},
+                        # Untrusted server schema → sanitize into a strict-backend
+                        # -safe DEEP COPY (never mutate the cached _tools entry).
+                        "parameters": sanitize_input_schema(t.get("inputSchema")),
                     },
                 })
         return out
