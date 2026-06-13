@@ -511,6 +511,13 @@ body.dark .md-code{background:rgba(255,255,255,.08)}
 }
 .goal{display:flex; gap:8px; font-size:13px; padding:4px 0; align-items:baseline}
 .goal i{width:13px;height:13px;border-radius:4px;border:1.5px solid rgba(20,40,60,.25); flex:none; transform:translateY(2px)}
+.goal-done span, .goal-dropped span{color:var(--text-2); opacity:.6}
+.goal-done span{text-decoration:line-through}
+.goal-done i{background:var(--accent,#3a7); border-color:var(--accent,#3a7)}
+.goal-dropped i{border-style:dashed; opacity:.5}
+.goal-badge{font-size:10px; padding:1px 6px; border-radius:6px; align-self:center; flex:none; letter-spacing:.3px}
+.goal-badge.done{background:rgba(40,160,90,.16); color:#2a8a55}
+.goal-badge.dropped{background:rgba(120,120,120,.16); color:var(--text-2)}
 .memory-text{font-size:12.5px; line-height:1.8; color:var(--text-2); white-space:pre-wrap; overflow-wrap:break-word}
 .tool-chips{display:flex; flex-wrap:wrap; gap:5px}
 .tool-chips .chip{font-family:var(--mono); font-size:10px}

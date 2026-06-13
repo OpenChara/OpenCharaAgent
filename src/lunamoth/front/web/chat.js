@@ -1,5 +1,5 @@
 /* LunaMoth Desktop renderer — the chara page: chat stream, the persistent
-   right panel (tabbed: status | abilities | memory | gateway | settings),
+   right panel (tabbed: status | skills | goals | memory | gateway | settings),
    works / terminal sibling pages and the avatar editor.
    Idle driving is SERVER-SIDE only (supervisor) — this file never calls idle. */
 "use strict";
@@ -1006,7 +1006,8 @@ class ChatController {
     }
     const body = $(`ppane-${which}`);
     body.innerHTML = "";
-    if (which === "abilities") this.renderAbilitiesPage(body);
+    if (which === "skills") this.renderSkillsPage(body);
+    else if (which === "goals") this.renderGoalsPage(body);
     else if (which === "memory") this.renderMemoryPage(body);
     else if (which === "gateway") this.renderGatewayPane(body);
     else if (which === "settings") this.renderSettingsPane(body);
@@ -1159,8 +1160,7 @@ class ChatController {
     body.appendChild(dz);
   }
 
-  async renderAbilitiesPage(body) {
-    const snap = this.snap || {};
+  async renderSkillsPage(body) {
     let pack = "";
     const deckCard = this.deckCard;
     if (deckCard) {
@@ -1175,20 +1175,35 @@ class ChatController {
       el("div", { class: "tool-chips" },
         el("span", { class: "chip" }, pack || "sandbox"))));
     const skillsReply = await this.command("/skills", true);
-    if (skillsReply && skillsReply.text) {
-      body.appendChild(el("div", { class: "dsec" },
-        el("h4", null, "Skills"),
-        el("div", { class: "memory-text" }, skillsReply.text.slice(0, 2000))));
-    }
+    body.appendChild(el("div", { class: "dsec" },
+      el("h4", null, "Skills"),
+      (skillsReply && skillsReply.text)
+        ? el("div", { class: "memory-text" }, skillsReply.text.slice(0, 2000))
+        : el("div", { class: "placeholder-pane" }, t("d-empty-skills"))));
+  }
+
+  async renderGoalsPage(body) {
     let extras = null;
     try { extras = await hub.call("chara.extras", { name: this.name }, 20000); } catch (e) { /* */ }
     const goals = (extras && extras.goals && (Array.isArray(extras.goals) ? extras.goals : extras.goals.goals)) || [];
+    if (!goals.length) {
+      body.appendChild(el("div", { class: "placeholder-pane" }, t("d-empty-goals")));
+      return;
+    }
+    // 进行中的排在前，已完成 / 已放弃的归档其后并淡化、加状态标。
+    const rank = { active: 0, done: 1, dropped: 2 };
+    const ordered = goals.slice().sort((a, b) =>
+      (rank[(a && a.status) || "active"] ?? 0) - (rank[(b && b.status) || "active"] ?? 0));
     body.appendChild(el("div", { class: "dsec" },
-      el("h4", null, t("p-goals")),
-      ...(goals.length
-        ? goals.slice(0, 12).map((g) => el("div", { class: "goal" }, el("i"), el("span", null,
-            typeof g === "string" ? g : (g.text || g.title || JSON.stringify(g)).slice(0, 120))))
-        : [el("div", { class: "placeholder-pane" }, t("d-empty-goals"))])));
+      ...ordered.slice(0, 30).map((g) => {
+        const status = (typeof g === "object" && g.status) || "active";
+        const text = typeof g === "string" ? g : (g.text || g.title || JSON.stringify(g));
+        const row = el("div", { class: "goal goal-" + status },
+          el("i"),
+          el("span", null, String(text).slice(0, 200)));
+        if (status !== "active") row.appendChild(el("span", { class: "goal-badge " + status }, t("goal-" + status)));
+        return row;
+      })));
   }
 
   async renderMemoryPage(body) {
@@ -1360,7 +1375,7 @@ class ChatController {
       root.appendChild(el("div", { class: "sub", style: "margin-bottom:12px" }, t("gw-sub")));
       root.appendChild(el("div", { class: "gw-plats" },
         ...platKeys.map((k) => el("button", { class: k === plat ? "on" : "", onclick: () => { plat = k; render(); } },
-          GW_PLATFORMS[k].label))));
+          t(GW_PLATFORMS[k].label)))));
       root.appendChild(chips());
       root.appendChild(el("div", { class: "gw-blurb" }, t(spec.blurb)));
       if (spec.pending) {
