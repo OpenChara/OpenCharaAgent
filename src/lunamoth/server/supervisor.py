@@ -109,6 +109,88 @@ def permanent_model_error(message: str) -> bool:
     return any(s in msg for s in ("HTTP 401", "HTTP 403", "HTTP 404"))
 
 
+class RestartBackoff:
+    """Supervised-restart bookkeeping with injectable clock.
+
+    Shared by CharaChild and GatewayChild so both get the same discipline:
+    exponential backoff (floor → ×2 → cap), a consecutive-crash strike
+    counter capped at a stuck-loop threshold (hermes ``_STUCK_LOOP_THRESHOLD
+    = 3``), and a health reset — a run that stays up past a threshold clears
+    BOTH the backoff and the strikes so an isolated crash doesn't compound.
+
+    No async sleeps live here: callers ask for ``next_delay()`` and sleep
+    themselves, and call ``note_started()`` / ``note_healthy_if_due()`` /
+    ``note_crash()`` around the child lifecycle. That keeps the policy
+    unit-testable with a fake monotonic clock.
+    """
+
+    def __init__(
+        self,
+        *,
+        floor: float = 60.0,
+        cap: float = 1800.0,
+        health_after: float = 120.0,
+        max_strikes: int = 3,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.floor = float(floor)
+        self.cap = float(cap)
+        self.health_after = float(health_after)
+        self.max_strikes = int(max_strikes)
+        self.monotonic = monotonic
+        self.delay = self.floor
+        self.strikes = 0
+        self._started_at = 0.0
+        self._counted_healthy = False
+
+    def reset(self) -> None:
+        self.delay = self.floor
+        self.strikes = 0
+        self._started_at = 0.0
+        self._counted_healthy = False
+
+    def note_started(self) -> None:
+        """Mark the moment a child process came up (resets the health timer)."""
+        self._started_at = self.monotonic()
+        self._counted_healthy = False
+
+    def note_healthy_if_due(self) -> bool:
+        """Reset backoff + strikes if the current run has been up long enough.
+
+        Returns True the first time a run crosses the health threshold so the
+        caller can emit a transition. Idempotent within one run.
+        """
+        if self._counted_healthy or self._started_at <= 0.0:
+            return False
+        if self.monotonic() - self._started_at < self.health_after:
+            return False
+        self._counted_healthy = True
+        self.delay = self.floor
+        self.strikes = 0
+        return True
+
+    def note_crash(self) -> float:
+        """Record an unexpected exit; return the delay to wait before retry.
+
+        If the run had already been declared healthy, the strike counter and
+        backoff were reset in note_healthy_if_due, so this crash starts a fresh
+        ladder. Increments the strike counter and grows the delay.
+        """
+        # A run that proved healthy resets the ladder even if note_healthy_if_due
+        # was never polled (e.g. exit detected before the next idle tick).
+        if not self._counted_healthy and self._started_at > 0.0 and self.monotonic() - self._started_at >= self.health_after:
+            self.delay = self.floor
+            self.strikes = 0
+        delay = self.delay
+        self.strikes += 1
+        self.delay = min(self.delay * 2.0, self.cap)
+        return delay
+
+    @property
+    def suspended(self) -> bool:
+        return self.strikes >= self.max_strikes
+
+
 @dataclass(frozen=True)
 class LifeState:
     state: str
@@ -250,6 +332,7 @@ class CharaChild:
         self.detail = ""
         self._stdout_task: asyncio.Task | None = None
         self._idle_task: asyncio.Task | None = None
+        self._restart_task: asyncio.Task | None = None
         self._pending: dict[Any, asyncio.Future] = {}
         self._rpc_id = 0
         self._lock = asyncio.Lock()
@@ -259,11 +342,21 @@ class CharaChild:
         self._client_stream_ids: set[Any] = set()
         self.idle = IdleGate()
         self.life: LifeState | None = None
+        # Supervised auto-restart: an unexpected exit restarts with backoff
+        # (60s→1800s) up to 3 consecutive crashes, then suspends (terminal
+        # crashed). A healthy run resets both. Operator start clears suspension.
+        self.restart = RestartBackoff()
 
     def status(self) -> dict[str, Any]:
         return {"state": self.state, "detail": self.detail, "pid": self.proc.pid if self.proc else 0, "life": dataclasses.asdict(self.life) if self.life else None}
 
-    async def start(self) -> dict[str, Any]:
+    async def start(self, *, operator: bool = True) -> dict[str, Any]:
+        # operator=True is an explicit start (user message / WS attach / RPC):
+        # it always clears any suspension and pending backoff and tries again.
+        # operator=False is the internal supervised restart path.
+        if operator:
+            self._cancel_pending_restart()
+            self.restart.reset()
         async with self._lock:
             if self.proc is not None and self.proc.returncode is None:
                 return self.status()
@@ -309,12 +402,15 @@ class CharaChild:
             )
             log.close()
             self.state, self.detail = "running", ""
+            self.restart.note_started()
             self._stdout_task = asyncio.create_task(self._read_stdout(), name=f"chara-{self.name}-stdout")
             self._idle_task = asyncio.create_task(self._idle_loop(), name=f"chara-{self.name}-idle")
             self._emit_life(self.idle.life_state({"patience": 600.0, "quiet": 300}))
             return self.status()
 
     async def stop(self) -> dict[str, Any]:
+        self._cancel_pending_restart()
+        self.restart.reset()
         async with self._lock:
             self._stopping = True
             proc = self.proc
@@ -335,10 +431,13 @@ class CharaChild:
         self._clear_running_marker()
         return self.status()
 
-    async def ensure_started(self) -> None:
-        if self.state == "crashed":
+    async def ensure_started(self, *, operator: bool = False) -> None:
+        # A suspended (terminal-crashed) child stays dead for INTERNAL callers
+        # (the idle loop's own private_call) — they must not resurrect a broken
+        # chara. Operator entrypoints pass operator=True to clear suspension.
+        if self.state == "crashed" and not operator:
             raise RuntimeError(self.detail or "chara child crashed")
-        st = await self.start()
+        st = await self.start(operator=operator)
         if st["state"] not in {"running", "starting"}:
             raise RuntimeError(st.get("detail") or st.get("state") or "chara is not running")
 
@@ -398,9 +497,40 @@ class CharaChild:
         if self._stopping or code == 0:
             self.state, self.detail = "stopped", ""
             self._emit_life(LifeState("waiting"))
-        else:
-            self.state, self.detail = "crashed", f"crashed (exit {code})"
-            self._emit_life(LifeState("backoff", detail=self.detail))
+            return
+        # Unexpected exit: supervised restart with backoff, suspend after 3
+        # consecutive crashes. crash = a visible state always — never a silent
+        # restart loop: every transition emits life.state.
+        delay = self.restart.note_crash()
+        if self.restart.suspended:
+            self.state = "crashed"
+            self.detail = f"crashed (exit {code}); suspended after {self.restart.strikes} consecutive crashes"
+            self._emit_life(LifeState("crashed", detail=self.detail))
+            return
+        self.state = "backoff"
+        self.detail = f"crashed (exit {code}); restart in {int(delay)}s"
+        self._emit_life(LifeState("backoff", detail=self.detail))
+        self._restart_task = asyncio.create_task(
+            self._restart_after(delay), name=f"chara-{self.name}-restart"
+        )
+
+    async def _restart_after(self, delay: float) -> None:
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        if self._stopping or (self.proc is not None and self.proc.returncode is None):
+            return
+        self.state, self.detail = "starting", ""
+        self._emit_life(LifeState("backoff", detail="restarting"))
+        with contextlib.suppress(Exception):
+            await self.start(operator=False)
+
+    def _cancel_pending_restart(self) -> None:
+        task = self._restart_task
+        self._restart_task = None
+        if task is not None and not task.done():
+            task.cancel()
 
     def _clear_running_marker(self) -> None:
         with contextlib.suppress(OSError):
@@ -466,7 +596,9 @@ class CharaChild:
             if rid is not None and driver is not None:
                 await driver.send({"jsonrpc": "2.0", "id": rid, "result": {"ok": True, "resident": True}})
             return
-        await self.ensure_started()
+        # A client frame (send/command/event) is operator activity: clear any
+        # suspension and try again (operator override of a 3-strike suspend).
+        await self.ensure_started(operator=True)
         proc = self.proc
         if proc is None or proc.stdin is None:
             raise RuntimeError("chara child is not running")
@@ -527,6 +659,10 @@ class CharaChild:
             self.idle.schedule_after(snap or {})
             self._emit_life(self.idle.life_state(snap or {}))
             while self.proc is not None and self.proc.returncode is None:
+                # A run that has stayed up past the health threshold clears the
+                # crash-restart strikes and backoff so an isolated crash later
+                # doesn't compound toward suspension or the 1800s cap.
+                self.restart.note_healthy_if_due()
                 snap = await self.snapshot(silent=True)
                 # While a present user is in chat mode, its own work waits. When
                 # no user is present, background life always continues.
@@ -559,12 +695,25 @@ class CharaChild:
 
 # ---- gateway children -------------------------------------------------------
 
+# A configuration error in an adapter must NOT be retried — it is fatal until
+# the operator fixes the config, unlike a transient crash. The gateway child
+# exits with this code so the supervisor can distinguish the two.
+GATEWAY_FATAL_EXIT = 78  # EX_CONFIG (sysexits.h): configuration error
+
+
 @dataclass
 class GatewayInfo:
     platform: str = ""
+    # state ∈ {stopped, starting, running, backoff, fatal}. `starting` is the
+    # spawn window; `fatal` is a non-retryable config error; `backoff` is a
+    # transient crash waiting to restart.
     state: str = "stopped"
     detail: str = ""
     pid: int = 0
+    # Human-readable reason on backoff/fatal (the last crash detail), kept
+    # separate from `detail` so the web can drive a diagnostic chip. `detail`
+    # is retained for back-compat with existing gateway.status callers.
+    error_message: str = ""
 
 
 class GatewayChild:
@@ -576,7 +725,12 @@ class GatewayChild:
         self.proc: asyncio.subprocess.Process | None = None
         self._task: asyncio.Task | None = None
         self._stop_requested = False
-        self._backoff = 60.0
+        # Same supervised-restart discipline as CharaChild: a run that stays up
+        # past the health threshold resets the backoff so an isolated crash a
+        # week apart doesn't compound toward the 1800s cap. (No 3-strike
+        # suspension here — a gateway has always restarted unboundedly; the new
+        # `fatal` state covers the non-retryable config-error case instead.)
+        self.backoff = RestartBackoff(floor=60.0, cap=1800.0, health_after=120.0, max_strikes=10**9)
 
     def _config_path(self) -> Path:
         return self.meta.root / "messaging.json"
@@ -619,8 +773,11 @@ class GatewayChild:
         if self.proc is not None and self.proc.returncode is None:
             self.info.state = "running"
             self.info.detail = ""
+            self.info.error_message = ""
             self.info.pid = self.proc.pid
             return self.status()
+        # An explicit start is an operator override: clear a prior fatal/backoff.
+        self.backoff.reset()
         self._task = asyncio.create_task(self._run_supervised(), name=f"gateway-{self.name}")
         return self.status()
 
@@ -640,14 +797,16 @@ class GatewayChild:
                 await proc.wait()
         self.info.state = "stopped"
         self.info.detail = ""
+        self.info.error_message = ""
         self.info.pid = 0
         return self.status()
 
     async def _run_supervised(self) -> None:
         while not self._stop_requested and self.enabled():
             self.info.platform = self._platform()
-            self.info.state = "running"
+            self.info.state = "starting"
             self.info.detail = ""
+            self.info.error_message = ""
             env = {**os.environ, **self.meta.env()}
             env.setdefault("LUNAMOTH_PY_BACKEND", ISOLATION_TO_BACKEND.get(self.meta.isolation, "sandbox"))
             log_path = self.meta.root / "gateway.log"
@@ -666,6 +825,8 @@ class GatewayChild:
                     cwd=str(APP_DIR),
                 )
                 self.info.pid = self.proc.pid
+                self.info.state = "running"
+                self.backoff.note_started()
                 code = await self.proc.wait()
             finally:
                 log.close()
@@ -673,15 +834,26 @@ class GatewayChild:
             if self._stop_requested or not self.enabled() or code == 0:
                 self.info.state = "stopped"
                 self.info.detail = ""
+                self.info.error_message = ""
                 return
-            delay = self._backoff
-            self._backoff = min(self._backoff * 2.0, 1800.0)
+            if code == GATEWAY_FATAL_EXIT:
+                # A configuration error in an adapter: do NOT retry. Stays fatal
+                # until the operator fixes the config and explicitly restarts.
+                self.info.state = "fatal"
+                self.info.error_message = "gateway configuration error; not retrying"
+                self.info.detail = self.info.error_message
+                return
+            # A healthy run resets the ladder (handled inside note_crash too if
+            # the idle poll never ran); an isolated crash restarts at the floor.
+            delay = self.backoff.note_crash()
             self.info.state = "backoff"
-            self.info.detail = f"crashed (exit {code}); restart in {int(delay)}s"
+            self.info.error_message = f"crashed (exit {code}); restart in {int(delay)}s"
+            self.info.detail = self.info.error_message
             await asyncio.sleep(delay)
         if not self.enabled():
             self.info.state = "stopped"
             self.info.detail = ""
+            self.info.error_message = ""
 
 
 # ---- static HTTP ------------------------------------------------------------
@@ -919,7 +1091,8 @@ class Supervisor:
             return
         child = self.child(name)
         try:
-            await child.ensure_started()
+            # Opening the chara's room is operator activity: clear suspension.
+            await child.ensure_started(operator=True)
         except Exception as exc:  # noqa: BLE001
             await _close_ws(ws, 4423, str(exc)[:120])
             return
