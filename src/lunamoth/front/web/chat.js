@@ -1085,6 +1085,16 @@ class ChatController {
       },
     }));
     body.appendChild(danger);
+
+    // Danger zone — deletion lives ONLY here (the last thing in the settings
+    // pane), never in a status/⋯ menu. Opens the triple-confirm flow.
+    const dz = el("div", { class: "del-danger-zone" },
+      el("h4", null, t("danger-zone")),
+      el("div", { class: "dz-sub" }, t("del-open-sub")),
+      el("button", { class: "btn danger dz-del", onclick: () => {
+        openDeleteModal({ name: this.name, char_name: this.charName });
+      } }, t("del-open")));
+    body.appendChild(dz);
   }
 
   async renderAbilitiesPage(body) {

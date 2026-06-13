@@ -706,6 +706,20 @@ details.cv-raw pre{
   border:1px solid var(--hairline); margin-bottom:14px; color:var(--text); background:#FAFBFC; outline:none;
 }
 .confirm-input:focus,.text-input:focus{border-color:var(--accent)}
+/* three-step delete confirmation */
+.del-step{margin-bottom:12px}
+.del-step>label{display:block; font-size:12px; color:var(--text-2); margin-bottom:5px; font-weight:500}
+.del-step .confirm-input{margin-bottom:0}
+.del-step.ok>label{color:var(--text-3)}
+.del-step.ok .confirm-input{border-color:color-mix(in srgb, var(--red) 45%, var(--hairline))}
+.del-check{display:flex; gap:9px; align-items:flex-start; font-size:13px; color:var(--text-2); cursor:pointer; line-height:1.5}
+.del-check input{margin-top:2px; flex:none; accent-color:var(--red)}
+.del-step.ok .del-check{color:var(--text)}
+/* per-chara settings danger zone (panel settings pane) */
+.del-danger-zone{margin-top:26px; padding-top:16px; border-top:1px solid color-mix(in srgb, var(--red) 26%, var(--hairline))}
+.del-danger-zone h4{margin:0 0 4px; font-size:12px; font-weight:600; color:var(--red); letter-spacing:.02em}
+.del-danger-zone .dz-sub{font-size:12px; color:var(--text-3); line-height:1.5; margin-bottom:11px}
+.del-danger-zone .dz-del{width:100%}
 .modal .acts{display:flex; gap:8px; align-items:center}
 .modal .acts .grow{flex:1}
 .key-update-list{display:flex;flex-direction:column;gap:6px;margin-top:8px;max-height:34vh;overflow:auto}
