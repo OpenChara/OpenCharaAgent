@@ -20,6 +20,10 @@ class LLMConfig:
     # Reasoning effort for thinking models: off | low | medium | high.
     # Default ON at medium; only sent to routes/models known to accept it.
     reasoning: str = os.getenv("LLM_REASONING", "medium").strip().lower()
+    # Vision is a model CAPABILITY, not a preference — auto-detected by name.
+    # `on`/`off` is a safety valve for routes the name heuristic can't read
+    # (a custom-named vision model, or a text-only one that fakes a vision name).
+    vision: str = os.getenv("LLM_VISION", "auto").strip().lower()
 
 
 @dataclass(frozen=True)

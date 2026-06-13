@@ -178,7 +178,12 @@ class MessagingHost:
                 _log.info("ignored unauthorized messaging sender %s (%s)", sender, msg.sender_name)
                 return
             text = (msg.text or "").strip()
-            if not text:
+            attachments = list(msg.attachments)
+            # A media-only message (a photo/file/sticker with no caption) has no
+            # text but carries attachments and/or folded-in media markers —
+            # don't drop it. Only a genuinely empty message (no text, no media)
+            # is ignored.
+            if not text and not attachments:
                 return
             if text.startswith("/"):
                 reply = self._dispatcher.handle.command(text)
@@ -193,14 +198,24 @@ class MessagingHost:
 
             # Show the incoming message in the app window first (an incoming
             # bubble), THEN stream the chara's reply — so the conversation reads
-            # whole from every channel, not just the chara's half.
+            # whole from every channel, not just the chara's half. The text
+            # already has media markers ([图片]/[文件: ...]/[表情]) folded in by
+            # the adapter, so an inbound photo shows the marker in the window.
+            peer_text = text or "[媒体]"
             with contextlib.suppress(Exception):
-                self._dispatcher.emit_peer_message(text, source=adapter.name, sender=msg.sender_name or sender)
+                self._dispatcher.emit_peer_message(peer_text, source=adapter.name, sender=msg.sender_name or sender)
             # Route through the dispatcher so the turn ALSO streams to the app
             # window (one agent, one conversation, seen from every channel).
+            # Pass attachments through to the agent's ingest path; keep the
+            # legacy single-arg call when there are none so existing handles
+            # (and stubs) that take only `text` still work.
             self._dispatcher.run_stream_sync(
                 "wechat",
-                lambda: self._dispatcher.handle.stream_user(text),
+                (
+                    (lambda: self._dispatcher.handle.stream_user(text, attachments=attachments))
+                    if attachments
+                    else (lambda: self._dispatcher.handle.stream_user(text))
+                ),
                 collect,
             )
             say = "".join(chunks).strip()

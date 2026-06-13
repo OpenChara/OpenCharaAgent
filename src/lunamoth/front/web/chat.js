@@ -21,6 +21,39 @@ function qrDataUrl(text) {
 }
 
 
+/* ============================ ATTACHMENTS（多模态：图片/文件） ============================ */
+const ATTACH_MAX_BYTES = 25 * 1024 * 1024;   // client-side guard: don't base64-bloat huge uploads
+
+/* Read a File to RAW base64 (NO "data:<mime>;base64," prefix) for the `data`
+   wire field, plus a data-URL we keep for the local thumbnail preview. */
+function readAttachment(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error || new Error("read failed"));
+    reader.onload = () => {
+      const url = String(reader.result || "");
+      const comma = url.indexOf(",");           // "data:<mime>;base64,<DATA>"
+      const data = comma >= 0 ? url.slice(comma + 1) : url;
+      resolve({
+        name: file.name || "file",
+        mime: file.type || "application/octet-stream",
+        size: file.size || 0,
+        data,                                    // raw base64, prefix stripped
+        url,                                     // full data: URL (preview only)
+        isImage: (file.type || "").startsWith("image/"),
+      });
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function humanSize(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(0) + " KB";
+  return (n / 1024 / 1024).toFixed(1) + " MB";
+}
+
 /* ============================ GATEWAY（右侧面板「网关」页） ============================ */
 const GW_MASK = "••••••••"; // hub.py _SECRET_MASK：后端给秘密字段回显的掩码
 /* GW_PLATFORMS — 纯数据注册表（Hermes field-copy 三件套：label/help/placeholder）。
@@ -102,6 +135,8 @@ class ChatController {
     this._termThemeObs = null;
     this._qrTimer = null;      // weixin QR 轮询（离开网关页即停）
     this._qrBusy = false;
+    this.staged = [];          // pending attachments: {name,mime,size,data,url,isImage,node}
+    this._dragDepth = 0;       // dragenter/leave counter so nested elements don't flicker the overlay
     try {
       this.thinkExpanded = localStorage.getItem("lm-chat-thinking-expanded") === "1";
     } catch (e) {
@@ -736,15 +771,16 @@ class ChatController {
   // Send-anytime: while the chara is busy, a typed message is STAGED (not sent,
   // not an interrupt) and shown as a pending bubble; it's delivered as a normal
   // turn the moment the chara finishes what it's doing.
-  queueMessage(text) {
+  queueMessage(text, atts) {
     this.clearEmpty();
     this._queue = this._queue || [];
     const row = el("div", { class: "user-msg queued" },
-      el("div", { class: "bubble" }, text),
+      this.attachmentRow(atts),
+      text ? el("div", { class: "bubble" }, text) : null,
       el("div", { class: "via-tag" }, t("queued-hint")));
     $("stream-inner").appendChild(row);
     this.scrollDown(true);
-    this._queue.push({ text, node: row });
+    this._queue.push({ text, atts: atts || [], node: row });
   }
 
   flushQueue() {
@@ -752,14 +788,18 @@ class ChatController {
     if (this.client.streaming || this._appTurn) return;   // still busy
     const item = this._queue.shift();
     if (item.node && item.node.isConnected) item.node.remove();
-    this.sendUser(item.text);   // a normal turn; its completion flushes the next
+    this.sendUser(item.text, item.atts);   // a normal turn; its completion flushes the next
   }
 
-  async sendUser(text) {
+  async sendUser(text, atts) {
     this.clearEmpty();
-    $("stream-inner").appendChild(el("div", { class: "user-msg" }, el("div", { class: "bubble" }, text)));
+    atts = atts || [];
+    $("stream-inner").appendChild(el("div", { class: "user-msg" },
+      this.attachmentRow(atts),
+      text ? el("div", { class: "bubble" }, text) : null));
     this.scrollDown(true);
-    await this.runStream(() => this.client.send(text));
+    const wire = atts.map((a) => ({ name: a.name, mime: a.mime, size: a.size, data: a.data }));
+    await this.runStream(() => this.client.send(text, wire));
   }
 
   // A message that arrived from another channel (WeChat): show it as an incoming
@@ -1736,6 +1776,107 @@ class ChatController {
     this.scrollDown();
   }
 
+  /* ---- attachments: stage / render / drop ---- */
+  // Read picked/dropped FileList into the staging area. Oversized files are
+  // skipped with a friendly inline warning (the WS shouldn't carry a 100MB blob).
+  async stageFiles(fileList) {
+    const files = Array.from(fileList || []);
+    for (const f of files) {
+      if (!f) continue;
+      if (f.size > ATTACH_MAX_BYTES) {
+        this.note(t("attach-too-big", { name: f.name || t("attach-file") }));
+        continue;
+      }
+      try {
+        const att = await readAttachment(f);
+        if (this.disposed) return;
+        this.staged.push(att);
+        this.renderStage();
+      } catch (e) {
+        this.note(rpcErrText(e));
+      }
+    }
+  }
+
+  renderStage() {
+    const wrap = $("attach-stage");
+    if (!wrap) return;
+    wrap.innerHTML = "";
+    if (!this.staged.length) { wrap.hidden = true; return; }
+    wrap.hidden = false;
+    for (const att of this.staged) {
+      const rm = el("button", { class: "rm", title: t("attach-remove"), "aria-label": t("attach-remove"),
+        onclick: () => this.unstage(att) }, "×");
+      let chip;
+      if (att.isImage) {
+        chip = el("div", { class: "attach-chip", title: att.name },
+          el("img", { class: "thumb", src: att.url, alt: att.name }), rm);
+      } else {
+        chip = el("div", { class: "attach-chip file", title: att.name },
+          el("span", { class: "ficon" }, "📄"),
+          el("div", { class: "meta" },
+            el("span", { class: "fname" }, att.name),
+            el("span", { class: "fsize" }, humanSize(att.size))),
+          rm);
+      }
+      wrap.appendChild(chip);
+    }
+  }
+
+  unstage(att) {
+    const i = this.staged.indexOf(att);
+    if (i >= 0) this.staged.splice(i, 1);
+    this.renderStage();
+  }
+
+  // Pop the staged attachments off (for sending). Clears the staging area.
+  takeStaged() {
+    const out = this.staged.slice();
+    this.staged = [];
+    this.renderStage();
+    return out;
+  }
+
+  // The thumbnails/file chips shown in the optimistic user bubble (sent ones).
+  attachmentRow(atts) {
+    if (!atts || !atts.length) return null;
+    const row = el("div", { class: "att-row" });
+    for (const a of atts) {
+      if (a.isImage) row.appendChild(el("img", { class: "att-thumb", src: a.url, alt: a.name }));
+      else row.appendChild(el("div", { class: "att-file" }, "📄 ", a.name));
+    }
+    return row;
+  }
+
+  bindDrop() {
+    const surface = $("page-chat");
+    const overlay = $("drop-overlay");
+    if (!surface || !overlay) return;
+    const hint = overlay.querySelector("span");
+    if (hint) hint.textContent = t("attach-drop");
+    const hasFiles = (ev) => ev.dataTransfer &&
+      Array.from(ev.dataTransfer.types || []).includes("Files");
+    surface.ondragenter = (ev) => {
+      if (!hasFiles(ev)) return;
+      ev.preventDefault();
+      this._dragDepth++;
+      overlay.hidden = false;
+    };
+    surface.ondragover = (ev) => { if (hasFiles(ev)) ev.preventDefault(); };
+    surface.ondragleave = (ev) => {
+      if (!hasFiles(ev)) return;
+      this._dragDepth = Math.max(0, this._dragDepth - 1);
+      if (this._dragDepth === 0) overlay.hidden = true;
+    };
+    surface.ondrop = (ev) => {
+      this._dragDepth = 0;
+      overlay.hidden = true;
+      if (!ev.dataTransfer || !ev.dataTransfer.files || !ev.dataTransfer.files.length) return;
+      ev.preventDefault();   // stop the browser opening the file
+      this.stageFiles(ev.dataTransfer.files);
+    };
+  }
+
   /* ---- composer & UI bindings ---- */
   setSending(streaming) {
     const btn = $("send-btn");
@@ -1768,6 +1909,20 @@ class ChatController {
         this.client.interrupt().catch(() => {});
       } else this.submit();
     };
+    // Attachments: + button opens the hidden file input (instant click feedback),
+    // selecting files stages them; drag-and-drop onto the chat surface does the same.
+    const attachBtn = $("attach-btn");
+    const attachInput = $("attach-input");
+    attachBtn.title = t("attach-add");
+    attachBtn.setAttribute("aria-label", t("attach-add"));
+    attachBtn.onclick = () => attachInput.click();   // optimistic: opens the OS picker at once
+    attachInput.onchange = () => {
+      this.stageFiles(attachInput.files);
+      attachInput.value = "";   // allow re-picking the same file
+    };
+    this.staged = [];
+    this.renderStage();
+    this.bindDrop();
     $("chat-back").onclick = () => navTo("#/");
     $("chat-avatar").onclick = () => {
       if (this.deckCard) openAvatarEditor(this.deckCard);
@@ -1797,9 +1952,12 @@ class ChatController {
   async submit() {
     const input = $("composer-input");
     const text = input.value.trim();
-    if (!text) return;
+    const hasAttach = this.staged.length > 0;
+    // Empty text is fine WHEN files are attached (send the files); otherwise no-op.
+    if (!text && !hasAttach) return;
     const busy = this.client.streaming || this._appTurn;
-    if (text.startsWith("/")) {
+    // A slash command is a control line — never carries attachments.
+    if (text.startsWith("/") && !hasAttach) {
       if (busy) { toast(t("busy-cmd")); return; }   // control commands wait for a quiet moment
       input.value = ""; input.style.height = "auto";
       const reply = await this.command(text);
@@ -1807,7 +1965,8 @@ class ChatController {
       return;
     }
     input.value = ""; input.style.height = "auto";
-    if (busy) this.queueMessage(text);   // stage it, don't interrupt
-    else await this.sendUser(text);
+    const atts = this.takeStaged();
+    if (busy) this.queueMessage(text, atts);   // stage it, don't interrupt
+    else await this.sendUser(text, atts);
   }
 }

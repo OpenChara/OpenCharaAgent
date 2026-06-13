@@ -196,7 +196,16 @@ class JsonRpcDispatcher:
         text = params.get("text")
         if not isinstance(text, str):
             raise RpcError(-32602, "send.text must be a string")
-        self._start_stream("send", rid, wants_response, lambda: self.handle.stream_user(text))
+        attachments = params.get("attachments")
+        if attachments is not None and not isinstance(attachments, list):
+            raise RpcError(-32602, "send.attachments must be a list")
+        # Only thread attachments when present so legacy single-arg handles
+        # (and test stubs) keep working — the multimodal path is opt-in.
+        if attachments:
+            make = lambda: self.handle.stream_user(text, attachments)  # noqa: E731
+        else:
+            make = lambda: self.handle.stream_user(text)  # noqa: E731
+        self._start_stream("send", rid, wants_response, make)
         return None
 
     def _idle(self, rid: Any, params: dict[str, Any], wants_response: bool) -> None:

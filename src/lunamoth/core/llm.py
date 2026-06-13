@@ -33,6 +33,20 @@ _REASONING_PREFIXES = (
     "qwen/qwen3", "tencent/hy3-preview", "xiaomi/", "nousresearch/",
 )
 
+# Known multimodal (image-in) model families, matched as substrings of the model
+# id (provider-prefix tolerant, e.g. "openai/gpt-4o", "gpt-4o-mini"). This is a
+# CAPABILITY read, not a preference — when in doubt we route the image to the
+# workspace+notice path rather than risk a 400 from a text-only model.
+_VISION_HINTS = (
+    "gpt-4o", "gpt-4.1", "gpt-4-vision", "gpt-4-turbo", "o1", "o3", "o4-mini", "chatgpt-4o",
+    "claude-3", "claude-4", "claude-opus", "claude-sonnet", "claude-haiku",
+    "gemini", "qwen-vl", "qwen2-vl", "qwen2.5-vl", "qwen3-vl", "qvq",
+    "llava", "pixtral", "llama-3.2", "llama-4", "internvl", "minicpm-v",
+    "glm-4v", "glm-4.1v", "step-1v", "yi-vision", "grok-vision", "grok-2-vision",
+    "grok-4", "molmo", "phi-3.5-vision", "phi-4-multimodal", "mistral-small-3",
+    "mistral-medium-3", "deepseek-vl", "kimi-vl", "ernie-4.5-vl", "doubao-vision",
+)
+
 
 # ---- lone-surrogate sanitization (audit #7, hermes message_sanitization) ---------------
 # Lone surrogate code points (U+D800–DFFF) are invalid outside UTF-16 pairs.
@@ -451,6 +465,21 @@ class LLMClient:
         base = (self.cfg.base_url or "").lower()
         model = (self.cfg.model or "").lower()
         return "openrouter" in base and model.startswith(_REASONING_PREFIXES)
+
+    def vision_supported(self) -> bool:
+        """Whether the active model can SEE images sent as ``image_url`` content.
+
+        A capability read (model-name heuristic) with an explicit `on`/`off`
+        override on `cfg.vision` for routes the name can't reveal. When unknown
+        we return False so an image lands in the workspace with a notice rather
+        than risking a hard 400 from a text-only model (no failure fallbacks)."""
+        mode = (self.cfg.vision or "auto").strip().lower()
+        if mode in {"on", "true", "1", "yes"}:
+            return True
+        if mode in {"off", "false", "0", "no"}:
+            return False
+        model = (self.cfg.model or "").lower()
+        return any(hint in model for hint in _VISION_HINTS)
 
     def reasoning_echoback_required(self) -> bool:
         """Some thinking modes reject replayed assistant tool-call messages that

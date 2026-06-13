@@ -85,3 +85,23 @@ class Sandbox:
         path = self.resolve_inside(filename, base=self.workspace_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
+
+    def write_bytes(self, relative: str, data: bytes) -> str:
+        """Write raw bytes under workspace/, never overwriting: a name collision
+        gets a `name (2).ext` suffix. Returns the workspace-relative path that was
+        actually written (e.g. ``uploads/photo.png``). Used for inbound attachments
+        (chat uploads, messaging media) that must land beside the chara's own work.
+        """
+        path = self.resolve_inside(relative, base=self.workspace_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            stem, suffix = path.stem, path.suffix
+            n = 2
+            while True:
+                candidate = path.with_name(f"{stem} ({n}){suffix}")
+                if not candidate.exists():
+                    path = candidate
+                    break
+                n += 1
+        path.write_bytes(data)
+        return str(path.relative_to(self.workspace_dir))

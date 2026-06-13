@@ -262,7 +262,7 @@ class CharaHandle:
 
     # ---- conversation (generators of protocol events) ---------------------------
 
-    def stream_user(self, text: str) -> "Iterator[Event]":
+    def stream_user(self, text: str, attachments=None) -> "Iterator[Event]":
         # The first words of a visit insert a neutral "operator entered" fact
         # before the message — entering was silent, engaging is what the chara
         # registers. Once per visit.
@@ -272,7 +272,7 @@ class CharaHandle:
             self._session.context.add("system", marker)
             self._agent.audit.write("presence_event", kind="entered", text=marker[:120])
         self._visit_spoke = True
-        return self._agent.stream_handle(text, self._session)
+        return self._agent.stream_handle(text, self._session, attachments)
 
     def stream_event(self, text: str) -> "Iterator[Event]":
         return self._agent.stream_event(text, self._session)

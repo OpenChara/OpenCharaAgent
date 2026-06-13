@@ -142,7 +142,12 @@ class TranscriptStore:
     def append_message(self, msg: dict) -> None:
         """Persist one context message dict (the ContextBuffer persist hook)."""
         role = str(msg.get("role", ""))
-        structured = any(k in msg for k in ("tool_calls", "tool_call_id", "reasoning_content", "name"))
+        # A multimodal user message carries `content` as a list of parts; persist
+        # it as JSON (the struct path) so it reloads intact instead of being
+        # str()-ed into a broken "[{'type': ...}]" line.
+        structured = isinstance(msg.get("content"), list) or any(
+            k in msg for k in ("tool_calls", "tool_call_id", "reasoning_content", "name")
+        )
         if msg.get("kind") == "summary":
             self.append(role, str(msg.get("content") or ""), kind="summary")
             return

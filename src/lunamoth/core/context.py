@@ -28,6 +28,17 @@ THINK_WINDOW = 4
 _API_KEYS = ("role", "content", "tool_calls", "tool_call_id", "name")
 
 
+def _flatten_content(content: Any) -> str:
+    """Text view of a message's content — a plain string passes through; a
+    multimodal list collapses to its joined ``text`` parts (images dropped)."""
+    if isinstance(content, list):
+        return "\n".join(
+            str(p.get("text", "")) for p in content
+            if isinstance(p, dict) and p.get("type") == "text"
+        ).strip()
+    return str(content or "")
+
+
 def estimate_tokens(text: str) -> int:
     # Conservative-ish mixed Chinese/English approximation.
     # For context-budget bookkeeping, an exact tokenizer is unnecessary.
@@ -92,8 +103,9 @@ class ContextBuffer:
             del self.messages[i]
 
     def pairs(self) -> list[tuple[str, str]]:
-        """(role, content) view for UIs/tests — structured fields flattened away."""
-        return [(str(m.get("role", "")), str(m.get("content") or "")) for m in self.messages]
+        """(role, content) view for UIs/tests — structured fields flattened away.
+        Multimodal content (a list of parts) collapses to its text parts."""
+        return [(str(m.get("role", "")), _flatten_content(m.get("content"))) for m in self.messages]
 
     def render(self, include_reasoning: bool = False) -> list[dict]:
         """API-ready view: sanitized keys, orphaned tool results dropped.

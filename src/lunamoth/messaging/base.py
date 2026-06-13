@@ -3,7 +3,7 @@ from __future__ import annotations
 import abc
 import queue
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 class DeliveryDeferred(RuntimeError):
@@ -25,6 +25,13 @@ class InboundMessage:
     message_id): the gateway dedups redeliveries on it, so a retried
     callback or a post-reconnect redelivery never runs a second LLM turn.
     Empty = no platform id = never deduplicated.
+
+    `attachments` carries wire-shape attachment dicts the agent's ingest path
+    understands: either inline-able bytes as base64 (``{"name","mime","data"}``,
+    `data` = base64 of the raw file bytes) OR a not-yet-fetchable media
+    reference (``{"name","mime","url"|"path","kind"}``, `kind` ∈
+    image|file|sticker). The default empty tuple keeps every existing
+    construction (text-only) working unchanged.
     """
 
     sender_id: str
@@ -32,6 +39,7 @@ class InboundMessage:
     text: str
     reply: object | None = None
     message_id: str = ""
+    attachments: tuple = field(default_factory=tuple)
 
 
 class Adapter(abc.ABC):

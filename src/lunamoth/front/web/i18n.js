@@ -64,6 +64,12 @@ const I18N = {
   "net-off-tip": ["网络已断开 · 点击联网", "Network is off · click to connect"],
   "composer-ph": ["对{name}说点什么…", "Say something to {name}…"],
   "composer-resting-ph": ["它在休息——说话会唤醒它", "It is resting — speaking wakes it"],
+  // attachments (multimodal)
+  "attach-add": ["添加图片或文件", "Add image or file"],
+  "attach-remove": ["移除附件", "Remove attachment"],
+  "attach-drop": ["拖放文件到此处发送", "Drop files to send"],
+  "attach-too-big": ["「{name}」过大（超过 25MB），未添加", "“{name}” is too large (over 25MB) — not added"],
+  "attach-file": ["文件", "File"],
   "stop": ["停下", "Stop"],
   "muse-label": ["自语 / muse", "self-talk / muse"],
   "thinking-live": ["思考中… ({n} tok)", "thinking… ({n} tok)"],

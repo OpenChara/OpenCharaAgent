@@ -18,7 +18,8 @@ from ..config import SANDBOX_ROOT, ThoughtConfig
 from .context import ContextBuffer, _msg_text, estimate_tokens
 from ..tools.goals import GoalStore
 from .llm import LLMClient
-from ..protocol import MUSE, TextDelta
+from ..protocol import MUSE, Notice, TextDelta
+from .attachments import IngestResult, RawAttachment, build_user_content, ingest_attachments
 from ..tools.memory import MemoryLimits, MemoryStore
 from ..content.persona import (
     DEFAULT_NAME,
@@ -654,10 +655,26 @@ class LunaMothAgent:
             out["display"] = ""
         return out
 
-    def stream_handle(self, text: str, session: Session):
+    def _ingest_attachments(self, attachments) -> IngestResult:
+        """Decode + place inbound attachments. Never raises into a turn: a bad
+        attachment is dropped, the rest proceed."""
+        if not attachments:
+            return IngestResult()
+        try:
+            raws = [r for r in (RawAttachment.from_wire(d) for d in attachments) if r]
+            return ingest_attachments(
+                raws, sandbox=self.sandbox, vision_ok=self.llm.vision_supported()
+            )
+        except Exception as e:  # ingestion must never break the conversation
+            self.audit.write("attachment_error", error=str(e)[:200])
+            _log.warning("attachment ingest failed (turn continues): %s", e)
+            return IngestResult()
+
+    def stream_handle(self, text: str, session: Session, attachments=None):
         text = text.strip()
-        self.audit.write("user_message", text=text[:1000], streaming=True)
-        if not text:
+        self.audit.write("user_message", text=text[:1000], streaming=True,
+                         attachments=len(attachments or ()))
+        if not text and not attachments:
             yield TextDelta("...")
             return
         if text.startswith("/"):
@@ -674,9 +691,15 @@ class LunaMothAgent:
         # feel time passing without timestamps littering every message.
         self._note_time_gap(session)
         scan_text = self._scan_text(session, text)
+        # Ingest any attachments: small images inline as image_url parts, files
+        # and oversized/unsupported images land in workspace/uploads with a note.
+        ingest = self._ingest_attachments(attachments)
+        for notice in ingest.notices:
+            yield Notice("attachment", notice)
+        content = build_user_content(text, ingest)
         # Commit the operator's message BEFORE streaming: an interrupted reply
         # must never lose the instruction that caused it.
-        session.context.add("user", text)
+        session.context.add_message({"role": "user", "content": content})
         stable = self._stable_prefix()
         volatile = self._volatile_tail(scan_text, session)
         agent_loop = self._agent_loop_active()

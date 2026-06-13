@@ -200,7 +200,12 @@ class CharaClient {
     }
   }
 
-  send(text) { return this._stream("send", { text }); }
+  // attachments (optional): [{name, mime, size, data:<base64, no data: prefix>}]
+  send(text, attachments) {
+    const params = { text };
+    if (attachments && attachments.length) params.attachments = attachments;
+    return this._stream("send", params);
+  }
   // No idle() here by design: idle driving is SERVER-SIDE only (supervisor.py).
   // The web renderer renders life.state and must never drive an idle turn.
   interrupt() { return this.sock.call("interrupt", {}, 10000); }

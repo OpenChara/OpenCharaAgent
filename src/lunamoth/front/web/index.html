@@ -158,10 +158,16 @@
           </div>
           <div class="chat-pages">
             <div class="chat-page on" id="page-chat">
+              <div class="drop-overlay" id="drop-overlay" hidden><span></span></div>
               <div class="stream" id="stream"><div class="stream-inner" id="stream-inner"></div></div>
               <div class="composer-wrap">
                 <div class="work-status" id="work-status" hidden></div>
+                <div class="attach-stage" id="attach-stage" hidden></div>
                 <div class="composer">
+                  <input type="file" id="attach-input" multiple
+                         accept="image/*,.pdf,.txt,.md,.json,.csv,.docx,.doc,.xlsx,.zip,.log"
+                         hidden>
+                  <button class="attach-btn" id="attach-btn" title="" aria-label="">+</button>
                   <textarea id="composer-input" rows="1"></textarea>
                   <button class="send" id="send-btn">↑</button>
                 </div>

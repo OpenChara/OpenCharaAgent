@@ -110,16 +110,66 @@ def qr_fallback_url(qrcode_value: str) -> str:
     return f"https://api.qrserver.com/v1/create-qr-code/?{qs}"
 
 
-def item_list_to_text(item_list: Any) -> str:
-    """Extract text from iLink item_list.
+# iLink item_list type numbers.
+#
+# Only types 1 (text) and 3 (voice) are CONFIRMED from this adapter's own
+# working text/voice handling. The media numbers below are NOT verified against
+# live iLink traffic (no test credentials here), so the recognizer keys off the
+# typed sub-dict SHAPE (``image_item`` / ``file_item`` / ``emoji_item`` ...)
+# first and uses the numeric type only as a secondary hint. That mirrors how
+# types 1/3 already dispatch on ``text_item`` / ``voice_item`` and means a
+# wrong guess at a number degrades to the generic "[媒体]" marker rather than a
+# silent drop. Adjust freely once a real item_list is observed.
+_ITEM_TEXT = 1
+_ITEM_VOICE = 3
+_ITEM_IMAGE = 2     # GUESS (contract doc's "type 2?") — confirm against live traffic
+_ITEM_FILE = 6      # GUESS — confirm against live traffic
+_ITEM_EMOJI = 5     # GUESS (WeChat custom sticker / 表情) — confirm against live traffic
 
-    Text is type 1. Voice is type 3 and can include WeChat-cloud transcription
-    in voice_item.text; media/CDN decryption is intentionally out of scope here.
+
+def _media_url(item: dict[str, Any], sub: dict[str, Any]) -> str:
+    """A DIRECTLY-usable media url/path if the payload exposes one in the clear.
+
+    iLink media is normally CDN-encrypted (see the boundary note in
+    :func:`item_list_to_parts`), so this is usually empty — but if a plain
+    http(s) url or local path is present we carry it so the agent can fetch it.
     """
 
+    for src in (sub, item):
+        if not isinstance(src, dict):
+            continue
+        for key in ("url", "cdn_url", "file_url", "path", "local_path"):
+            value = src.get(key)
+            if isinstance(value, str):
+                value = value.strip()
+                if value.startswith(("http://", "https://", "/")):
+                    return value
+    return ""
+
+
+def item_list_to_parts(item_list: Any) -> tuple[str, list[dict[str, Any]]]:
+    """Parse an iLink item_list into (joined_text, attachments).
+
+    Confirmed: text is type 1 (``text_item``); voice is type 3 (``voice_item``,
+    which can include WeChat-cloud transcription in ``voice_item.text``).
+
+    Media RECOGNITION (image / file / sticker-emoji): these items are marked in
+    the returned text (``[图片]`` / ``[文件: <name>]`` / ``[表情]``) so the chara
+    always KNOWS media arrived — they are never silently dropped anymore. When
+    the payload exposes a directly-usable url/path it is carried as an
+    attachment wire dict ``{name, mime, url|path, kind}``.
+
+    BOUNDARY (honest): iLink images/stickers are CDN-ENCRYPTED and full pixel
+    download/decryption is out of scope here (no live credentials to test it).
+    For such items we emit ONLY the text marker and attach nothing — the seam
+    in :func:`_media_url` / the attachment dict is where a real CDN download
+    would plug in to produce inline bytes later.
+    """
+
+    text_parts: list[str] = []
+    attachments: list[dict[str, Any]] = []
     if not isinstance(item_list, list):
-        return ""
-    parts: list[str] = []
+        return "", attachments
     for item in item_list:
         if not isinstance(item, dict):
             continue
@@ -127,22 +177,81 @@ def item_list_to_text(item_list: Any) -> str:
             item_type = int(item.get("type") or 0)
         except (TypeError, ValueError):
             item_type = 0
-        if item_type == 1:
-            text_item = item.get("text_item")
+
+        # Dispatch on the typed sub-dict first (robust to a wrong type number).
+        text_item = item.get("text_item")
+        voice_item = item.get("voice_item")
+        image_item = item.get("image_item") or item.get("img_item")
+        file_item = item.get("file_item") or item.get("doc_item")
+        emoji_item = item.get("emoji_item") or item.get("sticker_item") or item.get("custom_emoji_item")
+
+        if item_type == _ITEM_TEXT or isinstance(text_item, dict):
             if isinstance(text_item, dict):
                 text = str(text_item.get("text") or "").strip()
                 if text:
-                    parts.append(text)
+                    text_parts.append(text)
             continue
-        if item_type == 3:
-            voice_item = item.get("voice_item")
+        if item_type == _ITEM_VOICE or isinstance(voice_item, dict):
             if isinstance(voice_item, dict):
                 text = str(voice_item.get("text") or "").strip()
                 if text:
-                    parts.append(text)
+                    text_parts.append(text)
             continue
-        _log.debug("ignored unsupported WeChat iLink item type %s", item_type)
-    return "\n".join(parts).strip()
+        if item_type == _ITEM_IMAGE or isinstance(image_item, dict):
+            sub = image_item if isinstance(image_item, dict) else {}
+            url = _media_url(item, sub)
+            # Fold any plain url into the marker too: the agent's ingest path
+            # only inlines base64 bytes (CDN media has none), but a chara with
+            # network tools can fetch a visible link itself.
+            text_parts.append(f"[图片: {url}]" if url else "[图片]")
+            if url:
+                attachments.append({"name": "image", "mime": "image/jpeg", "url": url, "kind": "image"})
+            continue
+        if item_type == _ITEM_FILE or isinstance(file_item, dict):
+            sub = file_item if isinstance(file_item, dict) else {}
+            name = str(sub.get("file_name") or sub.get("name") or "").strip()
+            size = sub.get("file_size") or sub.get("size")
+            marker = f"[文件: {name}]" if name else "[文件]"
+            try:
+                size_int = int(size)
+            except (TypeError, ValueError):
+                size_int = 0
+            if size_int > 0:
+                marker = marker[:-1] + f", {size_int} bytes]"
+            url = _media_url(item, sub)
+            if url:
+                marker = marker[:-1] + f" → {url}]"
+            text_parts.append(marker)
+            if url:
+                attachments.append(
+                    {"name": name or "file", "mime": "application/octet-stream", "url": url, "kind": "file"}
+                )
+            continue
+        if item_type == _ITEM_EMOJI or isinstance(emoji_item, dict):
+            sub = emoji_item if isinstance(emoji_item, dict) else {}
+            url = _media_url(item, sub)
+            text_parts.append(f"[表情: {url}]" if url else "[表情]")
+            if url:
+                attachments.append({"name": "sticker", "mime": "image/gif", "url": url, "kind": "sticker"})
+            continue
+
+        # Unknown item type: recognize it generically rather than dropping it.
+        _log.debug("recognized-but-unparsed WeChat iLink item type %s", item_type)
+        text_parts.append("[媒体]")
+    return "\n".join(text_parts).strip(), attachments
+
+
+def item_list_to_text(item_list: Any) -> str:
+    """Backward-compatible text view of an iLink item_list.
+
+    Returns the same joined text as :func:`item_list_to_parts` (now WITH media
+    markers folded in, so a media-only message is no longer the empty string).
+    Use :func:`item_list_to_parts` when you also need the structured
+    attachments.
+    """
+
+    text, _ = item_list_to_parts(item_list)
+    return text
 
 
 class WeixinAPI:
@@ -468,6 +577,12 @@ class WeixinAdapter(Adapter):
         return ""
 
     def send(self, text: str) -> None:
+        # Outbound is TEXT-ONLY here. The iLink sendmessage endpoint this
+        # adapter speaks (WeixinAPI.send_text) emits a type-1 text item_list and
+        # there is no media-upload endpoint wired up, so a chara reply that
+        # references a workspace image/file is delivered as its text (e.g. the
+        # path); we do NOT fake media delivery. Add a send_image path here if a
+        # real iLink media endpoint becomes available.
         self._ensure_login()
         target = self._target_for_send()
         if not target:
@@ -511,10 +626,21 @@ class WeixinAdapter(Adapter):
         if context_token and self.context_tokens.get(sender_id) != context_token:
             self.context_tokens[sender_id] = context_token
             dirty = True
-        text = item_list_to_text(msg.get("item_list"))
-        if text:
+        text, attachments = item_list_to_parts(msg.get("item_list"))
+        # A media-only message has no text but DOES carry markers (folded into
+        # `text`) and/or attachments — deliver it so the chara isn't left blind
+        # to a photo/file/sticker. Only a truly empty item_list is skipped.
+        if text or attachments:
             self._last_sender = sender_id
-            inbox.put(InboundMessage(sender_id=sender_id, sender_name=sender_id, text=text, reply=msg))
+            inbox.put(
+                InboundMessage(
+                    sender_id=sender_id,
+                    sender_name=sender_id,
+                    text=text,
+                    reply=msg,
+                    attachments=tuple(attachments),
+                )
+            )
         return dirty
 
     def poll_once(self, inbox: "queue.Queue[InboundMessage]") -> int:
