@@ -1394,7 +1394,9 @@ class ChatController {
           el("h4", null, t("gw-creds")),
           el("ol", { class: "gw-steps" }, ...spec.steps.map((s) => el("li", null, t(s))))));
       }
-      if (spec.qr) {
+      // The QR is the login path; once running there's nothing to scan, so
+      // show it only while not connected.
+      if (spec.qr && (!gwStatus || gwStatus.state !== "running")) {
         root.appendChild(qrSection());
         root.appendChild(el("div", { class: "gw-blurb" }, t(spec.note)));
       }
@@ -1419,55 +1421,58 @@ class ChatController {
           ...spec.advanced.map((fd) => fieldRow(plat, fd))));
       }
 
-      const enableSwitch = el("button", { class: "switch" + (enabled ? " on" : ""), onclick: () => {
-        enabled = !enabled;
-        enableSwitch.classList.toggle("on", enabled);
-      } });
-      const run = gwStatus && gwStatus.state === "running";
-      const runBtn = el("button", { class: "btn soft", onclick: async () => {
-        runBtn.disabled = true;
-        try {
-          gwStatus = await hub.call(run ? "gateway.stop" : "gateway.start", { name }, 30000);
-          render();
-        } catch (e) { runBtn.disabled = false; toast(rpcErrText(e), true); }
-      } }, run ? t("gw-stop") : t("gw-start"));
-      if (spec.pending) {
-        // adapter 未落地：启用/启动禁用，保存保持可用（messaging.save 通用合并）。
-        enableSwitch.disabled = true;
-        runBtn.disabled = true;
+      // Config fields auto-save on change — no separate Save button. The field
+      // merge: untouched fields (incl. unchanged masks) omitted, cleared → null.
+      const saveConfig = async () => {
+        const fields = {};
+        const spec2 = GW_PLATFORMS[plat];
+        for (const fd of [...spec2.required, ...spec2.recommended, ...spec2.advanced]) {
+          const f = fd.key;
+          if (!inputs[f]) continue;
+          const v = inputs[f].value.trim();
+          const init = initial[f] ?? "";
+          if (v === init) continue;
+          fields[f] = v === "" ? null : v;
+        }
+        const config = {
+          enabled,
+          allowed_senders: allowedInput.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean),
+          adapters: { [plat]: fields },
+        };
+        const r = await hub.call("messaging.save", { name, config }, 20000);
+        cfg = (r && r.config) || cfg;
+      };
+      for (const f of Object.keys(inputs)) {
+        inputs[f].addEventListener("change", () => saveConfig().then(() => toast(t("saved"))).catch((e) => toast(rpcErrText(e), true)));
       }
-      const saveBtn = el("button", { class: "btn primary", onclick: async () => {
-        saveBtn.disabled = true;
+      allowedInput.addEventListener("change", () => saveConfig().then(() => toast(t("saved"))).catch((e) => toast(rpcErrText(e), true)));
+
+      // ONE immediate control: the switch connects (start) / disconnects (stop)
+      // right away. No separate Save or Stop button. For a QR platform, turning
+      // it on shows the QR above (needs_login) until you scan; once scanned it
+      // runs. Turning it off stops it.
+      const enableSwitch = el("button", { class: "switch" + (enabled ? " on" : "") });
+      enableSwitch.onclick = async () => {
+        if (enableSwitch.disabled) return;
+        enableSwitch.disabled = true;
+        const turnOn = !enabled;
+        enabled = turnOn;
+        enableSwitch.classList.toggle("on", enabled);   // optimistic
         try {
-          // 后端按字段合并：没动的字段省略（掩码回显也省略）、清空的发 null 删除。
-          const fields = {};
-          const spec2 = GW_PLATFORMS[plat];
-          for (const fd of [...spec2.required, ...spec2.recommended, ...spec2.advanced]) {
-            const f = fd.key;
-            if (!inputs[f]) continue;
-            const v = inputs[f].value.trim();
-            const init = initial[f] ?? "";
-            if (v === init) continue;            // 未改动（含原样的掩码）→ 不发送
-            fields[f] = v === "" ? null : v;     // 显式清空 → null 删除
-          }
-          const config = {
-            enabled,
-            allowed_senders: allowedInput.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean),
-            adapters: { [plat]: fields },
-          };
-          const r = await hub.call("messaging.save", { name, config }, 20000);
-          cfg = (r && r.config) || cfg;
-          toast(t("saved"));
+          await saveConfig();                            // persist edits + enabled
+          gwStatus = await hub.call(turnOn ? "gateway.start" : "gateway.stop", { name }, 30000);
           render();
         } catch (e) {
-          saveBtn.disabled = false;
+          enabled = !turnOn;
+          enableSwitch.classList.toggle("on", enabled);
+          enableSwitch.disabled = false;
           toast(rpcErrText(e), true);
         }
-      } }, t("gw-save"));
+      };
+      if (spec.pending) enableSwitch.disabled = true;
 
       root.appendChild(el("div", { class: "gw-foot" },
-        enableSwitch, el("span", { class: "enable-lbl" }, enabled ? t("gw-enabled") : t("gw-disabled")),
-        el("div", { class: "grow" }), runBtn, saveBtn));
+        enableSwitch, el("span", { class: "enable-lbl" }, enabled ? t("gw-enabled") : t("gw-disabled"))));
     }
     render();
   }
