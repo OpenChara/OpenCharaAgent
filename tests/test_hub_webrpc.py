@@ -390,3 +390,16 @@ def test_aux_models_persist_and_route(monkeypatch):
     pub = result("defaults.set", {"aux_models": {"avatar": ""}})
     assert "avatar" not in pub["aux_models"]
     assert rpc_error("defaults.set", {"aux_models": {"nonsense": "x"}})["code"] == -32602
+
+
+def test_default_flag_survives_tag_display_truncation():
+    """The deck/welcome key on the `default` flag, which must survive the
+    4-tag display cap — Quinn carries 'default' as its 5th tag, and the bug
+    was that tags[:4] dropped it so the welcome fell back to LunaMoth."""
+    cards = result("cards.list")
+    quinn = [c for c in cards if c["name"] in ("小Q", "Quinn")]
+    luna = [c for c in cards if c["name"] in ("月蛾", "LunaMoth")]
+    assert quinn and all(c["default"] is True for c in quinn)
+    assert luna and all(c["default"] is False for c in luna)
+    # the displayed tag list is still capped at 4 (default need not appear there)
+    assert all(len(c["tags"]) <= 4 for c in cards)

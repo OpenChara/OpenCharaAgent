@@ -1109,7 +1109,9 @@ function defaultLunaCard() {
   const cards = (state.hub && state.hub.cards) || [];
   // The default card is the bundled one whose tags contain "default" (today: Quinn 小Q).
   // Resolve dynamically so the welcome follows whichever card carries the tag.
-  const tagged = cards.find((c) => c.builtin && (c.tags || []).includes("default"));
+  // Backend surfaces an explicit `default` flag (the "default" tag can sit past
+  // the 4-tag display cap); fall back to a tag scan for older hubs.
+  const tagged = cards.find((c) => c.builtin && (c.default || (c.tags || []).includes("default")));
   if (tagged) return tagged;
   // Fallback to the historical 月蛾/lunamoth lookup if nothing is tagged.
   const wantZh = getLangCode() === "zh";

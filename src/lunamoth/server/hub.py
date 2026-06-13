@@ -771,11 +771,16 @@ def _card_entry(path: Path, builtin: bool, refs: dict[str, list[str]]) -> dict[s
         tagline = str(ext.get("tagline") or "")
         embodiment = str(ext.get("embodiment") or "")
     used_by = refs.get(str(path), [])
+    full_tags = [str(t) for t in (card.tags or [])]
+    # The default-card marker must survive display truncation: the deck/welcome
+    # key on `default`, and a card can carry it past the 4-tag display cap.
+    is_default = any(t.strip().lower() == "default" for t in full_tags)
     return {
         "path": str(path),
         "name": card.name or path.stem,
         "lang": card.language,
-        "tags": list(card.tags or [])[:4],
+        "tags": full_tags[:4],
+        "default": is_default,
         "world": world,
         "builtin": builtin,
         "draft": bool(isinstance(ext, dict) and ext.get("draft")),
