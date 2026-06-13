@@ -19,10 +19,10 @@ import logging
 import queue
 import threading
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from ..messaging.access import RefusalThrottle, sender_allowed
 from ..messaging.base import Adapter, DeliveryDeferred, InboundMessage
 from ..messaging.gateway import (
     DEFAULT_REFUSAL,
@@ -56,7 +56,7 @@ class MessagingHost:
         self._relay: threading.Thread | None = None
         self._stop = threading.Event()
         self._dedup = MessageDeduplicator()
-        self._last_refusal_day: dict[str, str] = {}
+        self._refusals = RefusalThrottle()
         self._platform = ""
         self._state = "stopped"
         self._detail = ""
@@ -163,15 +163,6 @@ class MessagingHost:
             except Exception:
                 _log.exception("messaging relay turn failed")
 
-    def _allowed_sender(self, sender_id: str) -> bool:
-        # An empty allow-list means OPEN — anyone can reach the chara (this is
-        # what the gateway pane's field help promises: "leave empty and anyone
-        # can summon your chara"). Add senders to RESTRICT. Without this the
-        # gateway refused everyone out of the box even though you just logged in.
-        if not self._allowed:
-            return True
-        return sender_id in self._allowed or "*" in self._allowed
-
     def _process(self, adapter: Adapter, msg: InboundMessage) -> None:
         # A platform redelivery (WeCom retry, OneBot reconnect) must not run a
         # second turn on the shared agent.
@@ -180,8 +171,9 @@ class MessagingHost:
         adapter.set_reply_target(msg)
         try:
             sender = str(msg.sender_id)
-            if not self._allowed_sender(sender):
-                self._refuse_once(adapter, sender)
+            if not sender_allowed(sender, self._allowed):
+                if self._refusals.allow(sender):
+                    self._send(adapter, self._refusal)
                 _log.info("ignored unauthorized messaging sender %s (%s)", sender, msg.sender_name)
                 return
             text = (msg.text or "").strip()
@@ -215,13 +207,6 @@ class MessagingHost:
                 self._send(adapter, say)
         finally:
             adapter.clear_reply_target()
-
-    def _refuse_once(self, adapter: Adapter, sender_id: str) -> None:
-        today = datetime.now().strftime("%Y-%m-%d")
-        if self._last_refusal_day.get(sender_id) == today:
-            return
-        self._last_refusal_day[sender_id] = today
-        self._send(adapter, self._refusal)
 
     def _send(self, adapter: Adapter, text: str) -> None:
         """Deliver one outbound message; a transient send error never crashes

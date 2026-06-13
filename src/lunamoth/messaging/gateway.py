@@ -7,12 +7,12 @@ import queue
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from ..protocol import SAY, TextDelta
 from ..protocol.api import CharaHandle
+from .access import RefusalThrottle, sender_allowed
 from .base import Adapter, DeliveryDeferred, InboundMessage
 from .qq import QQAdapter
 from .telegram import TelegramAdapter
@@ -166,7 +166,7 @@ class MessagingGateway:
         self._errors: "queue.Queue[BaseException]" = queue.Queue()
         self._started = False
         self._attached = False
-        self._last_refusal_day: dict[str, str] = {}
+        self._refusals = RefusalThrottle()
         self._last_user_at = 0.0
         self._present = False
         self._next_idle_at = time.monotonic()
@@ -256,11 +256,7 @@ class MessagingGateway:
         self._inbox.put(_Envelope(adapter, message))
 
     def _allowed(self, sender_id: str) -> bool:
-        # Empty allow-list = OPEN (the gateway pane's field help promises this:
-        # "leave empty and anyone can summon your chara"). Add senders to RESTRICT.
-        if not self.allowed_senders:
-            return True
-        return sender_id in self.allowed_senders or "*" in self.allowed_senders
+        return sender_allowed(sender_id, self.allowed_senders)
 
     def _process_inbound(self, adapter: Adapter, msg: InboundMessage) -> None:
         # Audit #30: WeCom retries unanswered callbacks, OneBot redelivers
@@ -297,11 +293,8 @@ class MessagingGateway:
             adapter.clear_reply_target()
 
     def _refuse_unknown_once_per_day(self, adapter: Adapter, sender_id: str) -> None:
-        today = datetime.now().strftime("%Y-%m-%d")
-        if self._last_refusal_day.get(sender_id) == today:
-            return
-        self._last_refusal_day[sender_id] = today
-        self._send(adapter, self.refusal_text)
+        if self._refusals.allow(sender_id):
+            self._send(adapter, self.refusal_text)
 
     def _quiet_seconds(self) -> int:
         return max(0, int(self.handle.snapshot().quiet))
