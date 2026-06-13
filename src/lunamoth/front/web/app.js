@@ -171,6 +171,8 @@ const state = {
   pendingChatOpts: null,
   boardTimer: null,
   display: localStorage.getItem("lm-display") || "product",
+  pendingDrafts: [],    // client-side card-draft generations in flight (see startDraftGeneration)
+  pendingTimer: null,   // 1s ticker that updates pending placeholders in place
 };
 
 /* ============================ THEME & LANG & DISPLAY ============================ */
@@ -656,6 +658,137 @@ async function duplicateCard(c) {
   return name;
 }
 
+/* ---------- background card-draft generation ----------
+   cards.draft can take ~a minute. We never trap the user in the modal: a
+   submission spawns a client-side "pending" placeholder that renders at the
+   top of the deck while the call runs in the background, then becomes a real
+   draft card on success (card.from_draft as_draft) or shows retry/dismiss on
+   error. Multiple generations may run at once (keyed by client id). */
+
+let _pendingSeq = 0;
+
+/* The model that will actually do the draft = aux 'draft' override or main.
+   Mirrors the backend's _aux_model('draft') fallback exactly. */
+function effectiveDraftModel() {
+  const d = (state.hub && state.hub.defaults) || {};
+  const aux = d.aux_models && typeof d.aux_models === "object" ? d.aux_models : {};
+  return String(aux.draft || d.model || "");
+}
+
+function tentativeName(inspiration) {
+  const first = String(inspiration || "").trim().split(/\s+/).slice(0, 4).join(" ");
+  return first.slice(0, 28) || "…";
+}
+
+function ensurePendingTimer() {
+  if (state.pendingTimer) return;
+  state.pendingTimer = setInterval(() => {
+    if (!state.pendingDrafts.length) {
+      clearInterval(state.pendingTimer);
+      state.pendingTimer = null;
+      return;
+    }
+    const now = Date.now();
+    for (const pd of state.pendingDrafts) {
+      if (pd.error) continue;
+      const span = document.querySelector(`.pending-spine[data-pid="${pd.id}"] .pending-elapsed`);
+      if (span) span.textContent = pendingStatusText(pd, now);
+    }
+  }, 1000);
+}
+
+function pendingStatusText(pd, now) {
+  const n = Math.max(0, Math.floor(((now || Date.now()) - pd.startedAt) / 1000));
+  return t("pending-gen", { n: String(n), model: pd.model || "—" });
+}
+
+/* Start one background generation. Renders a placeholder immediately. */
+function startDraftGeneration(inspiration, opts) {
+  const o = opts || {};
+  const id = "pd" + (++_pendingSeq);
+  const pd = {
+    id,
+    inspiration: String(inspiration || "").trim(),
+    model: effectiveDraftModel(),
+    name: tentativeName(inspiration),
+    startedAt: Date.now(),
+    error: null,
+  };
+  state.pendingDrafts.unshift(pd);
+  ensurePendingTimer();
+  renderDeck();
+  runDraftGeneration(pd);
+  return id;
+}
+
+async function runDraftGeneration(pd) {
+  pd.error = null;
+  pd.startedAt = Date.now();
+  renderDeck();
+  try {
+    const raw = await hub.call("cards.draft", { inspiration: pd.inspiration }, 240000);
+    const draft = normalizeDraft(raw);
+    await hub.call("card.from_draft", { draft, origin: pd.inspiration, as_draft: true }, 30000);
+    removePending(pd.id);
+    await refreshHub();   // the new draft card now rides cards.list with its badge
+    toast(t("draft-ready", { name: draft.name || pd.name }));
+  } catch (e) {
+    pd.error = rpcErrText(e);
+    renderDeck();
+  }
+}
+
+function removePending(id) {
+  const i = state.pendingDrafts.findIndex((p) => p.id === id);
+  if (i >= 0) state.pendingDrafts.splice(i, 1);
+  if (!state.pendingDrafts.length && state.pendingTimer) {
+    clearInterval(state.pendingTimer);
+    state.pendingTimer = null;
+  }
+  renderDeck();
+}
+
+/* A pending-generation placeholder card for the deck grid. */
+function pendingSpine(pd) {
+  const face = el("div", { class: "face pending-face " + paletteClass(pd.name) },
+    el("div", { class: "glyph" }, glyphOf(pd.name)));
+  face.appendChild(el("div", { class: "draft-badge" }, t("deck-generating")));
+  const spine = el("div", { class: "spine pending-spine", "data-pid": pd.id }, face);
+  if (pd.error) {
+    spine.appendChild(el("div", { class: "sbody" },
+      el("div", { class: "sname" }, el("b", null, pd.name)),
+      el("div", { class: "pending-err" }, pd.error),
+      el("div", { class: "pending-acts" },
+        el("button", { class: "btn soft sm", onclick: (ev) => { ev.stopPropagation(); runDraftGeneration(pd); } }, t("retry")),
+        el("button", { class: "btn text sm", onclick: (ev) => { ev.stopPropagation(); removePending(pd.id); } }, t("dismiss")))));
+  } else {
+    spine.appendChild(el("div", { class: "sbody" },
+      el("div", { class: "sname" }, el("b", null, pd.name)),
+      el("div", { class: "pending-status" },
+        el("i", { class: "pending-pulse" }),
+        el("span", { class: "pending-elapsed" }, pendingStatusText(pd)))));
+  }
+  return spine;
+}
+
+/* Regenerate a draft card from its stored origin inspiration. The origin is
+   persisted by the draft pipeline (card.from_draft -> ext.lunamoth.origin), so
+   regenerate re-runs cards.draft with it. If a card has no stored origin
+   (e.g. an old draft or an imported one), we fall back to its description as
+   the inspiration — the simplest honest behavior. Backgrounds like a fresh
+   generation: a new placeholder, the old draft card stays until it lands. */
+async function regenerateDraftCard(c) {
+  let full;
+  try {
+    full = await hub.call("card.read", { path: c.path }, 20000);
+  } catch (e) { toast(rpcErrText(e), true); return; }
+  const ext = full.extensions && full.extensions.lunamoth ? full.extensions.lunamoth : {};
+  const origin = String(ext.origin || "").trim() || String(full.description || "").trim();
+  if (!origin) { toast(t("regen-no-origin"), true); return; }
+  startDraftGeneration(origin, {});
+  toast(t("regen-started"));
+}
+
 function renderDeck() {
   if (!state.hub) return;
   const q = ($("deck-search").value || "").toLowerCase();
@@ -663,6 +796,8 @@ function renderDeck() {
   $("deck-count").textContent = cards.length ? `· ${cards.length}` : "";
   const grid = $("deck-grid");
   grid.innerHTML = "";
+  // pending generations render first — they are NOT real cards yet
+  for (const pd of state.pendingDrafts) grid.appendChild(pendingSpine(pd));
   for (const c of cards) {
     const badge = c.frozen
       ? el("div", { class: "lock-badge" }, t("deck-readonly"))
@@ -670,6 +805,7 @@ function renderDeck() {
     const acts = el("div", { class: "spine-acts" },
       el("button", { class: "wake", onclick: (ev) => { ev.stopPropagation(); ensureModel(() => openWakeSheet(c)); } }, t("deck-wake")),
       el("button", { onclick: (ev) => { ev.stopPropagation(); viewCard(c); } }, t("deck-view")),
+      c.draft ? el("button", { onclick: (ev) => { ev.stopPropagation(); ensureModel(() => regenerateDraftCard(c)); } }, t("deck-regen")) : null,
       el("button", { onclick: async (ev) => {
         ev.stopPropagation();
         try {
@@ -1443,6 +1579,10 @@ function renderTellStep(root, flow) {
   box.value = flow.origin;
   const inner = el("div", { class: "flow-inner" }, box);
 
+  // which model will do the generation (= aux 'draft' override or main model)
+  const model = effectiveDraftModel();
+  inner.appendChild(el("div", { class: "gen-model" }, t("gen-with", { model: model || "—" })));
+
   // writing-star hint: gentle, only when the default model lacks ★
   modelsCached().then((models) => {
     const d = (state.hub && state.hub.defaults) || {};
@@ -1450,34 +1590,56 @@ function renderTellStep(root, flow) {
     if (m && !m.writing) inner.appendChild(el("div", { class: "cap-hint", style: "margin-top:10px" }, t("tell-star-hint")));
   });
 
-  const goBtn = el("button", { class: "btn primary big", onclick: async () => {
+  // Default path: background the generation, drop a placeholder in the deck,
+  // and let the user out of the modal immediately — never trapped waiting.
+  const bgBtn = el("button", { class: "btn primary big", onclick: () => {
+    flow.origin = box.value.trim();
+    if (!flow.origin) return;
+    startDraftGeneration(flow.origin, {});
+    closeCreateFlow();
+    navTo("#/deck");
+  } }, t("tell-go-bg"));
+
+  // Fallback path: the legacy in-modal blocking flow (edit before saving).
+  const goBtn = el("button", { class: "btn soft", onclick: async () => {
     flow.origin = box.value.trim();
     if (!flow.origin) return;
     if (flow.lastDraftAt && !confirm(t("draft-overwrite-q"))) return;
     inner.querySelectorAll(".draft-error,.transcribing").forEach((n) => n.remove());
-    const progress = el("div", { class: "transcribing" }, el("i"), t("transcribing"));
+    const started = Date.now();
+    const progress = el("div", { class: "transcribing" }, el("i"),
+      el("span", { class: "think-elapsed" }, t("thinking-n", { n: "0" })));
+    const tick = setInterval(() => {
+      const span = progress.querySelector(".think-elapsed");
+      if (span) span.textContent = t("thinking-n", { n: String(Math.floor((Date.now() - started) / 1000)) });
+    }, 1000);
     inner.appendChild(progress);
     goBtn.disabled = true;
+    bgBtn.disabled = true;
     try {
       flow.draft = normalizeDraft(await hub.call("cards.draft", { inspiration: flow.origin }, 240000));
       flow.lastDraftAt = Date.now();
       flow.versions = {};
       for (const [key] of SECTION_DEFS) flow.versions[key] = [sectionText(flow.draft, key)];
+      clearInterval(tick);
       renderShapeStep(root, flow);
     } catch (e) {
+      clearInterval(tick);
       goBtn.disabled = false;
+      bgBtn.disabled = false;
       progress.remove();
       inner.appendChild(el("div", { class: "draft-error" },
         el("b", null, rpcErrText(e)),
         el("button", { class: "btn soft", onclick: () => goBtn.click() }, t("retry"))));
     }
-  } }, t("tell-go"));
+  } }, t("tell-go-edit"));
 
   root.appendChild(inner);
   root.appendChild(el("div", { class: "flow-bar" },
     el("button", { class: "btn text", onclick: closeCreateFlow }, t("cancel")),
     el("div", { class: "grow" }),
-    goBtn));
+    goBtn,
+    bgBtn));
   box.focus();
 }
 
