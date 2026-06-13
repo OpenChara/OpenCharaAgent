@@ -9,7 +9,7 @@ CARDS_DIR = Path(__file__).resolve().parents[1] / "cards"
 def test_language_from_filename():
     assert detect_language("cards/LunaMoth.zh.json") == "zh"
     assert detect_language("cards/LunaMoth.en.json") == "en"
-    assert detect_language("cards/SCP-079.zh.json") == "zh"
+    assert detect_language("cards/Quinn.zh.json") == "zh"
 
 
 def test_language_from_content_when_no_hint():
@@ -28,10 +28,10 @@ def test_bundled_cards_declare_defaults_and_language():
     # The context window is NOT card-declared — it's the model's real window.
     assert "context_tokens" not in d
 
-    scp = CharacterCard.load("cards/SCP-079.en.json")
-    assert scp.language == "en"
-    assert "world" not in scp.defaults()
-    assert scp.defaults()["memory_chars"] == 1500  # 079's tiny memory is characterful
+    quinn = CharacterCard.load("cards/Quinn.en.json")
+    assert quinn.language == "en"
+    assert "world" not in quinn.defaults()
+    assert quinn.defaults()["memory_chars"] == 8000  # the card declares its own memory budget
 
 
 def test_every_bundled_card_carries_its_world_inside():
