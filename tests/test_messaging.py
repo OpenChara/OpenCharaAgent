@@ -1002,3 +1002,28 @@ def test_telegram_allowed_senders_filter_through_the_gateway(tmp_path):
     refusal = transport.body(0)
     assert refusal["chat_id"] == 666 and "configured contacts" in refusal["text"]
     assert transport.body(1) == {"chat_id": 42, "text": "reply"}
+
+
+def test_gateway_config_error_exits_fatal_not_retried(tmp_path, monkeypatch):
+    """A malformed messaging config is fatal (EX_CONFIG 78), so the supervisor
+    marks the gateway `fatal` and never auto-restarts it (audit #27/#13)."""
+    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
+    import argparse
+    import json as _json
+
+    from lunamoth.front import cli
+    from lunamoth.server.supervisor import GATEWAY_FATAL_EXIT
+    from lunamoth.session import sessions as S
+
+    meta = S.create_session("gw", isolation="dir")
+    (meta.root / "config.json").write_text(
+        _json.dumps({"provider": "mock", "model": "m", "character_path": ""}), encoding="utf-8")
+    ns = argparse.Namespace(name="gw", patience=600, debug=False)
+
+    # unknown adapter -> ValueError -> fatal exit
+    (meta.root / "messaging.json").write_text('{"adapters": {"bogus": {}}}', encoding="utf-8")
+    assert cli.cmd_gateway(ns) == GATEWAY_FATAL_EXIT
+
+    # missing config file -> fatal exit too (retrying can't create it)
+    (meta.root / "messaging.json").unlink()
+    assert cli.cmd_gateway(ns) == GATEWAY_FATAL_EXIT

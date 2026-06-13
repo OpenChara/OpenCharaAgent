@@ -444,6 +444,7 @@ def cmd_gateway(args: argparse.Namespace) -> int:
     if getattr(args, "debug", False):
         os.environ["LUNAMOTH_DEBUG"] = "1"
     meta.mark_running()
+    from ..server.supervisor import GATEWAY_FATAL_EXIT
     try:
         from ..messaging.gateway import MessagingGateway, load_config
 
@@ -452,8 +453,15 @@ def cmd_gateway(args: argparse.Namespace) -> int:
         MessagingGateway.from_config(cfg, patience=args.patience).run()
         return 0
     except FileNotFoundError:
+        # No messaging.json: a configuration problem, not a transient crash —
+        # the supervisor must not retry it (EX_CONFIG → fatal state).
         print(f"error: missing messaging config: {meta.root / 'messaging.json'}", file=sys.stderr)
-        return 1
+        return GATEWAY_FATAL_EXIT
+    except ValueError as e:
+        # Malformed config / unknown adapter / missing required field: fatal
+        # until the operator fixes it, never an auto-restart loop.
+        print(f"error: messaging config is invalid: {e}", file=sys.stderr)
+        return GATEWAY_FATAL_EXIT
     except KeyboardInterrupt:
         return 0
     finally:
