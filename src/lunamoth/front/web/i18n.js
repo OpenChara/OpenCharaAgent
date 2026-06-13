@@ -14,7 +14,7 @@ const I18N = {
   "import": ["导入", "Import"],
   "new-card": ["＋ 新角色卡", "＋ New card"],
   "empty-board": ["还没有角色。", "No characters yet."],
-  "meet-luna": ["遇见月蛾", "Meet LunaMoth"],
+  "meet-luna": ["遇见你的角色", "Meet your character"],
   "create-chara": ["创建角色", "Create a character"],
   // board card
   "st-idle-live": ["在过自己的日子", "Living its own day"],
@@ -281,8 +281,8 @@ const I18N = {
   "later-deck": ["先放进卡册", "Keep in the deck for now"],
   // first run / setup
   "tagline": ["和你的原创角色一起生活<br>Agentic 角色扮演叙事生成器", "The characters that live with you<br>An agentic character tavern"],
-  "btn-try": ["尝试默认角色 · 月蛾", "Try the default character · LunaMoth"],
-  "btn-try-sub": ["LunaMoth · 高尚的数字存在", "月蛾 · a noble digital being"],
+  "btn-try": ["尝试默认角色", "Try the default character"],
+  "btn-try-sub": ["", ""],
   "btn-create": ["创建我自己的角色", "Create my own character"],
   "btn-import": ["导入角色卡（SillyTavern PNG / JSON）", "Import a card (SillyTavern PNG / JSON)"],
   "setup-title": ["接入模型", "Connect a model"],

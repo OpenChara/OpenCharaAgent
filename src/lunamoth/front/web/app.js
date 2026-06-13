@@ -396,6 +396,7 @@ function renderBoard() {
   const grid = $("board-grid");
   grid.innerHTML = "";
   $("board-empty").style.display = list.length ? "none" : "flex";
+  if (!list.length) decorateDefaultCard();
   for (const s of list) {
     const live = s.status === "running" || s.status === "attached";
     const st = statusOf(s);
@@ -1023,6 +1024,25 @@ function frShowWelcome() {
   $("fr-welcome").style.display = "flex";
   $("fr-setup").style.display = "none";
   $("fr-dots").innerHTML = "<i class='on'></i><i></i>";
+  decorateDefaultCard();
+}
+
+// Render the resolved default card's name + tagline beside the generic
+// "try the default character" labels (first-run + board empty-state).
+function decorateDefaultCard() {
+  const card = defaultLunaCard();
+  const trySpan = document.querySelector("#fr-try span[data-i18n='btn-try']");
+  const trySub = document.querySelector("#fr-try small[data-i18n='btn-try-sub']");
+  if (trySpan) {
+    const base = t("btn-try");
+    trySpan.textContent = card ? `${base} · ${card.name}` : base;
+  }
+  if (trySub) trySub.textContent = card ? (card.tagline || "") : "";
+  const meet = $("empty-meet");
+  if (meet) {
+    const base = t("meet-luna");
+    meet.textContent = card ? `${base} · ${card.name}` : base;
+  }
 }
 function frShowSetup() {
   $("fr-welcome").style.display = "none";
@@ -1048,6 +1068,11 @@ function ensureModel(action) {
 
 function defaultLunaCard() {
   const cards = (state.hub && state.hub.cards) || [];
+  // The default card is the bundled one whose tags contain "default" (today: Quinn 小Q).
+  // Resolve dynamically so the welcome follows whichever card carries the tag.
+  const tagged = cards.find((c) => c.builtin && (c.tags || []).includes("default"));
+  if (tagged) return tagged;
+  // Fallback to the historical 月蛾/lunamoth lookup if nothing is tagged.
   const wantZh = getLangCode() === "zh";
   return cards.find((c) => c.builtin && c.lang === (wantZh ? "zh" : "en") &&
            (c.name === "月蛾" || c.name.toLowerCase() === "lunamoth")) ||
@@ -1548,3 +1573,7 @@ function renderShapeStep(root, flow) {
 applyTheme(localStorage.getItem("lm-theme") || "system");
 setLangCode(localStorage.getItem("lm-lang") || (navigator.language.startsWith("zh") ? "zh" : "en"));
 applyI18n();
+
+// applyI18n rewrites data-i18n nodes by innerHTML on every language switch,
+// which wipes the dynamic default-card decoration — re-apply it afterwards.
+document.addEventListener("lm-lang-changed", () => decorateDefaultCard());
