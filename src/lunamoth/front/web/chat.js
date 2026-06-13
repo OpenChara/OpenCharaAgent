@@ -1359,7 +1359,10 @@ class ChatController {
               await hub.call("gateway.stop", { name }, 15000).catch(() => {});
               await hub.call("gateway.start", { name }, 30000);
             } catch (e) { /* the pane refresh below surfaces the state */ }
-            if (!ctrl.disposed && ctrl.panelTab === "gateway") ctrl.renderGatewayPane();
+            // Re-render through renderPanelPane (it fetches + clears the pane
+            // body); calling renderGatewayPane() with no body crashed on
+            // body.appendChild ("Cannot read properties of undefined").
+            if (!ctrl.disposed && ctrl.panelTab === "gateway") ctrl.renderPanelPane("gateway");
           } else if (r.status === "expired") {
             idle(el("div", { class: "gw-qr-err" }, t("gw-qr-expired")), true);
           }
