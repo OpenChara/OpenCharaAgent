@@ -805,6 +805,94 @@ def test_qq_disconnected_send_does_not_crash_the_gateway(fast_send_retry, caplog
     assert any("could not deliver" in m for m in caplog.messages)  # logged, not raised
 
 
+# ---- anti-loop silence-narration filter (audit #33; hermes gateway/delivery.py) ------
+
+
+def test_is_silence_narration_flags_only_whole_string_tokens():
+    from lunamoth.messaging.filters import is_silence_narration
+
+    # Silence tokens — dropped before delivery.
+    for token in [
+        "*(silent)*", "_silent_", "`silence`", "(silent)", "silent", "Silent.",
+        ".", "…", "...", "🔇", "  🔇  ", "(no response)", "no reply",
+        "nothing to say", "*~silence~*", "", "   ", None,
+    ]:
+        assert is_silence_narration(token) is True, token
+
+    # Substantive prose that merely mentions silence — never flagged.
+    for prose in [
+        "The deployment ran silently.",
+        "Silence is golden — here is the plan...",
+        "I have nothing to say about that, but here's the report.",
+        "No response from the server, retrying now.",
+        "Hello there!",
+        ".env file updated",  # leading dot but real content
+    ]:
+        assert is_silence_narration(prose) is False, prose
+
+
+class _SilenceSayHandle(FakeHandle):
+    """A handle whose say-channel output is only a silence token."""
+
+    def __init__(self, token="*(silent)*"):
+        super().__init__()
+        self._token = token
+
+    def stream_user(self, text):
+        self.user_calls.append(text)
+        yield TextDelta(self._token, SAY)
+
+    def stream_idle(self):
+        self.idle_calls += 1
+        yield TextDelta(self._token, SAY)
+
+
+def test_gateway_drops_silence_narration_before_delivery(caplog, monkeypatch):
+    import logging
+
+    # obs.setup_logging (run by sibling tests) cuts propagation on "lunamoth";
+    # restore it so caplog can see gateway INFO records regardless of order.
+    monkeypatch.setattr(logging.getLogger("lunamoth"), "propagate", True)
+
+    handle = _SilenceSayHandle()
+    adapter = FakeAdapter()
+    gateway = MessagingGateway(handle=handle, adapters=[adapter], allowed_senders=["u1"], patience=999)
+
+    gateway.enqueue(adapter, InboundMessage("u1", "Alice", "hi"))
+    with caplog.at_level(logging.INFO, logger="lunamoth.messaging.gateway"):
+        assert gateway.tick(timeout=0)
+
+    assert handle.user_calls == ["hi"]   # the turn still ran
+    assert adapter.sent == []            # ...but the silence token never went out
+    assert any("silence-narration" in m for m in caplog.messages)
+
+
+def test_gateway_drops_idle_silence_narration():
+    handle = _SilenceSayHandle(token="🔇")
+    adapter = FakeAdapter()
+    gateway = MessagingGateway(handle=handle, adapters=[adapter], allowed_senders=["u1"], patience=0)
+
+    assert gateway.tick(timeout=0)
+    assert handle.idle_calls == 1
+    assert adapter.sent == []   # an idle 🔇 is dropped, not mirrored into the channel
+
+
+def test_gateway_delivers_real_say_after_silence_filter():
+    # The filter must not swallow substantive replies that contain the word.
+    class _Handle(FakeHandle):
+        def stream_user(self, text):
+            self.user_calls.append(text)
+            yield TextDelta("Silence is golden — here is the plan.", SAY)
+
+    handle = _Handle()
+    adapter = FakeAdapter()
+    gateway = MessagingGateway(handle=handle, adapters=[adapter], allowed_senders=["u1"], patience=999)
+
+    gateway.enqueue(adapter, InboundMessage("u1", "Alice", "hi"))
+    assert gateway.tick(timeout=0)
+    assert adapter.sent == ["Silence is golden — here is the plan."]
+
+
 # ---- Telegram long-poll adapter (roadmap C2: Telegram after qq.py) -------------------
 
 

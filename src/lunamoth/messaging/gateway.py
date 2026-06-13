@@ -14,6 +14,7 @@ from ..protocol import SAY, TextDelta
 from ..protocol.api import CharaHandle
 from .access import RefusalThrottle, sender_allowed
 from .base import Adapter, DeliveryDeferred, InboundMessage
+from .filters import is_silence_narration
 from .qq import QQAdapter
 from .telegram import TelegramAdapter
 from .text import split_text
@@ -351,6 +352,17 @@ class MessagingGateway:
         with an ERROR log and the loop carries on. Configuration errors at
         startup (make_adapters / from_config) still crash — visible, correct.
         """
+        # Audit #33: a hallucinated "silence narration" (*(silent)*, 🔇, a bare
+        # ".") mirrors back and forth in bot-to-bot channels until a model
+        # crashes. Drop it here — the one outbound chokepoint every adapter
+        # shares — before it reaches the platform. The muse channel is its own
+        # life and never crosses this boundary, so only say delivery is affected.
+        if is_silence_narration(text):
+            _log.info(
+                "messaging adapter %s: dropped silence-narration outbound (anti-loop): %r",
+                adapter.name, (text or "")[:40],
+            )
+            return
         max_len = int(getattr(adapter, "max_message_length", 0) or 0)
         parts = split_text(text, max_len) if max_len else [text]
         for part in parts:
