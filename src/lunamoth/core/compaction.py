@@ -23,6 +23,7 @@ this and passes its LLMClient in.
 """
 from __future__ import annotations
 
+import hashlib
 import time
 from dataclasses import dataclass
 
@@ -35,6 +36,21 @@ THRESHOLD_RATIO = 0.75       # compact once the window is this full
 _TAIL_RATIO = 0.25           # keep this fraction of the window as verbatim tail
 _TAIL_MIN_TOKENS = 2000
 _TOOL_RESULT_CLIP = 240      # one-line old tool output summaries for the summarizer
+
+# Live-window tool-output pruning (audit #13, hermes context_compressor
+# _prune_old_tool_results pass 1+2): old tool results carry full multi-KB
+# payloads in the LIVE window until whole-message trim/compaction. Replacing
+# them with one-line factual summaries — and dedup'ing identical results (the
+# same file read five times) — shrinks the window with ZERO LLM cost, so it
+# runs as the cheap first step of compact(); the full results stay on disk in
+# the transcript, this only narrows the in-memory API view (same contract as
+# trim()).
+_LIVE_PRUNE_MIN_CHARS = 200  # only substantial tool outputs are worth pruning
+_LIVE_PRUNE_PROTECT_MSGS = 6  # always keep the last N messages verbatim (floor)
+_DUP_TOOL_RESULT = {
+    "en": "[duplicate tool output — identical to a more recent call]",
+    "zh": "[重复的工具输出——与更近一次调用的结果相同]",
+}
 
 # Anti-thrashing guard (audit #10, hermes context_compressor scar #40803):
 # should_compact() re-fires every turn once over threshold, so a failing or
@@ -128,29 +144,26 @@ def _lang(lang: str) -> str:
     return "zh" if str(lang).startswith("zh") else "en"
 
 
+_PRUNED_MARK = "output pruned: "  # identifies an already-one-lined tool result
+
+
 def _tool_output_summary(tool_name: str, content: str) -> str:
     one = " ".join((content or "").split())
     if len(one) > _TOOL_RESULT_CLIP:
         one = one[: _TOOL_RESULT_CLIP - 1] + "…"
     lines = content.count("\n") + 1 if content.strip() else 0
     label = tool_name or "tool"
-    return f"[{label} output pruned: {len(content)} chars, {lines} line(s)] {one}"
+    return f"[{label} {_PRUNED_MARK}{len(content)} chars, {lines} line(s)] {one}"
+
+
+def _already_pruned(content: str) -> bool:
+    return content.startswith("[") and _PRUNED_MARK in content[:64]
 
 
 def _prune_tool_outputs_for_summary(messages: list[dict]) -> list[dict]:
     """Cheap zero-LLM pass: summarize old tool outputs in the copy sent to the
     summarizer. The live ContextBuffer is not mutated by this pruning."""
-    call_names: dict[str, str] = {}
-    for msg in messages:
-        if msg.get("role") != "assistant":
-            continue
-        for tc in msg.get("tool_calls") or []:
-            if not isinstance(tc, dict):
-                continue
-            call_id = str(tc.get("id") or "")
-            name = str((tc.get("function") or {}).get("name") or "")
-            if call_id:
-                call_names[call_id] = name
+    call_names = _call_names(messages)
 
     pruned: list[dict] = []
     for msg in messages:
@@ -161,6 +174,108 @@ def _prune_tool_outputs_for_summary(messages: list[dict]) -> list[dict]:
         tool_name = call_names.get(str(msg.get("tool_call_id") or ""), "tool")
         pruned.append({**msg, "content": _tool_output_summary(tool_name, content)})
     return pruned
+
+
+def _call_names(messages: list[dict]) -> dict[str, str]:
+    """tool_call_id → declaring tool name, scanned from assistant messages."""
+    names: dict[str, str] = {}
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        for tc in msg.get("tool_calls") or []:
+            if not isinstance(tc, dict):
+                continue
+            call_id = str(tc.get("id") or "")
+            name = str((tc.get("function") or {}).get("name") or "")
+            if call_id:
+                names[call_id] = name
+    return names
+
+
+def _live_prune_boundary(msgs: list[dict]) -> int:
+    """Index marking the start of the protected tail: tool results AT OR AFTER
+    this index keep their full content; everything BEFORE it is "old" and
+    prunable. Walks back accumulating ~_TAIL_MIN_TOKENS of recent messages.
+
+    The message that pushes the accumulator OVER budget is itself treated as
+    old (boundary = i + 1) — otherwise a single giant tool result that alone
+    exceeds the tail budget would protect itself forever (exactly the payload
+    #13 most wants gone). A message-count floor (hermes min_protect) keeps the
+    last _LIVE_PRUNE_PROTECT_MSGS verbatim regardless, so a recent tool pair is
+    never one-lined out from under an in-progress turn."""
+    floor = max(0, len(msgs) - _LIVE_PRUNE_PROTECT_MSGS)
+    budget = _TAIL_MIN_TOKENS
+    acc = 0
+    boundary = 0
+    for i in range(len(msgs) - 1, -1, -1):
+        acc += estimate_tokens(_msg_text(msgs[i])) + 2
+        if acc >= budget:
+            boundary = min(i + 1, len(msgs) - 1)
+            break
+    return min(boundary, floor)
+
+
+def prune_live_tool_outputs(ctx: ContextBuffer) -> bool:
+    """Shrink the LIVE window by one-lining and dedup'ing OLD tool outputs
+    (audit #13). Mutates ctx.messages in place; persists NOTHING — the full
+    results remain on disk in the transcript, exactly as trim() narrows the
+    in-memory view without rewriting history. Returns True if it changed
+    anything. Zero LLM cost.
+
+    Two passes, ported from hermes _prune_old_tool_results:
+      1. Dedup — an identical tool result (same file read repeatedly) older
+         than the most recent copy becomes a one-line back-reference.
+      2. One-line — a substantial tool result before the protected tail is
+         replaced by `[tool output pruned: N chars, M line(s)] <head>`.
+    Already-pruned rows (recognizable markers) are skipped so repeated calls
+    are idempotent and don't re-summarize a summary."""
+    msgs = ctx.messages
+    if len(msgs) < 2:
+        return False
+    boundary = _live_prune_boundary(msgs)
+    if boundary <= 0:
+        return False  # the whole window is protected tail — nothing old to prune
+    names = _call_names(msgs)
+    dup_marker = _DUP_TOOL_RESULT["en"]
+    dup_marker_zh = _DUP_TOOL_RESULT["zh"]
+    changed = False
+
+    # Pass 1: dedup identical results across the WHOLE window, newest kept.
+    seen: set[str] = set()
+    for i in range(len(msgs) - 1, -1, -1):
+        msg = msgs[i]
+        if msg.get("role") != "tool":
+            continue
+        content = str(msg.get("content") or "")
+        if len(content) < _LIVE_PRUNE_MIN_CHARS:
+            continue
+        if content == dup_marker or content == dup_marker_zh or _already_pruned(content):
+            continue
+        h = hashlib.md5(content.encode("utf-8", "replace")).hexdigest()[:12]
+        if h in seen:
+            # An older duplicate — but only collapse it if it is OUTSIDE the
+            # protected tail (recent identical reads stay verbatim).
+            if i < boundary:
+                msgs[i] = {**msg, "content": dup_marker}
+                changed = True
+        else:
+            seen.add(h)
+
+    # Pass 2: one-line substantial tool results older than the protected tail.
+    for i in range(boundary):
+        msg = msgs[i]
+        if msg.get("role") != "tool":
+            continue
+        content = str(msg.get("content") or "")
+        if len(content) < _LIVE_PRUNE_MIN_CHARS:
+            continue
+        if _already_pruned(content) or content == dup_marker or content == dup_marker_zh:
+            continue
+        tool_name = names.get(str(msg.get("tool_call_id") or ""), "tool")
+        msgs[i] = {**msg, "content": _tool_output_summary(tool_name, content)}
+        changed = True
+
+    return changed
 
 
 def _serialize(messages: list[dict]) -> str:
@@ -283,6 +398,23 @@ def compact(ctx: ContextBuffer, lang: str, llm, *, force: bool = False) -> bool:
     msgs = ctx.messages
     if len(msgs) < 4:
         return False
+
+    # Cheap zero-LLM first pass (audit #13): one-line / dedup OLD tool outputs
+    # in the LIVE window. This routinely reclaims multi-KB results before the
+    # expensive summarize call — and if it alone drops the window back under
+    # threshold, the LLM summary is skipped entirely (an effective, free
+    # compaction). Persists nothing; the full results stay in the transcript.
+    if prune_live_tool_outputs(ctx) and not force:
+        # The pre-prune real-usage number (audit #8) now overstates the rewritten
+        # window, so the skip test goes on the heuristic, which reflects the
+        # actual post-prune size — and shrink is measured on the same scale.
+        tokens_after = ctx.token_count()
+        if tokens_after < THRESHOLD_RATIO * budget:
+            if tokens_before > 0 and (tokens_before - tokens_after) / tokens_before >= _MIN_SHRINK:
+                guard.record_success()
+            else:
+                guard.record_ineffective(tokens_after)
+            return True
 
     # Walk back from the end, protecting a verbatim tail of ~tail_budget tokens.
     tail_budget = max(_TAIL_MIN_TOKENS, int(budget * _TAIL_RATIO))
