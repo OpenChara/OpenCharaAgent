@@ -55,26 +55,27 @@
 
 ## 快速开始
 
-macOS / Linux：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Lunamos/LunaMoth/main/install.sh | bash
-lunamoth
-```
-
-安装器会把代码 checkout 到 `~/.lunamoth/app`、托管一份 [uv](https://docs.astral.sh/uv/) 在 `~/.lunamoth/bin`、并把 `lunamoth` 命令装进 `~/.local/bin`。`lunamoth update` 原地升级；`lunamoth doctor` 检查环境。
-
-首次运行进入**欢迎页**：选一个 provider 预设（**OpenRouter / OpenAI / Ollama / Mock**）和一个**角色**——选中角色后会自动填好它的工具与限制（可改）；世界书内嵌在卡里，语言跟随卡片。按 **Enter** 进入；随时输入 `/settings` 热切换。
-
-<details>
-<summary>从源码开发</summary>
+LunaMoth 目前是内测阶段——从源码克隆运行（桌面端 app，我们就是这样测的）。需要 [uv](https://docs.astral.sh/uv/) 和 Node（macOS / Linux）：
 
 ```bash
 git clone https://github.com/Lunamos/LunaMoth.git && cd LunaMoth
-uv sync
-uv run lunamoth        # 同一个 CLI，代码可编辑
-./run.sh               # 或：跳过会话管理直接启动 TUI
+uv sync --extra dev --extra server --extra messaging   # Python 后端 + 依赖
+cd apps/desktop && npm install && npm run dev          # 启动桌面 app
 ```
+
+首次运行进入**欢迎页**：选一个 provider 预设（**OpenRouter / OpenAI / Ollama / Mock**），然后要么**创建你自己的角色**——AI 会根据你对世界观、你想与之相处的角色、以及你们关系的描述自动生成角色卡（默认模型建议至少 DeepSeek V4 Flash；从 SillyTavern/酒馆迁移就直接把卡的 JSON 粘进来），要么**试试自带的默认角色**。随时 `/settings` 热切换。
+
+> 打包成 **DMG / AppImage**（拖进 Applications、不用克隆）在路线图上——还没做；现在请按上面从源码跑。
+
+<details>
+<summary>纯终端（不开桌面窗口）</summary>
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Lunamos/LunaMoth/main/install.sh | bash
+lunamoth        # 名册 / TUI
+```
+
+一行安装器：把代码 checkout 到 `~/.lunamoth/app`、托管一份 uv 在 `~/.lunamoth/bin`、把 `lunamoth` 命令装到 PATH（`lunamoth update` / `lunamoth doctor`）。`lunamoth desktop` 会在浏览器里打开同一套网页 UI。
 
 </details>
 

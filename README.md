@@ -55,26 +55,27 @@ The foundations are in place — SillyTavern-compatible cards & world books, com
 
 ## Quick start
 
-macOS / Linux:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/Lunamos/LunaMoth/main/install.sh | bash
-lunamoth
-```
-
-The installer puts a checkout in `~/.lunamoth/app`, a managed [uv](https://docs.astral.sh/uv/) in `~/.lunamoth/bin`, and the `lunamoth` command in `~/.local/bin`. `lunamoth update` upgrades in place; `lunamoth doctor` checks your environment.
-
-First run opens a **welcome screen**: pick a provider preset (**OpenRouter / OpenAI / Ollama / Mock**) and a **character** — choosing one fills in its tools and limits (editable); its world is embedded in the card, and the language follows the card. Press **Enter** to start; type `/settings` anytime to hot-swap any of it.
-
-<details>
-<summary>Developing from a clone</summary>
+LunaMoth is in beta — run it from a clone (the desktop app, the way we test it). Needs [uv](https://docs.astral.sh/uv/) and Node (macOS / Linux):
 
 ```bash
 git clone https://github.com/Lunamos/LunaMoth.git && cd LunaMoth
-uv sync
-uv run lunamoth        # same CLI, editable code
-./run.sh               # or: launch the TUI directly without sessions
+uv sync --extra dev --extra server --extra messaging   # Python backend + deps
+cd apps/desktop && npm install && npm run dev          # launch the desktop app
 ```
+
+First run opens a **welcome screen**: pick a provider preset (**OpenRouter / OpenAI / Ollama / Mock**) and either **create your own character** — the AI drafts the card from your description of the world, the character you want to live alongside, and who you are to each other (use at least DeepSeek V4 Flash; migrating from SillyTavern? paste the card JSON) — or **try the bundled default**. Type `/settings` anytime to hot-swap any of it.
+
+> A packaged **DMG / AppImage** (drag-to-Applications, no clone) is on the roadmap — not yet; for now run from the clone above.
+
+<details>
+<summary>Terminal-only (no desktop window)</summary>
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Lunamos/LunaMoth/main/install.sh | bash
+lunamoth        # the roster / TUI
+```
+
+A one-line installer that puts a checkout in `~/.lunamoth/app`, a managed uv in `~/.lunamoth/bin`, and the `lunamoth` command on your PATH (`lunamoth update` / `lunamoth doctor`). `lunamoth desktop` opens the same web UI in a browser.
 
 </details>
 
