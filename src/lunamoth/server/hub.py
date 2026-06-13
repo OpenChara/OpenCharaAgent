@@ -1952,6 +1952,18 @@ class HubDispatcher:
             else:
                 stop_daemon(meta)
             return session_entry(meta, self.supervisor)
+        if method == "chara.set_autonomy":
+            # Toggle autonomous running without killing the chat you're in
+            # (the in-chat 'autonomy' switch). The board's start/stop touches
+            # the child; this only flips the persisted pause marker.
+            meta = self._meta(p)
+            on = bool(p.get("on"))
+            if self.supervisor is not None:
+                _await_supervisor(self.supervisor, self.supervisor.set_autonomy(meta.name, on))
+            else:
+                from .supervisor import Supervisor
+                Supervisor.set_paused(meta, not on)
+            return session_entry(meta, self.supervisor)
         if method == "gateway.start":
             meta = self._meta(p)
             if self.supervisor is None:

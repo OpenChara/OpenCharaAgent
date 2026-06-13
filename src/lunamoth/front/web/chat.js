@@ -1108,12 +1108,19 @@ class ChatController {
       switchOn: !!snap.net_on,
       onSwitch: () => this.command(snap.net_on ? "/net off" : "/net on", true),
     }));
+    // Autonomy = the SAME persisted on/off the board shows (the pause marker),
+    // not the old live/chat mode — so inner and outer never disagree. Toggling
+    // here keeps the chat alive (it doesn't stop the child).
+    const autonomyOn = !(entry && entry.paused);
     st.appendChild(this.prow({
       label: t("p-autonomy"), sub: t("p-autonomy-sub"),
-      switchOn: this.mode === "live",
+      switchOn: autonomyOn,
       onSwitch: async () => {
-        this.mode = this.mode === "live" ? "chat" : "live";
-        await this.command(`/mode ${this.mode}`, true);
+        try {
+          await hub.call("chara.set_autonomy", { name: this.name, on: !autonomyOn }, 15000);
+          await refreshHub();
+          this.renderStatusPane();
+        } catch (e) { toast(rpcErrText(e), true); }
       },
     }));
     // No show-thinking toggle: the thinking block is always rendered and

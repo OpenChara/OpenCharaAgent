@@ -500,3 +500,32 @@ def test_autonomy_pause_marker_round_trip(tmp_path):
         assert Supervisor.is_paused(meta) is False
     finally:
         S.sessions_dir = orig
+
+
+def test_set_autonomy_toggles_the_same_marker_the_board_reads(tmp_path, monkeypatch):
+    """The in-chat autonomy switch and the board's status must agree: both go
+    through the one persisted pause marker (the inner/outer conflict fix)."""
+    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
+    from lunamoth.server import hub as H
+    from lunamoth.server.supervisor import Supervisor
+    from lunamoth.session import sessions as S
+
+    H.save_defaults({"provider": "openrouter", "base_url": "https://x.invalid/v1",
+                     "api_key": "k", "model": "m"})
+    entry = H.wake(card_path=str(H.bundled_cards_dir() / "Quinn.zh.json"))
+    meta = S.load_session(entry["name"])
+
+    # no supervisor → the hub flips the marker directly; the board reads it back
+    out = []
+    d = H.HubDispatcher(lambda f: out.append(f) or True)
+    def call(method, params):
+        r = d.dispatch({"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+        assert "error" not in r, r.get("error")
+        return r["result"]
+
+    call("chara.set_autonomy", {"name": meta.name, "on": False})
+    assert Supervisor.is_paused(meta) is True
+    assert call("sessions.list", {})[0]["paused"] is True   # board agrees: off
+    call("chara.set_autonomy", {"name": meta.name, "on": True})
+    assert Supervisor.is_paused(meta) is False
+    assert call("sessions.list", {})[0]["paused"] is False  # board agrees: on

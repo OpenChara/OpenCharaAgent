@@ -689,10 +689,16 @@ class CharaChild:
                     snap = await self.snapshot(silent=True)
                     self.idle.mark_idle_complete(snap or {})
                 except Exception as exc:  # noqa: BLE001
-                    # The chara being stopped/paused mid-cycle is an intended
-                    # shutdown, not a crash: the child exits and this idle call
-                    # fails. Don't report it as a backoff error.
-                    if self._stopping or Supervisor.is_paused(self.meta):
+                    # If the child is gone (stop / pause / crash / app restart),
+                    # its OWN lifecycle owns the state — _note_exit emits the
+                    # real running/backoff/crashed state and the auto-restart
+                    # handles recovery. Don't ALSO report "chara child exited"
+                    # as an alarming idle backoff (that double-reporting is the
+                    # "自发循环退避 · chara child exited" the operator kept seeing
+                    # on every app restart). Only a model error while the child
+                    # is still ALIVE is a genuine idle error.
+                    child_gone = self.proc is None or self.proc.returncode is not None
+                    if self._stopping or Supervisor.is_paused(self.meta) or child_gone:
                         return
                     msg = str(exc)
                     self.idle.mark_idle_error(msg)
@@ -1005,6 +1011,25 @@ class Supervisor:
         child = self.child(name)
         Supervisor.set_paused(child.meta, True)  # board "off" pauses autonomy and persists it
         return await child.stop()
+
+    async def set_autonomy(self, name: str, on: bool) -> dict[str, Any]:
+        """Toggle autonomous running WITHOUT touching the child process — so the
+        in-chat 'autonomy' switch matches the board's, but doesn't kill the chat
+        you're in. The persisted pause marker is the single source of truth; the
+        idle loop reads it each tick (≤1s) and reflects it."""
+        child = self.child(name)
+        Supervisor.set_paused(child.meta, not on)
+        if on:
+            # resuming: schedule the next cycle from now so it doesn't fire
+            # instantly, and start the child if it isn't running.
+            if child.proc is None or child.proc.returncode is not None:
+                await child.start()
+            else:
+                snap = await child.snapshot(silent=True)
+                child.idle.schedule_after(snap or {})
+        else:
+            child._emit_life(LifeState("waiting"))
+        return child.status()
 
     def chara_status(self, name: str) -> dict[str, Any] | None:
         child = self.charas.get(name)
