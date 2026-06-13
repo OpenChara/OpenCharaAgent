@@ -28,6 +28,9 @@
 - attach 不唤醒 resting chara；无言到访零痕迹；常驻 chara 一生只招呼一次
   （重开页面不再重放招呼）。UI 配合：resting 做沉睡氛围 + "说话会唤醒它"。
 - works.list 的点目录误杀已修（后端修复，前端无需动作）。
+- **操作者身份进 prompt（#9）已落地**：卡片 `extensions.lunamoth.user_name`
+  覆盖 {{user}}（operator > card > default）；`user_persona` 作为「About <user>」
+  块进缓存的 stable prefix（ST persona 惯例）。工坊照常写这两个字段即可。
 - **Telegram 网关已落地**（你们的预置 UI 可点亮）：`adapters.telegram =
   {bot_token, api_base?}`；长轮询无公网 URL；私聊 v1（群聊 v2）；429/断线
   走 DeliveryDeferred；bot_token 自动被 messaging.get 掩码。
@@ -47,13 +50,6 @@
   同 skills），幸存条目带 `shadows: <被遮蔽路径>` 可如实展示；用户卡之间
   **永不互相遮蔽**（同名各自出现，path 即身份）。前端的「副本」自动改名
   保留即可（card.duplicate 也会改名）。
-
-## 待办
-
-1. **引擎读取 `extensions.lunamoth.user_name` / `user_persona`**：工坊把
-   这两个字段写进卡片，引擎 persona 层目前不读 —— 要让"你是谁"真正进
-   prompt，需要 wake/activation 接到 persona 机制。触及 prompt 栈，
-   Track A 做，字段语义需 owner 点头。
 
 ## 13. gateway.status 增加 state 枚举（学 Hermes 的三 chip tone）
 
