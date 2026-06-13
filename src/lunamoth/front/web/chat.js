@@ -470,6 +470,7 @@ class ChatController {
      reasoning → a collapsed think block, tool_calls → compact tool-call lines,
      a tool result → a result line under its call. */
   renderRestored(messages) {
+    this._restoreChips = new Map();  // tool_call_id -> {item, detail} so results fold into their call
     for (const m of messages.slice(-80)) {
       if (!m) continue;
       const content = typeof m.content === "string" ? m.content : "";
@@ -480,7 +481,7 @@ class ChatController {
       } else if (m.role === "system") {
         if (hasText && m.kind !== "summary") this.systemLine(content);
       } else if (m.role === "tool") {
-        if (hasText) this.restoreToolResult(content);
+        if (hasText) this.restoreToolResult(m);
       } else if (m.role === "assistant") {
         if (m.kind === "think") {
           if (hasText) {
@@ -503,7 +504,7 @@ class ChatController {
           const fn = tc && tc.function;
           if (!fn) continue;
           if (fn.name === "speak") continue; // handled below as a super-chat bubble
-          this.restoreToolCall(fn);
+          this.restoreToolCall(fn, tc.id);
         }
         for (const speak of speakTextsFromMessage(m)) {
           this.appendCharText(speak, { superChat: true, ts: m.ts || Date.now() / 1000 });
@@ -529,24 +530,43 @@ class ChatController {
     this.applyThinkState(node, false);
   }
 
-  /* A compact static tool-call line — mirrors the live tool-chip row, ✓ by
-     default (history doesn't carry the live ok/duration; the result line, if
-     present, follows). */
-  restoreToolCall(fn) {
+  /* A compact static tool-call chip — mirrors the live tool row. The args
+     (and, once it arrives, the result) live in the collapsible detail: nothing
+     shows until you click the chip. */
+  restoreToolCall(fn, callId) {
     const name = fn.name || "?";
     const group = this.ensureToolGroup();
-    const detail = el("div", { class: "tool-detail" }, isTechnical() ? toolArgsSummary(fn.arguments) : "");
+    const detail = el("div", { class: "tool-detail" });
+    if (isTechnical()) {
+      const args = toolArgsSummary(fn.arguments);
+      if (args) detail.textContent = args;
+    }
     const button = el("button", { class: "tool-chip ok" }, `⚙ ${name}`);
     const item = el("div", { class: "tool-chip-item" }, button, detail);
     item.classList.toggle("has-detail", !!detail.textContent);
     button.onclick = () => item.classList.toggle("open");
     group.appendChild(item);
+    if (callId) this._restoreChips.set(callId, { item, detail });
   }
 
-  /* A tool result, rendered as a compact line under its call group. */
-  restoreToolResult(text) {
+  /* A tool result folds into ITS call's collapsible detail (matched by
+     tool_call_id) — same as the live path, so it never leaks uncollapsed.
+     An orphan result (no matching call in the window) gets its own chip. */
+  restoreToolResult(m) {
+    const text = abbreviate(typeof m.content === "string" ? m.content : "", 600);
+    const rec = m.tool_call_id && this._restoreChips && this._restoreChips.get(m.tool_call_id);
+    if (rec) {
+      const sep = rec.detail.textContent ? "\n\n→ " : "→ ";
+      rec.detail.textContent = rec.detail.textContent + sep + text;
+      rec.item.classList.add("has-detail");
+      return;
+    }
     const group = this.ensureToolGroup();
-    group.appendChild(el("div", { class: "tool-result-line" }, abbreviate(text, 240)));
+    const detail = el("div", { class: "tool-detail" }, text);
+    const button = el("button", { class: "tool-chip ok" }, "⚙ result");
+    const item = el("div", { class: "tool-chip-item has-detail" }, button, detail);
+    button.onclick = () => item.classList.toggle("open");
+    group.appendChild(item);
   }
 
   /* ---- streaming protocol events ---- */
