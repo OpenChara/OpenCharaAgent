@@ -1027,3 +1027,325 @@ def test_gateway_config_error_exits_fatal_not_retried(tmp_path, monkeypatch):
     # missing config file -> fatal exit too (retrying can't create it)
     (meta.root / "messaging.json").unlink()
     assert cli.cmd_gateway(ns) == GATEWAY_FATAL_EXIT
+
+
+# ---- WeChatPadPro adapter (weixinpad: iPad protocol via user-run docker) -------------
+
+
+class FakeWeixinPadTransport:
+    """Routes WeChatPadPro REST calls by path to canned payloads.
+
+    Each entry maps a path substring to a payload dict OR an exception instance
+    to raise (HTTPError/URLError). A path may map to a list to pop sequentially
+    (e.g. CheckLoginStatus: pending then confirmed).
+    """
+
+    def __init__(self, routes):
+        self.routes = dict(routes)
+        self.requests = []
+
+    def __call__(self, req, timeout=0):
+        self.requests.append((req, timeout))
+        for fragment, payload in self.routes.items():
+            if fragment in req.full_url:
+                item = payload.pop(0) if isinstance(payload, list) else payload
+                if isinstance(item, BaseException):
+                    raise item
+                return FakeHTTPResponse(item)
+        raise AssertionError(f"unexpected WeChatPadPro request: {req.full_url}")
+
+    def body(self, index):
+        return json.loads(self.requests[index][0].data.decode("utf-8"))
+
+
+class _CaptureOut:
+    def __init__(self):
+        self.chunks = []
+
+    def write(self, s):
+        self.chunks.append(s)
+
+    def flush(self):
+        return None
+
+    def __str__(self):
+        return "".join(self.chunks)
+
+
+def _wxpad_login_routes(extra=None):
+    routes = {
+        "/admin/GenAuthKey1": {"Code": 200, "Data": ["auth-xyz"]},
+        "/login/GetLoginQrCodeNew": {"Code": 200, "Data": {"QrCodeUrl": "https://qr.example/abc"}},
+        "/login/CheckLoginStatus": {"Code": 200, "Data": {"loginState": 1}},
+        "/login/GetProfile": {
+            "Code": 200,
+            "Data": {"userInfo": {"userName": {"str": "wxid_me"}}},
+        },
+    }
+    if extra:
+        routes.update(extra)
+    return routes
+
+
+def test_weixinpad_login_persists_auth_key_and_wxid_0600(tmp_path):
+    from lunamoth.messaging.weixinpad import WeixinPadAdapter
+
+    transport = FakeWeixinPadTransport(_wxpad_login_routes())
+    out = _CaptureOut()
+    adapter = WeixinPadAdapter(
+        {"host": "127.0.0.1", "port": 38849, "admin_key": "ADMIN"},
+        opener=transport,
+        state_path=tmp_path / "weixinpad_state.json",
+        output=out,
+        sleep=lambda _s: None,
+    )
+    adapter._ensure_login()
+
+    state = json.loads((tmp_path / "weixinpad_state.json").read_text(encoding="utf-8"))
+    assert state["auth_key"] == "auth-xyz"
+    assert state["wxid"] == "wxid_me"
+    assert oct((tmp_path / "weixinpad_state.json").stat().st_mode & 0o777) == "0o600"
+    # the admin_key authenticates GenAuthKey1; the derived auth_key everything else
+    assert "key=ADMIN" in transport.requests[0][0].full_url
+    assert "/admin/GenAuthKey1" in transport.requests[0][0].full_url
+    assert "key=auth-xyz" in transport.requests[1][0].full_url
+    # QR rendered + fallback URL offered
+    assert "qrserver.com" in str(out)
+
+
+def test_weixinpad_reuses_saved_auth_key_no_login(tmp_path):
+    from lunamoth.messaging.weixinpad import WeixinPadAdapter
+
+    state_path = tmp_path / "weixinpad_state.json"
+    state_path.write_text(json.dumps({"auth_key": "saved", "wxid": "wxid_me"}), encoding="utf-8")
+    transport = FakeWeixinPadTransport({})
+    adapter = WeixinPadAdapter(
+        {"host": "127.0.0.1", "admin_key": "ADMIN"}, opener=transport, state_path=state_path
+    )
+    adapter._ensure_login()
+    assert adapter.auth_key == "saved"
+    assert transport.requests == []  # nothing re-requested
+
+
+def test_weixinpad_login_waits_then_confirms(tmp_path):
+    from lunamoth.messaging.weixinpad import WeixinPadAdapter
+
+    routes = _wxpad_login_routes(
+        {"/login/CheckLoginStatus": [{"Code": 200, "Data": {"loginState": 0}},
+                                     {"Code": 200, "Data": {"loginState": 1}}]}
+    )
+    transport = FakeWeixinPadTransport(routes)
+    adapter = WeixinPadAdapter(
+        {"host": "127.0.0.1", "admin_key": "ADMIN"},
+        opener=transport,
+        state_path=tmp_path / "weixinpad_state.json",
+        output=_CaptureOut(),
+        sleep=lambda _s: None,
+    )
+    adapter._login()
+    assert adapter.auth_key == "auth-xyz"
+    assert adapter.wxid == "wxid_me"
+
+
+def test_weixinpad_bad_admin_key_is_clear_startup_error(tmp_path):
+    from lunamoth.messaging.weixinpad import WeixinPadAdapter
+
+    transport = FakeWeixinPadTransport(
+        {"/admin/GenAuthKey1": {"Code": 401, "Text": "invalid admin key"}}
+    )
+    adapter = WeixinPadAdapter(
+        {"host": "127.0.0.1", "admin_key": "BAD"},
+        opener=transport,
+        state_path=tmp_path / "weixinpad_state.json",
+        output=_CaptureOut(),
+    )
+    with pytest.raises(RuntimeError, match="admin_key"):
+        adapter._login()
+
+
+def test_weixinpad_inbound_text_frame_to_message_with_id(tmp_path):
+    from lunamoth.messaging.weixinpad import WeixinPadAdapter
+
+    adapter = WeixinPadAdapter(
+        {"host": "127.0.0.1", "admin_key": "ADMIN"},
+        state_path=tmp_path / "weixinpad_state.json",
+    )
+    inbox = queue.Queue()
+    frame = json.dumps(
+        {
+            "MsgType": 1,
+            "FromUserName": {"string": "wxid_friend"},
+            "Content": {"str": "hello there"},
+            "NewMsgId": 998877,
+        }
+    )
+    assert adapter.handle_frame(frame, inbox) is True
+    msg = inbox.get_nowait()
+    assert msg.sender_id == "wxid_friend"
+    assert msg.text == "hello there"
+    assert msg.message_id == "998877"  # NewMsgId wired through for gateway dedup
+    assert adapter._last_sender == "wxid_friend"  # becomes the default speak target
+
+
+def test_weixinpad_non_text_frame_ignored(tmp_path):
+    from lunamoth.messaging.weixinpad import WeixinPadAdapter
+
+    adapter = WeixinPadAdapter(
+        {"host": "127.0.0.1", "admin_key": "ADMIN"},
+        state_path=tmp_path / "weixinpad_state.json",
+    )
+    inbox = queue.Queue()
+    # image message (MsgType 3) and a frame missing a sender are both ignored
+    assert adapter.handle_frame(
+        json.dumps({"MsgType": 3, "FromUserName": {"string": "wxid_friend"}}), inbox
+    ) is False
+    assert adapter.handle_frame(
+        json.dumps({"MsgType": 1, "Content": {"str": "no sender"}}), inbox
+    ) is False
+    assert inbox.empty()
+
+
+def test_weixinpad_send_success(tmp_path):
+    from lunamoth.messaging.weixinpad import WeixinPadAdapter
+
+    state_path = tmp_path / "weixinpad_state.json"
+    state_path.write_text(json.dumps({"auth_key": "saved", "wxid": "wxid_me"}), encoding="utf-8")
+    transport = FakeWeixinPadTransport({"/message/SendTextMessage": {"Code": 200}})
+    adapter = WeixinPadAdapter(
+        {"host": "127.0.0.1", "admin_key": "ADMIN"}, opener=transport, state_path=state_path
+    )
+    adapter.set_reply_target(InboundMessage("wxid_friend", "Friend", "hi"))
+    adapter.send("reply text")
+
+    body = transport.body(0)
+    assert body["MsgItem"][0]["ToUserName"] == "wxid_friend"
+    assert body["MsgItem"][0]["TextContent"] == "reply text"
+    assert "key=saved" in transport.requests[0][0].full_url
+
+
+def test_weixinpad_send_failure_is_delivery_deferred(tmp_path):
+    import io
+    from urllib.error import HTTPError
+
+    from lunamoth.messaging.base import DeliveryDeferred
+    from lunamoth.messaging.weixinpad import WeixinPadAdapter
+
+    state_path = tmp_path / "weixinpad_state.json"
+    state_path.write_text(json.dumps({"auth_key": "saved"}), encoding="utf-8")
+    err = HTTPError("http://x/message/SendTextMessage", 500, "boom", {}, io.BytesIO(b""))
+    transport = FakeWeixinPadTransport({"/message/SendTextMessage": err})
+    adapter = WeixinPadAdapter(
+        {"host": "127.0.0.1", "admin_key": "ADMIN"}, opener=transport, state_path=state_path
+    )
+    adapter.set_reply_target(InboundMessage("wxid_friend", "Friend", "hi"))
+    with pytest.raises(DeliveryDeferred, match="dropped, not queued"):
+        adapter.send("nope")
+
+
+def test_weixinpad_send_429_is_delivery_deferred(tmp_path):
+    import io
+    from urllib.error import HTTPError
+
+    from lunamoth.messaging.base import DeliveryDeferred
+    from lunamoth.messaging.weixinpad import WeixinPadAdapter
+
+    state_path = tmp_path / "weixinpad_state.json"
+    state_path.write_text(json.dumps({"auth_key": "saved"}), encoding="utf-8")
+    err = HTTPError("http://x/message/SendTextMessage", 429, "rate", {}, io.BytesIO(b""))
+    transport = FakeWeixinPadTransport({"/message/SendTextMessage": err})
+    adapter = WeixinPadAdapter(
+        {"host": "127.0.0.1", "admin_key": "ADMIN"}, opener=transport, state_path=state_path
+    )
+    adapter.set_reply_target(InboundMessage("wxid_friend", "Friend", "hi"))
+    with pytest.raises(DeliveryDeferred, match="429"):
+        adapter.send("too fast")
+
+
+def test_weixinpad_send_without_destination_is_deferred(tmp_path):
+    from lunamoth.messaging.base import DeliveryDeferred
+    from lunamoth.messaging.weixinpad import WeixinPadAdapter
+
+    state_path = tmp_path / "weixinpad_state.json"
+    state_path.write_text(json.dumps({"auth_key": "saved"}), encoding="utf-8")
+    adapter = WeixinPadAdapter(
+        {"host": "127.0.0.1", "admin_key": "ADMIN"},
+        opener=FakeWeixinPadTransport({}),
+        state_path=state_path,
+    )
+    with pytest.raises(DeliveryDeferred, match="no inbound sender on record"):
+        adapter.send("speak with nobody on record")
+
+
+def test_weixinpad_default_state_path_honors_config_dir(monkeypatch, tmp_path):
+    from lunamoth.messaging.weixinpad import default_state_path
+
+    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path))
+    assert default_state_path() == tmp_path.resolve() / "weixinpad_state.json"
+
+
+def test_weixinpad_ws_reconnect_reads_frame_and_backoff(tmp_path):
+    from lunamoth.messaging.weixinpad import WeixinPadAdapter
+
+    state_path = tmp_path / "weixinpad_state.json"
+    state_path.write_text(json.dumps({"auth_key": "saved"}), encoding="utf-8")
+    frames = [
+        json.dumps(
+            {
+                "MsgType": 1,
+                "FromUserName": {"string": "wxid_friend"},
+                "Content": {"str": "ping"},
+                "NewMsgId": 1,
+            }
+        )
+    ]
+    sleeps = []
+    attempts = []
+    adapter = WeixinPadAdapter(
+        {"host": "127.0.0.1", "admin_key": "ADMIN"},
+        opener=FakeWeixinPadTransport({}),
+        state_path=state_path,
+        sleep=lambda s: sleeps.append(s),
+        recv_timeout=0,
+    )
+
+    def connect(url):
+        attempts.append(url)
+        if len(attempts) == 1:
+            raise OSError("first drop")
+        return FakeQQSocket(frames=frames, error=ConnectionError("done"), on_error=adapter.close)
+
+    adapter._connect_func = connect
+    inbox = queue.Queue()
+    adapter.run(inbox)
+
+    assert sleeps == [1.0]  # one backoff after the first drop, reset after success
+    assert all("/ws/GetSyncMsg?key=saved" in u for u in attempts)
+    msg = inbox.get_nowait()
+    assert msg.sender_id == "wxid_friend" and msg.text == "ping"
+
+
+def test_weixinpad_allowed_senders_filter_through_gateway(tmp_path):
+    from lunamoth.messaging.weixinpad import WeixinPadAdapter
+
+    handle = FakeHandle()
+    state_path = tmp_path / "weixinpad_state.json"
+    state_path.write_text(json.dumps({"auth_key": "saved"}), encoding="utf-8")
+    transport = FakeWeixinPadTransport({"/message/SendTextMessage": [{"Code": 200}, {"Code": 200}]})
+    adapter = WeixinPadAdapter(
+        {"host": "127.0.0.1", "admin_key": "ADMIN"}, opener=transport, state_path=state_path
+    )
+    adapter.run = lambda inbox: None  # the WS thread is not under test here
+    gateway = MessagingGateway(
+        handle=handle, adapters=[adapter], allowed_senders=["wxid_ok"], patience=999
+    )
+
+    gateway.enqueue(adapter, InboundMessage("wxid_bad", "Mallory", "hi", message_id="1"))
+    gateway.enqueue(adapter, InboundMessage("wxid_ok", "Alice", "hi", message_id="2"))
+    assert gateway.tick(timeout=0)
+    assert gateway.tick(timeout=0)
+
+    assert handle.user_calls == ["hi"]  # only the allowed sender reached the chara
+    refusal = transport.body(0)
+    assert refusal["MsgItem"][0]["ToUserName"] == "wxid_bad"
+    assert "configured contacts" in refusal["MsgItem"][0]["TextContent"]
+    assert transport.body(1)["MsgItem"][0]["TextContent"] == "reply"
