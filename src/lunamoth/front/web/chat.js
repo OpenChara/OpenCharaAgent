@@ -463,18 +463,24 @@ class ChatController {
     if (node) node.remove();
   }
 
-  /* ---- restored history ---- */
+  /* ---- restored history ----
+     The restored messages now carry the full forensic shape (reasoning_content,
+     tool_calls, and role:"tool" results — display-only; the model's context is
+     unchanged). Mirror the LIVE renderers so history reads the same as a turn:
+     reasoning → a collapsed think block, tool_calls → compact tool-call lines,
+     a tool result → a result line under its call. */
   renderRestored(messages) {
-    const inner = $("stream-inner");
     for (const m of messages.slice(-80)) {
       if (!m) continue;
       const content = typeof m.content === "string" ? m.content : "";
       const hasText = content.trim().length > 0;
       if (m.role === "user") {
         if (!hasText) continue;
-        inner.appendChild(el("div", { class: "user-msg" }, el("div", { class: "bubble" }, m.content)));
+        $("stream-inner").appendChild(el("div", { class: "user-msg" }, el("div", { class: "bubble" }, m.content)));
       } else if (m.role === "system") {
         if (hasText && m.kind !== "summary") this.systemLine(content);
+      } else if (m.role === "tool") {
+        if (hasText) this.restoreToolResult(content);
       } else if (m.role === "assistant") {
         if (m.kind === "think") {
           if (hasText) {
@@ -483,9 +489,21 @@ class ChatController {
           }
           continue;
         }
+        // Reasoning first (it preceded the visible reply/tool calls live).
+        const reasoning = typeof m.reasoning_content === "string" ? m.reasoning_content.trim() : "";
+        if (reasoning) this.restoreThinkBlock(reasoning);
         if (hasText) {
           this.appendCharText(content);
           this.closeCurrent();
+        }
+        // Tool calls: speak surfaces as a super-chat bubble (existing behavior);
+        // every other call renders as a compact static tool-call line.
+        const calls = Array.isArray(m.tool_calls) ? m.tool_calls : [];
+        for (const tc of calls) {
+          const fn = tc && tc.function;
+          if (!fn) continue;
+          if (fn.name === "speak") continue; // handled below as a super-chat bubble
+          this.restoreToolCall(fn);
         }
         for (const speak of speakTextsFromMessage(m)) {
           this.appendCharText(speak, { superChat: true, ts: m.ts || Date.now() / 1000 });
@@ -494,6 +512,41 @@ class ChatController {
       }
     }
     this.scrollDown(true);
+  }
+
+  /* A finalized (collapsed) think block — same markup as the live ThinkDelta
+     path (appendThinking), but static and already done. */
+  restoreThinkBlock(text) {
+    this.closeCurrent();
+    this.breakToolGroup();
+    const head = el("button", { class: "think-head" });
+    const body = el("div", { class: "think-body" });
+    const node = el("div", { class: "think-block" }, head, body);
+    body.textContent = text;
+    node.dataset.tokens = String(Math.max(1, estimateTokens(text)));
+    head.onclick = () => this.toggleThinkingExpanded();
+    $("stream-inner").appendChild(node);
+    this.applyThinkState(node, false);
+  }
+
+  /* A compact static tool-call line — mirrors the live tool-chip row, ✓ by
+     default (history doesn't carry the live ok/duration; the result line, if
+     present, follows). */
+  restoreToolCall(fn) {
+    const name = fn.name || "?";
+    const group = this.ensureToolGroup();
+    const detail = el("div", { class: "tool-detail" }, isTechnical() ? toolArgsSummary(fn.arguments) : "");
+    const button = el("button", { class: "tool-chip ok" }, `⚙ ${name}`);
+    const item = el("div", { class: "tool-chip-item" }, button, detail);
+    item.classList.toggle("has-detail", !!detail.textContent);
+    button.onclick = () => item.classList.toggle("open");
+    group.appendChild(item);
+  }
+
+  /* A tool result, rendered as a compact line under its call group. */
+  restoreToolResult(text) {
+    const group = this.ensureToolGroup();
+    group.appendChild(el("div", { class: "tool-result-line" }, abbreviate(text, 240)));
   }
 
   /* ---- streaming protocol events ---- */

@@ -274,3 +274,39 @@ def test_reconnect_shows_the_conversation_so_far(agent):
     joined = " ".join(c for _, c in [(m.get("role"), m.get("content") or "")
                                      for m in [dict(x) for x in reattached.restored]])
     assert "项目代号 Moth" in joined
+
+
+def test_display_restore_shows_tools_without_changing_model_context(agent):
+    """The FRONTEND restore gains tool calls / results / reasoning, while the
+    MODEL's replayed context (context.render()) is unchanged — tool results
+    stay forensic for the model on purpose."""
+    from lunamoth.protocol.api import CharaHandle
+
+    a = agent()
+    a.state.set_rest_until(0)
+    a.transcript.reset()
+    # Persist a realistic tool round-trip straight into the transcript.
+    a.transcript.append_message({"role": "user", "content": "list files"})
+    a.transcript.append_message({"role": "assistant", "content": "",
+                                 "reasoning_content": "I'll run terminal",
+                                 "tool_calls": [{"id": "c1", "type": "function",
+                                                 "function": {"name": "terminal", "arguments": "{}"}}]})
+    a.transcript.append_message({"role": "tool", "tool_call_id": "c1", "content": "a.txt\nb.txt"})
+
+    handle = CharaHandle(agent=a)
+    info = handle.attach(present=True)
+    restored = [dict(m) for m in info.restored]
+
+    # The DISPLAY view carries reasoning, the tool call, and the tool result.
+    assert any(m.get("reasoning_content") == "I'll run terminal" for m in restored)
+    assert any(m.get("tool_calls") for m in restored)
+    assert any(m.get("role") == "tool" and "a.txt" in str(m.get("content", "")) for m in restored)
+
+    # The MODEL's replayed context is unchanged: render() drops reasoning and,
+    # for paired calls, keeps tool results exactly as before this change.
+    sess = handle._session
+    view = sess.context.render(include_reasoning=False)
+    assert all("reasoning_content" not in m for m in view)
+    # The session context did NOT gain the display-only legacy rows.
+    assert sess.context.messages == [dict(m) for m in a.transcript.load(
+        max_messages=a.RESTORE_MAX_MESSAGES)]

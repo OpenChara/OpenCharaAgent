@@ -108,7 +108,6 @@ def test_export_jsonl_only_current_epoch(tmp_path):
 
 
 def test_export_jsonl_missing_db_is_empty_not_fabricated(tmp_path):
-    t = TranscriptStore(tmp_path / "never.db")
     # Force the read-only export path to face a DB that was never written.
     fresh = TranscriptStore.__new__(TranscriptStore)
     fresh.path = tmp_path / "absent.db"

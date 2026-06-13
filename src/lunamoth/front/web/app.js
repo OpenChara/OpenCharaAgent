@@ -381,6 +381,26 @@ function parseToolArguments(raw) {
   }
 }
 
+/* Collapse text to one short line — the JS twin of agent.py's _abbrev, used by
+   the restored-history tool lines. */
+function abbreviate(text, limit) {
+  const one = String(text || "").split(/\s+/).join(" ").trim();
+  return one.length <= limit ? one : one.slice(0, limit - 1) + "…";
+}
+
+/* A compact "key=value, …" summary of a tool call's arguments, for the
+   restored tool-call detail (technical mode only). */
+function toolArgsSummary(raw) {
+  const args = parseToolArguments(raw);
+  if (!args) return typeof raw === "string" ? abbreviate(raw, 200) : "";
+  const parts = [];
+  for (const [k, v] of Object.entries(args)) {
+    const val = typeof v === "string" ? v : JSON.stringify(v);
+    parts.push(`${k}=${val}`);
+  }
+  return abbreviate(parts.join(", "), 200);
+}
+
 function speakTextsFromMessage(msg) {
   const out = [];
   const calls = Array.isArray(msg && msg.tool_calls) ? msg.tool_calls : [];

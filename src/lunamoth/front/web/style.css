@@ -343,6 +343,10 @@ body.dark .md-code{background:rgba(255,255,255,.08)}
   padding:7px 9px; white-space:pre-wrap; overflow-wrap:anywhere;
 }
 .tool-chip-item.open .tool-detail{display:block}
+.tool-result-line{
+  width:100%; font-family:var(--mono); font-size:11px; line-height:1.45;
+  color:var(--text-3); white-space:pre-wrap; overflow-wrap:anywhere; padding-left:2px;
+}
 .spin{
   width:9px; height:9px; border-radius:50%; border:1.5px solid currentColor;
   border-top-color:transparent; display:inline-block; animation:spin .9s linear infinite;

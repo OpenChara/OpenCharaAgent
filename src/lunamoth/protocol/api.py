@@ -141,7 +141,7 @@ class CharaHandle:
         a = self._agent
         if self._session is None:
             self._session = a.make_session()
-        restored = tuple(dict(m) for m in self._session.context.messages)
+        restored = self._display_restored()
         a.state.set_present(present)
 
         if not present:
@@ -152,7 +152,7 @@ class CharaHandle:
                 m.get("role") == "system" and m.get("content") == handoff for m in recent
             ):
                 self._session.context.add("system", handoff)
-                restored = tuple(dict(m) for m in self._session.context.messages)
+                restored = self._display_restored()
             return AttachInfo(
                 char_name=a.char_name(), lang=a.lang, mode=a.settings.mode,
                 show_thinking=bool(a.settings.show_thinking),
@@ -171,7 +171,7 @@ class CharaHandle:
             return AttachInfo(
                 char_name=a.char_name(), lang=a.lang, mode=a.settings.mode,
                 show_thinking=bool(a.settings.show_thinking),
-                restored=restored, opening="none", opening_text="",
+                restored=self._display_restored(), opening="none", opening_text="",
             )
         # Entering the room never forces a turn: you can just watch the chara
         # do its own thing. The ONLY opener is the card's designed first_mes,
@@ -194,6 +194,23 @@ class CharaHandle:
         if present:
             self._begin_visit()
         return info
+
+    def _display_restored(self) -> tuple:
+        """The restored tail SENT TO THE FRONTEND for display.
+
+        Built from the transcript's fuller display view (load_display includes
+        legacy kind='tool' forensic rows), so the history panel can show tool
+        calls, tool results and reasoning. This is DISPLAY-ONLY: the model's
+        replayed context (self._session.context → context.render()) is NOT
+        touched — tool results stay forensic for the model on purpose. The DB
+        is the single source of truth, so a reconnect always shows the current
+        conversation. If the transcript is unavailable, fall back to the live
+        in-memory context view (never fabricated)."""
+        a = self._agent
+        rows = a.transcript.load_display(max_messages=a.RESTORE_MAX_MESSAGES)
+        if rows:
+            return tuple(rows)
+        return tuple(dict(m) for m in self._session.context.messages)
 
     def _begin_visit(self) -> None:
         self._visit_spoke = False
