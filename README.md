@@ -203,7 +203,7 @@ This project began as an SCP fan work — an attempt to recreate SCP-079 in the 
 - [x] **Remote TUI gateway foundation** — `lunamoth serve NAME --stdio` now exposes the activated session as newline-delimited JSON-RPC, and `lunamoth serve NAME --host 127.0.0.1 --port 8137` exposes the same dispatch over a token-authenticated WebSocket. Install the optional WebSocket dependency with `uv sync --extra server`. The default bind is loopback; binding to a public interface is an operator decision.
 - [x] **Desktop card studio** — the web deck can now draft an editable SillyTavern V3 card from prose inspiration, including embedded world entries, seed goals, an embodiment stance, theme color, and a sanitized SVG avatar; nothing is saved until the creator reviews and saves.
 - [x] **Legible web chat** — the desktop chat now gives thinking, muse/self-talk, system/GM lines, Super Chat speaks, and tool work distinct looks, with an always-visible in-flight work state and a board Super Chat feed.
-- [x] **Messaging gateway (WeCom + personal WeChat + QQ + Telegram)** — `lunamoth gateway NAME` runs one activated chara behind `~/.lunamoth/sessions/NAME/messaging.json`; adapters deliver only `say` text (including idle `speak` output) and drop muse/thinking/tool chatter. WeCom/Enterprise WeChat self-built apps use the stdlib callback server plus callback crypto from `uv sync --extra messaging`.
+- [x] **Messaging gateway (WeCom + personal WeChat + QQ + Telegram)** — `lunamoth gateway NAME` runs one activated chara behind `~/.lunamoth/sessions/NAME/messaging.json`; adapters deliver only `say` text (including idle `speak` output) and drop muse/thinking/tool chatter. WeCom/Enterprise WeChat self-built apps use the stdlib callback server plus callback crypto from `uv sync --extra messaging`. Personal WeChat works two ways: the official iLink/ClawBot path (`weixin`, lowest ban risk but grayscale-gated) or, via a user-run WeChatPadPro docker container (`weixinpad`, iPad protocol, a real device-login QR that works on any account).
 
   **Personal WeChat / iLink ClawBot setup:** add a `weixin` adapter, then run `lunamoth gateway NAME` and scan the terminal QR with your phone WeChat (requires the ClawBot plugin; iOS ≥ 8.0.70 / Android ≥ 8.0.69). Credentials are saved in `weixin_state.json` in the session directory, not in `messaging.json`; terminal QR ASCII uses the optional `qrcode` package, and the gateway always prints an `api.qrserver.com` fallback URL. Text-only iLink support intentionally does not implement media/CDN crypto. The bot can only message users who have messaged it in the current session because WeChat requires a per-user `context_token`; an unattended `speak` before first contact logs “waiting for the human to say hi first” instead of inventing a fallback.
 
@@ -216,6 +216,21 @@ This project began as an SCP fan work — an attempt to recreate SCP-079 in the 
         "bot_type": "3",
         "long_poll_timeout_ms": 35000,
         "api_timeout_ms": 15000
+      }
+    }
+  }
+  ```
+
+  **Personal WeChat via WeChatPadPro setup (`weixinpad`):** if your account hasn't received the ClawBot grayscale (the iLink QR "scans to nothing"), run a [WeChatPadPro](https://github.com/WeChatPadPro/WeChatPadPro) docker stack yourself (the container + MySQL + Redis; default API port 38849, pick an `adminKey`) and point this adapter at it. On first run the gateway derives a per-account auth key from your `adminKey`, prints a **real WeChat device-login QR** (scan it once with your phone WeChat → "log in on another device"); it then reads inbound over the `GetSyncMsg` WebSocket and sends via HTTP REST. Credentials are saved in `weixinpad_state.json` in the session directory, not in `messaging.json`. The WebSocket transport needs `websockets` (`uv sync --extra server`). Text-only for v1. Unlike iLink it can usually initiate to any friend, so unattended `speak` works once a destination is known. **Ban risk is real:** WeChatPadPro speaks WeChat's unofficial iPad protocol — NOT sanctioned by Tencent. Upstream warns that new accounts should stabilize ~3 days before high-risk ops, fresh logins can be force-disconnected within 24h, and friend-add / bulk ops trigger 7-to-30-day bans. Use a spare/secondary WeChat, keep your phone logged in in the same region, and keep the message rate low.
+
+  ```json
+  {
+    "allowed_senders": ["<the sender wxid after first contact>"],
+    "adapters": {
+      "weixinpad": {
+        "host": "127.0.0.1",
+        "port": 38849,
+        "admin_key": "<your WeChatPadPro adminKey>"
       }
     }
   }

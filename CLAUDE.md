@@ -140,7 +140,7 @@ zero internal deps; `obs/` imports only `config`.
   - `codec.py` — JSON wire format (stream-json, the server, the web renderer).
   - `api.py` — `CharaHandle` (attach/streams/command/snapshot/permission hook)
     + Reply/AttachInfo/StateSnapshot. The ONLY backend surface frontends see.
-- `messaging/` — external chat gateways: WeCom, personal WeChat iLink/ClawBot, QQ OneBot, and Telegram adapters behind the sync `Adapter` seam.
+- `messaging/` — external chat gateways: WeCom, personal WeChat (iLink/ClawBot, and also via WeChatPadPro — user-run docker, iPad protocol, any account), QQ OneBot, and Telegram adapters behind the sync `Adapter` seam.
 - `content/` — SillyTavern compat, pure data: `cards.py` (V2/V3 PNG/JSON; PHI
   exposed for the post-history slot, never folded into the persona;
   `merge_world_into_card` = the world-book IMPORT path), `worldinfo.py`
