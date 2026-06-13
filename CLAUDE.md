@@ -140,7 +140,7 @@ zero internal deps; `obs/` imports only `config`.
   - `codec.py` — JSON wire format (stream-json, the server, the web renderer).
   - `api.py` — `CharaHandle` (attach/streams/command/snapshot/permission hook)
     + Reply/AttachInfo/StateSnapshot. The ONLY backend surface frontends see.
-- `messaging/` — external chat gateways: WeCom, personal WeChat (iLink/ClawBot, and also via WeChatPadPro — user-run docker, iPad protocol, any account), QQ OneBot, and Telegram adapters behind the sync `Adapter` seam.
+- `messaging/` — external chat gateways: WeCom, personal WeChat (iLink/ClawBot, and also via WeChatPadPro — user-run docker, iPad protocol, any account), QQ OneBot, and Telegram adapters behind the sync `Adapter` seam. A gateway is NOT a separate agent: the adapters run INSIDE the chara's `serve --stdio` child via `server/messaging_host.py` (`MessagingHost` + `dispatch.run_stream_sync`), sharing its ONE handle — a WeChat turn streams into the desktop window live AND replies to WeChat. The host has no idle loop (the supervisor owns self-work). `MessagingGateway` (own handle + idle) remains the standalone `lunamoth gateway NAME` path for headless use/tests. Per-chara toggle = `messaging.start/stop` RPC to the child (`GatewayChild` is now a thin controller, not a process).
 - `content/` — SillyTavern compat, pure data: `cards.py` (V2/V3 PNG/JSON; PHI
   exposed for the post-history slot, never folded into the persona;
   `merge_world_into_card` = the world-book IMPORT path), `worldinfo.py`
@@ -173,8 +173,10 @@ zero internal deps; `obs/` imports only `config`.
   (board-level RPC: roster/cards/wake/export/defaults/key-test/transcribe plus
   supervisor child/gateway state; reads session dirs + transcript SQLite directly —
   one process = one activated session, so the hub NEVER hosts an agent),
-  `supervisor.py` (lunamothd: long-lived `serve --stdio` child registry, gateway
-  supervision, seq/rejoin, life.state, idle driving, `/chara/<name>/pty` operator
+  `supervisor.py` (lunamothd: long-lived `serve --stdio` child registry; the
+  messaging host now runs INSIDE that child sharing its agent, so `GatewayChild`
+  just toggles it over RPC — no separate gateway process; seq/rejoin, life.state,
+  idle driving, `/chara/<name>/pty` operator
   shell — audited, not a driver), `pty.py` (stdlib PtyBridge: a shell inside the
   chara's jail behind a pty, streamed as binary WS frames), `desktop.py` (thin
   foreground/daemon entry for static HTTP + WS routing).
