@@ -322,7 +322,7 @@ class ChatController {
     $("stream-inner").innerHTML = "";
     this.setWorkState(false);
     $("chat-name").textContent = this.charName;
-    $("chat-statusword").textContent = t("st-connecting");
+    this.setStatusWord(t("st-connecting"));
     $("chat-dot").className = "mini-dot off";
     $("composer-input").placeholder = t("composer-ph", { name: this.charName });
     $("chat-root").removeAttribute("data-life");
@@ -720,9 +720,9 @@ class ChatController {
     if (!node) return;
     if (!active) {
       this.work = { active: false, phase: "idle", thinkTokens: 0, toolName: "" };
-      node.hidden = true;
-      node.textContent = "";
-      node.className = "work-status";
+      // The turn is over — hand the single transient-status slot back to the
+      // life-state word (resting/idle/waiting/…), which lives in the same node.
+      this.setStatusWord(this._lastLifeWord || "");
       return;
     }
     this.work = {
@@ -771,7 +771,25 @@ class ChatController {
     if (force || nearBottom) sc.scrollTop = sc.scrollHeight;
   }
 
-  setStatusWord(word) { $("chat-statusword").textContent = word || ""; }
+  /* The header stays STABLE (name + static dot only). All transient status —
+     life-state AND work/thinking phase — renders in the single #work-status
+     slot above the composer. During an active turn the work phase owns that
+     slot; setStatusWord only paints the life word when no turn is running. */
+  setStatusWord(word) {
+    this._lastLifeWord = word || "";
+    if (this.work && this.work.active) return;
+    const node = $("work-status");
+    if (!node) return;
+    if (word) {
+      node.hidden = false;
+      node.className = "work-status life";
+      node.textContent = word;
+    } else {
+      node.hidden = true;
+      node.className = "work-status";
+      node.textContent = "";
+    }
+  }
 
   /* ---- driving turns ---- */
   async runStream(fn) {
