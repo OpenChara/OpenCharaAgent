@@ -85,7 +85,3 @@ class Sandbox:
         path = self.resolve_inside(filename, base=self.workspace_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
-
-    # Back-compat aliases (the workspace IS the file space now).
-    list_workspace = list_files
-    read_workspace_file = read_file

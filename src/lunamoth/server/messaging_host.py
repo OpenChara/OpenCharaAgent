@@ -137,10 +137,6 @@ class MessagingHost:
             self._state, self._detail = "stopped", ""
             return self.status()
 
-    def reload(self) -> dict[str, Any]:
-        self.stop()
-        return self.start()
-
     def status(self) -> dict[str, Any]:
         with self._lock:
             return {"state": self._state, "platform": self._platform, "detail": self._detail}

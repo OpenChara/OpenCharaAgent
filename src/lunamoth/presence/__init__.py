@@ -32,12 +32,10 @@ attached the character may ask for network / writable paths / more resources
 and wait for an answer (timeout = deny); while the operator is away every
 request is auto-denied and merely logged.
 """
-from .prompts import DEFAULT_MODE, MODES, attach_text, detach_text, normalize_mode
+from .prompts import attach_text, detach_text, normalize_mode
 from .state import PresenceState
 
 __all__ = [
-    "DEFAULT_MODE",
-    "MODES",
     "PresenceState",
     "attach_text",
     "detach_text",

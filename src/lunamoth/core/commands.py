@@ -99,7 +99,6 @@ def _compact(agent, session, arg: str) -> Reply:
 
 def _reset(agent, session, arg: str) -> Reply:
     session.context.messages.clear()
-    session.thoughts.clear()
     session.ticks = 0
     session.wi_sticky.clear()
     agent._freeze_memory()

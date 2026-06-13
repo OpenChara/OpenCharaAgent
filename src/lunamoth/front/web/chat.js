@@ -31,7 +31,7 @@ function recolorSvg(svg, newColor) {
   }
   const dom = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
   if (!dom) return svg;
-  return svg.replaceAll(new RegExp(dom[0].replace("#", "#"), "gi"), newColor);
+  return svg.replaceAll(new RegExp(dom[0], "gi"), newColor);
 }
 
 async function openAvatarEditor(deckCard) {
@@ -209,8 +209,6 @@ class ChatController {
     this.client = new CharaClient(name);
     this.charName = name;
     this.deckCard = cardForSession(name);
-    this.mode = "live";
-    this.showThinking = false;
     this.disposed = false;
     this.cur = { kind: null, node: null, textNode: null };
     this.toolChips = null;
@@ -332,8 +330,6 @@ class ChatController {
       const info = await this.client.attach();
       if (this.disposed) return;
       this.charName = info.char_name || this.charName;
-      this.mode = info.mode || "live";
-      this.showThinking = !!info.show_thinking;
       $("chat-name").textContent = this.charName;
       $("chat-dot").className = "mini-dot";
       this.refreshIdentity();
@@ -962,8 +958,6 @@ class ChatController {
     try { snap = await this.client.snapshot(); } catch (e) { return; }
     if (this.disposed) return;
     this.snap = snap;
-    this.mode = snap.mode || this.mode;
-    this.showThinking = !!snap.show_thinking;
     $("net-btn").style.display = snap.net_on ? "none" : "flex";
     $("net-btn").title = t("net-off-tip");
     if (!this.life && snap.rest_until && snap.rest_until * 1000 > Date.now()) {
@@ -1277,7 +1271,7 @@ class ChatController {
 
     const ctrl = this;
     const platKeys = Object.keys(GW_PLATFORMS);
-    let plat = platKeys.find((k) => (cfg.adapters || {})[k]) || "wecom";
+    let plat = platKeys.find((k) => (cfg.adapters || {})[k]) || platKeys[0];
     let enabled = !!cfg.enabled;
     const inputs = {};       // field -> input element (per render)
     const initial = {};      // field -> 渲染时的初值（含掩码），用于字段级合并

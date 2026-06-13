@@ -24,8 +24,4 @@ class LLMConfig:
 
 @dataclass(frozen=True)
 class ThoughtConfig:
-    enabled_default: bool = os.getenv("ETERNAL_THINKING", "true").strip().lower() in {"1", "true", "yes", "on"}
-    interval_seconds: float = float(os.getenv("THOUGHT_INTERVAL_SECONDS", "8"))
-    max_visible_messages: int = int(os.getenv("MAX_VISIBLE_MESSAGES", "80"))
-    max_session_thoughts: int = int(os.getenv("MAX_SESSION_THOUGHTS", "32"))
     use_llm: bool = os.getenv("THOUGHT_USE_LLM", "true").strip().lower() in {"1", "true", "yes", "on"}

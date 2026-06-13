@@ -104,8 +104,6 @@ class PermanentIdleBackoff:
 
 def permanent_model_error(message: str) -> bool:
     msg = str(message or "")
-    if msg.startswith(("HTTP 401", "HTTP 403", "HTTP 404")):
-        return True
     return any(s in msg for s in ("HTTP 401", "HTTP 403", "HTTP 404"))
 
 

@@ -8,7 +8,6 @@ import subprocess
 import sys
 from typing import Any
 
-from ..session import sessions as S
 from . import supervisor as SUP
 
 
@@ -98,10 +97,3 @@ def daemonize_desktop(host: str, http_port: int, ws_port: int, token: str, *, de
     return {"pid": proc.pid, "http_port": http_port, "ws_port": ws_port, "token": token, "path": str(path)}
 
 
-def daemon_status() -> dict[str, Any]:
-    data = SUP.read_daemon_json()
-    data["alive"] = SUP.daemon_alive(data)
-    data["path"] = str(SUP.daemon_json_path())
-    data["log"] = str(SUP.daemon_log_path())
-    data["home"] = str(S.lunamoth_home())
-    return data

@@ -96,7 +96,6 @@ class Session:
         max_tokens=int(os.getenv("LUNAMOTH_CONTEXT_TOKENS", os.getenv("LUNAMOSS_CONTEXT_TOKENS", "65536"))),
         trim_buffer_tokens=int(os.getenv("LUNAMOTH_CONTEXT_BUFFER_TOKENS", os.getenv("LUNAMOSS_CONTEXT_BUFFER_TOKENS", "4096"))),
     ))
-    thoughts: list[str] = field(default_factory=list)
     ticks: int = 0
     wi_sticky: dict[str, int] = field(default_factory=dict)
 
@@ -759,8 +758,6 @@ class LunaMothAgent:
             committed = True
             thought = "".join(speech).strip()
             if thought:
-                session.thoughts.append(thought)
-                session.thoughts[:] = session.thoughts[-self.thought_cfg.max_session_thoughts:]
                 if not agent_loop:
                     mark = self.llm.INTERRUPT_MARK if interrupted else ""
                     session.context.add("assistant", f"{thought}{mark}", kind="think")

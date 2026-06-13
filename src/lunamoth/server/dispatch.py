@@ -107,7 +107,6 @@ class JsonRpcDispatcher:
         self._stream_interrupt = threading.Event()
         self._pending_permissions: dict[str, _PendingPermission] = {}
         self._attached = False
-        self._attach_info = None
         self._closed = False
         self.should_close = False
         self._messaging_host: Any = None
@@ -190,7 +189,6 @@ class JsonRpcDispatcher:
         info = self.handle.attach(present=present)
         with self._lock:
             self._attached = True
-            self._attach_info = info
         return info
 
     def _send(self, rid: Any, params: dict[str, Any], wants_response: bool) -> None:
@@ -257,10 +255,9 @@ class JsonRpcDispatcher:
             if attached:
                 self.handle.set_present(True)
             else:
-                info = self.handle.attach(present=True)
+                self.handle.attach(present=True)
                 with self._lock:
                     self._attached = True
-                    self._attach_info = info
             return {"ok": True, "present": True}
         if attached:
             # Keep the transport alive, but run the same presence handoff as a
@@ -289,7 +286,6 @@ class JsonRpcDispatcher:
         with self._lock:
             was_attached = self._attached
             self._attached = False
-            self._attach_info = None
             self.should_close = True
             self._stream_interrupt.set()
             self._cancel_pending_permissions_locked()
@@ -308,10 +304,9 @@ class JsonRpcDispatcher:
         with self._lock:
             if self._attached:
                 return
-        info = self.handle.attach(present=False)
+        self.handle.attach(present=False)
         with self._lock:
             self._attached = True
-            self._attach_info = info
 
     def emit_peer_message(self, text: str, source: str = "", sender: str = "") -> None:
         """Tell an attached client a message arrived from another channel (e.g.
@@ -470,6 +465,7 @@ class JsonRpcDispatcher:
             with self._lock:
                 if threading.current_thread() is self._stream_thread:
                     self._stream_thread = None
+                    self._stream_kind = ""
                 self._stream_interrupt.clear()
 
     def _is_streaming_locked(self) -> bool:

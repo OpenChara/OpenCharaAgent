@@ -92,12 +92,6 @@ def entry_to_book_dict(d: dict[str, Any], entry_id: int = 0) -> dict[str, Any]:
     }
 
 
-def _estimate_tokens(text: str) -> int:
-    cjk = sum(1 for ch in text if "一" <= ch <= "鿿")
-    other = max(0, len(text) - cjk)
-    return cjk + other // 4
-
-
 @dataclass
 class Lorebook:
     name: str = ""
@@ -178,41 +172,3 @@ class Lorebook:
         active.sort(key=lambda e: e.order)
         return active
 
-    def keyword_blocks(
-        self,
-        scan_text: str,
-        char: str,
-        user: str,
-        *,
-        sticky: dict[str, int] | None = None,
-        namespace: str = "",
-        sticky_turns: int = 4,
-        budget_tokens: int | None = None,
-    ) -> list[str]:
-        active = self.keyword_entries(
-            scan_text, sticky=sticky, namespace=namespace, sticky_turns=sticky_turns
-        )
-        blocks = [apply_macros(e.content, char, user).strip() for e in active]
-        if budget_tokens is not None and budget_tokens > 0:
-            capped: list[str] = []
-            used = 0
-            for block in blocks:
-                cost = _estimate_tokens(block) + 2
-                if capped and used + cost > budget_tokens:
-                    break
-                if not capped and cost > budget_tokens:
-                    break
-                capped.append(block)
-                used += cost
-            blocks = capped
-        return blocks
-
-    def activate(self, scan_text: str, char: str, user: str) -> list[str]:
-        """Backward-compatible full activation view."""
-        return self.constant_blocks(char, user) + self.keyword_blocks(scan_text, char, user)
-
-    def render(self, scan_text: str, char: str, user: str) -> str:
-        blocks = self.activate(scan_text, char, user)
-        if not blocks:
-            return ""
-        return "[World Info / 世界书]\n" + "\n\n".join(blocks)
