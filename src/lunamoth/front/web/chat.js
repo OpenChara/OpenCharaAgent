@@ -7,6 +7,20 @@
 /* ============================ AVATAR EDITOR ============================
    点头像即编辑：三条路径 — AI 重新生成（card.avatar_draft）、改主题色（纯前端）、
    直接改 SVG。保存写回卡册原卡 extensions.lunamoth。 */
+/* Encode text into a QR image data-URL locally (vendored qrcode-generator).
+   Returns "" if the encoder is unavailable or the text won't fit. */
+function qrDataUrl(text) {
+  try {
+    if (typeof qrcode !== "function") return "";
+    const q = qrcode(0, "M");   // type 0 = auto-size, error-correction M
+    q.addData(String(text));
+    q.make();
+    return q.createDataURL(6, 8);  // cellSize, margin → data:image/gif;base64,…
+  } catch (e) {
+    return "";
+  }
+}
+
 function recolorSvg(svg, newColor) {
   const counts = {};
   const re = /(?:fill|stroke)\s*=\s*["'](#[0-9a-fA-F]{3,8})["']/g;
@@ -1317,11 +1331,17 @@ class ChatController {
         }
         if (!box.isConnected || ctrl.disposed || ctrl.panelTab !== "gateway") return;
         box.innerHTML = "";
-        // img = iLink 返回的 qrcode_img_content（base64 PNG）；没有图就只给备用链接。
-        if (qr.img) box.appendChild(el("img", { class: "gw-qr-img", src: "data:image/png;base64," + qr.img, alt: "QR" }));
-        if (qr.fallback_url) box.appendChild(el("a", {
-          class: "gw-qr-link", href: qr.fallback_url, target: "_blank", rel: "noreferrer",
-        }, t("gw-qr-fallback")));
+        // Encode the SCANNABLE login payload (scan_content = qrcode_img_content)
+        // into a QR locally — never ship the login payload to a third party.
+        // `qrcode` is only the polling token, NOT what the phone scans.
+        const scan = qr.scan_content || qr.img || "";
+        const dataUrl = scan ? qrDataUrl(scan) : "";
+        if (dataUrl) {
+          box.appendChild(el("img", { class: "gw-qr-img", src: dataUrl, alt: "QR" }));
+        } else if (qr.fallback_url) {
+          // Last resort only (no local encoder): the external QR image service.
+          box.appendChild(el("img", { class: "gw-qr-img", src: qr.fallback_url, alt: "QR" }));
+        }
         const stLine = el("div", { class: "gw-blurb", style: "margin:4px 0 0" }, t("gw-qr-waiting"));
         box.appendChild(stLine);
         let polls = 0;
