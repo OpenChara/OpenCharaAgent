@@ -187,9 +187,11 @@ zero internal deps; `obs/` imports only `config`.
     skill_view/skill_manage), `todo.py`, `session_search.py`, `clarify.py`,
     `execute_code.py`, `delegate_task.py`, `browser.py` (12 browser_*, check_fn-
     gated on the agent-browser driver). LunaMoth's OWN chara-life tools:
-    `chara_life.py` (speak, rest, wish = the renamed goal — distinct from todo,
-    request_permission) and `env_tools.py` (inspect_env, write_log). Helpers are
-    `_underscore.py` modules (not discovered).
+    `chara_life.py` — speak, rest, wish (the renamed goal — distinct from todo).
+    (The old inspect_env/write_log/request_permission tools were retired
+    2026-06-15: env facts already ride the volatile tail, the chara has memory
+    for notes, and network is on by default so the permission-ask was moot.)
+    Helpers are `_underscore.py` modules (not discovered).
   - Supporting infra: `runner.py` (terminal under dir/sandbox/docker — shared by
     terminal/process/search/execute_code via ctx.run_terminal), `sandbox.py` (ONE
     working dir `workspace/`), `mcp.py` (stdio JSON-RPC; `schema_sanitizer.py`),
@@ -337,8 +339,8 @@ into the session's card, key stripped.)
 - **Two output registers**: muse (its own life; panoramic frontends only) vs
   say (delivered everywhere — the `speak` tool is how it decides to reach you).
 - **Isolation** per chara: `dir` / `sandbox` (default; sandbox-exec/bwrap) /
-  `docker`; network runtime-toggleable (`/net on`), `request_permission` while
-  you're present.
+  `docker`; network is ON by default (`/net off` to disable; the operator can
+  re-enable with `/net on`).
 - Three memory-ish things, distinct: context window (sliding) · transcript
   (SQLite, restore) · durable memory (frozen-snapshot two-store + `memory` tool).
 

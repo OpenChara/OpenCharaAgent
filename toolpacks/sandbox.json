@@ -31,13 +31,10 @@
     "browser_console",
     "browser_cdp",
     "browser_dialog",
-    "inspect_env",
-    "write_log",
     "speak",
     "rest",
     "add_wish",
-    "set_wish_status",
-    "request_permission"
+    "set_wish_status"
   ],
   "note": "Network is ON by default; the operator can turn it off at runtime (/net off). Web and browser tools use the network; the browser tools also need the agent-browser driver installed and dir/docker isolation — they stay hidden until then.",
   "mcp_servers": [

@@ -9,14 +9,9 @@ list; a wish is what the character LIVES FOR — its own aspiration, never force
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 from ..registry import registry, tool_error, tool_result
 
-_MIN_PERMISSION_WAIT = 5
-_MAX_PERMISSION_WAIT = 300
-_MAX_MEMORY_CHARS = 64_000
-PERMISSION_KINDS = ("network", "writable_path", "memory", "other")
 _MIN_REST_MINUTES = 1
 _MAX_REST_MINUTES = 120
 
@@ -143,72 +138,4 @@ registry.register(
         },
     },
     set_wish_status, emoji="✨",
-)
-
-
-# ---- request_permission ----------------------------------------------------------
-
-def request_permission(args, ctx) -> str:
-    """Ask the operator for a capability/resources. Presence-gated: granted only
-    while the operator is attached and answers; otherwise denied + logged."""
-    kind = str(args.get("kind") or "").strip().lower()
-    reason = str(args.get("reason") or "")
-    detail = str(args.get("detail") or "")
-    wait_seconds = args.get("wait_seconds") or 60
-    if kind not in PERMISSION_KINDS:
-        return tool_error(f"kind must be one of {PERMISSION_KINDS}")
-    if not ctx.state.load().get("user_present", False):
-        return tool_result(granted=False, note=(
-            "denied: the operator is away. Requests are only considered while the operator "
-            "is attached; this one was logged for them to see later."))
-    if ctx.permission_hook is None:
-        return tool_result(granted=False, note="denied: no operator console is available to approve requests.")
-    wait = max(_MIN_PERMISSION_WAIT, min(_MAX_PERMISSION_WAIT, int(wait_seconds)))
-    granted = bool(ctx.permission_hook(kind, reason, detail, wait))
-    if not granted:
-        return tool_result(granted=False, note="denied: the operator declined (or did not answer in time).")
-    if kind == "network":
-        ctx.state.set_network(True)
-        return tool_result(granted=True, note="network access is now ON.")
-    if kind == "writable_path":
-        p = str(Path(detail).expanduser().resolve()) if detail.strip() else ""
-        if not p:
-            return tool_result(granted=True, note="granted in principle, but no path was given — request again with the path in `detail`.")
-        ctx.state.add_writable_path(p)
-        if (ctx.state.load().get("isolation") or "").lower() == "docker":
-            return tool_result(granted=True, note=(
-                f"recorded: {p} is on your writable list, but docker isolation does not bind-mount "
-                "it — the terminal cannot write there until the container is restarted with that mount."))
-        return tool_result(granted=True, note=f"{p} is now writable.")
-    if kind == "memory":
-        if ctx.memory is None:
-            return tool_result(granted=True, note="granted, but no memory store is attached.")
-        from ..memory import MemoryLimits
-        limits = ctx.memory.limits
-        new_chars = min(_MAX_MEMORY_CHARS, limits.memory_chars * 2)
-        ctx.memory.set_limits(MemoryLimits(memory_chars=new_chars, user_chars=limits.user_chars))
-        return tool_result(granted=True, note=f"memory budget raised to {new_chars} chars.")
-    return tool_result(granted=True, note="The operator will act on it.")
-
-
-registry.register(
-    "request_permission", "chara-life",
-    {
-        "description": (
-            "Ask your operator for a capability or more resources (network access, a "
-            "writable path, a bigger memory budget). Only considered while they are "
-            "present; if they are away it is denied and logged for them to see."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "kind": {"type": "string", "enum": list(PERMISSION_KINDS)},
-                "reason": {"type": "string", "description": "Why you need it (the operator sees this)."},
-                "detail": {"type": "string", "description": "e.g. the path for writable_path."},
-                "wait_seconds": {"type": "integer", "description": "How long to wait for an answer (5–300)."},
-            },
-            "required": ["kind", "reason"],
-        },
-    },
-    request_permission, emoji="⚿",
 )

@@ -36,7 +36,9 @@ def _persist(agent, **changes) -> None:
 
 
 def _status(agent, session, arg: str) -> Reply:
-    data = agent.tools.call("inspect_env")
+    # Read the env facts straight from state (the inspect_env tool was retired —
+    # the chara already sees these in its volatile prompt tail every turn).
+    data = {"ok": True, "data": dict(agent.state.load())}
     data["context_tokens_est"] = session.context.token_count()
     return Reply(True, agent.tools.as_json(data), data, verbose=True)
 

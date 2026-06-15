@@ -53,4 +53,4 @@ def test_env_state_is_neutral(agent):
     state = a.state.load()
     for legacy in ("trust", "hostility", "containment_level", "memory_integrity"):
         assert legacy not in state
-    assert "terminal" in state["tool_access"] and "inspect_env" in state["tool_access"]
+    assert "terminal" in state["tool_access"] and "read_file" in state["tool_access"]

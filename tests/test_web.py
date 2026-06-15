@@ -86,13 +86,21 @@ def _clear_backend_env(monkeypatch):
         monkeypatch.delenv(k, raising=False)
 
 
-def test_no_backend_configured_is_clear_error(monkeypatch):
+def test_no_backend_configured_falls_back_to_duckduckgo(monkeypatch):
+    # No key configured → keyless DuckDuckGo is the default; the tool is always
+    # available (check_fn True) and search works without any provider env.
     _clear_backend_env(monkeypatch)
-    assert web.check_web_api_key() is False
+    assert web.check_web_api_key() is True
+    assert web._resolve_search_backend() == "duckduckgo"
+    ddg_html = (
+        '<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa">'
+        'Example A</a><a class="result__snippet">the first result</a>'
+    )
+    monkeypatch.setattr(web, "_http_get", lambda *a, **k: (200, ddg_html.encode(), "text/html"))
     out = parse(web.web_search({"query": "hi"}, make_ctx()))
-    assert "error" in out
-    assert "No web search provider configured" in out["error"]
-    assert "SEARXNG" in out["error"] and "SERPER" in out["error"] and "BRAVE" in out["error"]
+    assert out["success"] is True
+    hit = out["data"]["web"][0]
+    assert hit["url"] == "https://example.com/a" and hit["title"] == "Example A"
 
 
 def test_check_fn_true_when_searxng_set(monkeypatch):

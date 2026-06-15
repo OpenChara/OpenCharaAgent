@@ -42,7 +42,6 @@ DELEGATE_BLOCKED_TOOLS = frozenset([
     "execute_code",
     "speak",
     "rest",
-    "request_permission",
 ])
 
 DEFAULT_MAX_ITERATIONS = 50       # hermes :546

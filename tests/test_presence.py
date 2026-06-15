@@ -55,51 +55,6 @@ def test_presence_state_roundtrip(tmp_path):
     assert p.pop_event() == ""  # consumed
 
 
-def test_request_denied_when_operator_away(agent):
-    a = agent(toolpack="sandbox")
-    a.state.set_network(False)  # SANDBOX_ROOT is import-time global; reset shared state
-    a.state.set_present(False)
-    out = a.tools.call("request_permission", kind="network", reason="need pip")
-    assert out["ok"] and "denied" in out["data"]
-    assert a.state.load()["network_access"] is False
-
-
-def test_request_granted_via_hook_when_present(agent):
-    a = agent(toolpack="sandbox")
-    a.state.set_present(True)
-    asked = {}
-
-    def approve(kind, reason, detail, wait_seconds):
-        asked.update(kind=kind, reason=reason, wait=wait_seconds)
-        return True
-
-    a.tools.permission_hook = approve
-    out = a.tools.call("request_permission", kind="network", reason="need pip", wait_seconds=30)
-    assert out["ok"] and "granted" in out["data"]
-    assert asked == {"kind": "network", "reason": "need pip", "wait": 30}
-    assert a.state.load()["network_access"] is True
-
-
-def test_request_denied_without_hook_even_when_present(agent):
-    a = agent(toolpack="sandbox")
-    a.state.set_network(False)  # SANDBOX_ROOT is import-time global; reset shared state
-    a.state.set_present(True)
-    a.tools.permission_hook = None
-    out = a.tools.call("request_permission", kind="network", reason="x")
-    assert out["ok"] and "denied" in out["data"]
-    assert a.state.load()["network_access"] is False
-
-
-def test_memory_grant_raises_budget(agent):
-    a = agent(toolpack="sandbox")
-    a.state.set_present(True)
-    a.tools.permission_hook = lambda *args: True
-    before = a.memory.limits.memory_chars
-    out = a.tools.call("request_permission", kind="memory", reason="more room")
-    assert out["ok"] and "granted" in out["data"]
-    assert a.memory.limits.memory_chars > before
-
-
 def test_mode_normalization():
     from lunamoth.presence import normalize_mode
 

@@ -50,16 +50,16 @@ def gw(tmp_path):
     # restore them on teardown (these tool names are registered globally — never
     # leave a fake behind for a sibling test).
     discover_builtin_tools()
-    saved = {n: registry.get_entry(n) for n in ("terminal", "write_log", "inspect_env")}
+    saved = {n: registry.get_entry(n) for n in ("terminal", "read_file", "search_files")}
     _register("terminal", FakeTool())
-    _register("write_log", FakeTool())
-    _register("inspect_env", FakeTool())
+    _register("read_file", FakeTool())
+    _register("search_files", FakeTool())
     g = ToolGateway(
         Sandbox(tmp_path / "sandbox"),
         EnvState(tmp_path / "env_status.json"),
         AuditLog(tmp_path / "audit.jsonl"),
     )
-    g.set_enabled(["terminal", "write_log", "inspect_env"])
+    g.set_enabled(["terminal", "read_file", "search_files"])
     yield g
     for n, entry in saved.items():
         if entry is not None:
@@ -147,7 +147,7 @@ def test_streaks_are_per_tool(gw):
     _set_terminal(gw, FakeTool(ValueError("boom")))
     for i in range(8):
         gw.call("terminal", command=f"cmd-{i}")
-    assert gw.call("write_log", text="still works")["ok"] is True  # other tools unaffected
+    assert gw.call("read_file", text="still works")["ok"] is True  # other tools unaffected
 
 
 def test_reset_guardrails_clears_both_gates(gw):

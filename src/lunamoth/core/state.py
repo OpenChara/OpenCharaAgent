@@ -29,9 +29,8 @@ FULL_TOOL_ACCESS = [
     "browser_navigate", "browser_snapshot", "browser_click", "browser_type",
     "browser_scroll", "browser_back", "browser_press", "browser_get_images",
     "browser_vision", "browser_console", "browser_cdp", "browser_dialog",
-    # env + chara-life (LunaMoth's own)
-    "inspect_env", "write_log", "speak", "rest",
-    "add_wish", "set_wish_status", "request_permission",
+    # chara-life (LunaMoth's own)
+    "speak", "rest", "add_wish", "set_wish_status",
 ]
 
 DEFAULT_STATUS["tool_access"] = list(FULL_TOOL_ACCESS)

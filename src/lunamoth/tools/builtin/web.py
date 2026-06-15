@@ -65,17 +65,19 @@ def _brave_key() -> str:
 
 
 def _resolve_search_backend() -> str:
-    """Return the active search backend name, or "" when none is configured.
+    """Return the active search backend name. DuckDuckGo (keyless) is the default
+    fallback so web_search ALWAYS works with no configuration; a configured
+    SearXNG/Serper/Brave backend takes precedence when present.
 
     Honors an explicit ``LUNAMOTH_WEB_SEARCH_BACKEND`` override; otherwise
     auto-detects in a stable order (searxng → serper → brave)."""
     forced = _env("LUNAMOTH_WEB_SEARCH_BACKEND").lower()
     if forced:
-        return forced if _backend_configured(forced) else ""
+        return forced if _backend_configured(forced) else "duckduckgo"
     for backend in ("searxng", "serper", "brave"):
         if _backend_configured(backend):
             return backend
-    return ""
+    return "duckduckgo"  # keyless default — always available
 
 
 def _backend_configured(backend: str) -> bool:
@@ -85,12 +87,16 @@ def _backend_configured(backend: str) -> bool:
         return bool(_serper_key())
     if backend == "brave":
         return bool(_brave_key())
+    if backend == "duckduckgo":
+        return True
     return False
 
 
 def check_web_api_key() -> bool:
-    """check_fn: a web search backend is configured (any of the supported)."""
-    return bool(_resolve_search_backend())
+    """check_fn: web tools are always available (DuckDuckGo needs no key; a
+    configured SearXNG/Serper/Brave backend just upgrades search quality).
+    Network-off is handled at call time, not by hiding the tool."""
+    return True
 
 
 def _missing_config_error() -> str:
@@ -122,8 +128,8 @@ def web_search(args, ctx) -> str:
     """Search the web. Returns metadata only (title/url/description/position)."""
     if not ctx.network_on():
         return tool_error(
-            "Network is off. Ask the operator to enable it (/net on) or use "
-            "request_permission before searching the web.",
+            "Network is off. Ask the operator to enable it (/net on) before "
+            "searching the web.",
             success=False,
         )
 
@@ -139,8 +145,6 @@ def web_search(args, ctx) -> str:
     limit = max(1, min(100, limit))
 
     backend = _resolve_search_backend()
-    if not backend:
-        return _missing_config_error()
 
     try:
         if backend == "searxng":
@@ -149,8 +153,8 @@ def web_search(args, ctx) -> str:
             results = _search_serper(query, limit)
         elif backend == "brave":
             results = _search_brave(query, limit)
-        else:  # configured override naming an unknown backend
-            return _missing_config_error()
+        else:  # keyless default (and the fallback for an unknown override)
+            results = _search_duckduckgo(query, limit)
     except urllib.error.HTTPError as e:
         return tool_error(f"Error searching web: HTTP {e.code} from {backend} backend")
     except Exception as e:  # noqa: BLE001
@@ -158,6 +162,50 @@ def web_search(args, ctx) -> str:
         return tool_error(f"Error searching web: {type(e).__name__}: {e}")
 
     return tool_result({"success": True, "data": {"web": results[:limit]}})
+
+
+def _search_duckduckgo(query: str, limit: int) -> list[dict]:
+    """Keyless web search via DuckDuckGo's HTML endpoint. Best-effort HTML parse
+    (no bs4 dep) — the default when no SearXNG/Serper/Brave backend is set."""
+    qs = urllib.parse.urlencode({"q": query})
+    status, body, _ = _http_get(f"https://html.duckduckgo.com/html/?{qs}")
+    html = body.decode("utf-8", errors="replace")
+    out: list[dict] = []
+    # Each result: <a ... class="result__a" href="LINK">TITLE</a> ... optionally
+    # a <a class="result__snippet">SNIPPET</a>. DDG wraps LINK in a /l/?uddg= redirect.
+    link_re = re.compile(r'<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', re.S)
+    snip_re = re.compile(r'<a[^>]*class="result__snippet"[^>]*>(.*?)</a>', re.S)
+    snippets = snip_re.findall(html)
+    for i, (href, title) in enumerate(link_re.findall(html)):
+        if i >= limit:
+            break
+        out.append({
+            "title": _strip_html(title),
+            "url": _ddg_unwrap(href),
+            "description": _strip_html(snippets[i]) if i < len(snippets) else "",
+            "position": i + 1,
+        })
+    return out
+
+
+def _ddg_unwrap(href: str) -> str:
+    """DuckDuckGo HTML links are //duckduckgo.com/l/?uddg=<encoded-target>&… —
+    pull the real target out; pass through anything already absolute."""
+    if "uddg=" in href:
+        try:
+            q = urllib.parse.urlparse(href if "//" in href else "https:" + href).query
+            uddg = urllib.parse.parse_qs(q).get("uddg", [""])[0]
+            if uddg:
+                return urllib.parse.unquote(uddg)
+        except Exception:  # noqa: BLE001
+            pass
+    if href.startswith("//"):
+        return "https:" + href
+    return href
+
+
+def _strip_html(s: str) -> str:
+    return re.sub(r"<[^>]+>", "", s).replace("&amp;", "&").replace("&#x27;", "'").replace("&quot;", '"').strip()
 
 
 def _search_searxng(query: str, limit: int) -> list[dict]:
@@ -223,8 +271,8 @@ def web_extract(args, ctx) -> str:
     when large; raw-truncation backstop when no LLM is configured."""
     if not ctx.network_on():
         return tool_error(
-            "Network is off. Ask the operator to enable it (/net on) or use "
-            "request_permission before extracting web content.",
+            "Network is off. Ask the operator to enable it (/net on) before "
+            "extracting web content.",
             success=False,
         )
 
