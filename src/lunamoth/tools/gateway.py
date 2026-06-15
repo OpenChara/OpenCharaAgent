@@ -184,6 +184,11 @@ class ToolGateway:
     def _safe_args(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         return {k: (v[:300] if isinstance(v, str) else v) for k, v in kwargs.items()}
 
+    def result_cap(self, name: str) -> int | float:
+        """The agent-layer backstop cap for a tool's content (the registry
+        default, or a per-tool override). Tools self-cap below this."""
+        return registry.get_max_result_size(name)
+
     def as_json(self, value: Any) -> str:
         if isinstance(value, str):
             return value

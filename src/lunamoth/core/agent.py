@@ -144,6 +144,10 @@ class LunaMothAgent:
         # Durable conversation log: every context line lands here as it happens,
         # so the chara keeps its conversation across detach/attach and daemons.
         self.transcript = TranscriptStore(SANDBOX_ROOT / "transcript.db")
+        # The tool registry's handlers reach the llm (web/execute/delegate) and
+        # the transcript (session_search) through the ToolContext — bind them now
+        # that both exist (the gateway was built before them).
+        self.tools.set_runtime(llm=self.llm, transcript=self.transcript)
 
     def reconfigure(self, settings: "Settings") -> None:
         """Hot-swap the LLM backend, persona, tool pack and limits at runtime."""
@@ -160,6 +164,7 @@ class LunaMothAgent:
         self._freeze_skills()
         self._invalidate_stable_prefix()
         self.llm = LLMClient(settings.to_llm_config())
+        self.tools.set_runtime(llm=self.llm, transcript=self.transcript)
         self.audit.write(
             "reconfigure",
             provider=settings.provider,
@@ -624,10 +629,14 @@ class LunaMothAgent:
             head = f"⚙ {name} ✓ ({len(text)} chars)" if name == "terminal" else f"⚙ {name} ✓"
             snippet = _abbrev(text, 200)
             display = f"{head}\n  {snippet}" if snippet else head
-            content = text[:6000] or "(empty)"
-            if len(text) > 6000:
-                # Truncation must be EXPLICIT — silent cuts read as complete output
-                # and send the model down wrong paths (hermes does the same).
+            # The hermes-ported tools already self-cap (read_file paginates,
+            # terminal/search head-tail-truncate at 100K) and signal their own
+            # truncation, so the agent layer's cap is just a final backstop at
+            # the registry's default — NOT a 6 KB guillotine that would defeat
+            # read_file's offset/limit and search's pagination.
+            cap = int(self.tools.result_cap(name))
+            content = text[:cap] or "(empty)"
+            if len(text) > cap:
                 content += f"\n[output truncated — {len(text)} chars total; read the rest in pieces if needed]"
         else:
             err = str(result.get("error", ""))

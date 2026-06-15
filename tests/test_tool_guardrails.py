@@ -3,6 +3,11 @@ identical failing calls warned at 2 and refused at 5; a tool with 8
 consecutive failures (any args) is blocked until something succeeds or
 reset_guardrails() runs. An unattended chara must not be able to spend a
 night (and a key's budget) re-running the same failing call.
+
+The guardrails live in ToolGateway and wrap the (hermes-ported) registry
+dispatch. To drive a failing/succeeding tool we register fake handlers into
+the registry and let the gateway's gate/guard/audit run on top, exactly as a
+real model call would.
 """
 import json
 
@@ -11,54 +16,92 @@ import pytest
 from lunamoth.core.state import EnvState
 from lunamoth.obs.audit import AuditLog
 from lunamoth.tools.gateway import ToolGateway
+from lunamoth.tools.registry import registry, discover_builtin_tools, tool_result
 from lunamoth.tools.sandbox import Sandbox
+
+
+# A tiny no-arg schema shared by the fake tools.
+_SCHEMA = {"description": "fake", "parameters": {"type": "object", "properties": {}}}
+
+
+class FakeTool:
+    """A registry handler we can flip between success and failure, counting the
+    times the BODY actually executes (refusals never reach it)."""
+
+    def __init__(self, exc=None):
+        self.calls = 0
+        self.exc = exc
+
+    def __call__(self, args, ctx):
+        self.calls += 1
+        if self.exc is not None:
+            raise self.exc
+        return tool_result(ok=True)
+
+
+def _register(name, handler):
+    registry.register(name, "fake-test", dict(_SCHEMA), handler, override=True)
 
 
 @pytest.fixture
 def gw(tmp_path):
+    # write_log succeeds; terminal is the tool under test (swapped per-test).
+    # Ensure the real builtins are registered, then snapshot the entries so we
+    # restore them on teardown (these tool names are registered globally — never
+    # leave a fake behind for a sibling test).
+    discover_builtin_tools()
+    saved = {n: registry.get_entry(n) for n in ("terminal", "write_log", "inspect_env")}
+    _register("terminal", FakeTool())
+    _register("write_log", FakeTool())
+    _register("inspect_env", FakeTool())
     g = ToolGateway(
         Sandbox(tmp_path / "sandbox"),
         EnvState(tmp_path / "env_status.json"),
         AuditLog(tmp_path / "audit.jsonl"),
     )
     g.set_enabled(["terminal", "write_log", "inspect_env"])
-    return g
+    yield g
+    for n, entry in saved.items():
+        if entry is not None:
+            registry.register(
+                entry.name, entry.toolset, entry.schema, entry.handler,
+                check_fn=entry.check_fn, requires_env=entry.requires_env,
+                description=entry.description, emoji=entry.emoji,
+                max_result_size_chars=entry.max_result_size_chars,
+                dynamic_schema_overrides=entry.dynamic_schema_overrides,
+                override=True,
+            )
+        else:
+            registry.deregister(n)
 
 
-class Counter:
-    def __init__(self, exc=None):
-        self.calls = 0
-        self.exc = exc
-
-    def __call__(self, **_kw):
-        self.calls += 1
-        if self.exc is not None:
-            raise self.exc
-        return "fine"
+def _set_terminal(g, handler):
+    """Repoint the registered 'terminal' tool at a new handler."""
+    _register("terminal", handler)
+    return handler
 
 
 def _audit_events(g):
     return [json.loads(line)["event"] for line in g.audit.path.read_text(encoding="utf-8").splitlines()]
 
 
-def test_identical_failure_warns_at_2(gw, monkeypatch):
-    monkeypatch.setattr(gw, "tool_terminal", Counter(ValueError("boom")))
+def test_identical_failure_warns_at_2(gw):
+    _set_terminal(gw, FakeTool(ValueError("boom")))
     first = gw.call("terminal", command="x")
     assert first["ok"] is False and "loop guard" not in first["error"]
     second = gw.call("terminal", command="x")
     assert "loop guard" in second["error"] and "failed 2 times" in second["error"]
 
 
-def test_different_args_are_different_signatures(gw, monkeypatch):
-    monkeypatch.setattr(gw, "tool_terminal", Counter(ValueError("boom")))
+def test_different_args_are_different_signatures(gw):
+    _set_terminal(gw, FakeTool(ValueError("boom")))
     gw.call("terminal", command="x")
     other = gw.call("terminal", command="y")
     assert "loop guard" not in other["error"]  # not the same failing call
 
 
-def test_identical_failure_refused_at_5(gw, monkeypatch):
-    fail = Counter(ValueError("boom"))
-    monkeypatch.setattr(gw, "tool_terminal", fail)
+def test_identical_failure_refused_at_5(gw):
+    fail = _set_terminal(gw, FakeTool(ValueError("boom")))
     for _ in range(4):
         gw.call("terminal", command="x")
     assert fail.calls == 4
@@ -68,20 +111,18 @@ def test_identical_failure_refused_at_5(gw, monkeypatch):
     assert "tool_loop_refused" in _audit_events(gw)
 
 
-def test_success_resets_the_exact_counter(gw, monkeypatch):
-    failing = Counter(ValueError("boom"))
-    monkeypatch.setattr(gw, "tool_terminal", failing)
+def test_success_resets_the_exact_counter(gw):
+    _set_terminal(gw, FakeTool(ValueError("boom")))
     gw.call("terminal", command="x")
-    monkeypatch.setattr(gw, "tool_terminal", Counter())  # now it succeeds
+    _set_terminal(gw, FakeTool())  # now it succeeds
     assert gw.call("terminal", command="x")["ok"] is True
-    monkeypatch.setattr(gw, "tool_terminal", Counter(ValueError("boom")))
+    _set_terminal(gw, FakeTool(ValueError("boom")))
     again = gw.call("terminal", command="x")
     assert "loop guard" not in again["error"]  # counter started over after the success
 
 
-def test_tool_streak_blocks_after_8_consecutive_failures(gw, monkeypatch):
-    fail = Counter(ValueError("boom"))
-    monkeypatch.setattr(gw, "tool_terminal", fail)
+def test_tool_streak_blocks_after_8_consecutive_failures(gw):
+    fail = _set_terminal(gw, FakeTool(ValueError("boom")))
     for i in range(8):  # different args each time: the exact-signature gate never trips
         out = gw.call("terminal", command=f"cmd-{i}")
         assert "refusing" not in out["error"] and "blocked" not in out["error"]
@@ -91,29 +132,26 @@ def test_tool_streak_blocks_after_8_consecutive_failures(gw, monkeypatch):
     assert fail.calls == 8  # never executed
 
 
-def test_any_success_resets_the_streak(gw, monkeypatch):
-    fail = Counter(ValueError("boom"))
-    monkeypatch.setattr(gw, "tool_terminal", fail)
+def test_any_success_resets_the_streak(gw):
+    _set_terminal(gw, FakeTool(ValueError("boom")))
     for i in range(7):
         gw.call("terminal", command=f"cmd-{i}")
-    monkeypatch.setattr(gw, "tool_terminal", Counter())  # one success
+    _set_terminal(gw, FakeTool())  # one success
     assert gw.call("terminal", command="ok")["ok"] is True
-    fail2 = Counter(ValueError("boom"))
-    monkeypatch.setattr(gw, "tool_terminal", fail2)
+    fail2 = _set_terminal(gw, FakeTool(ValueError("boom")))
     out = gw.call("terminal", command="post-success")
     assert fail2.calls == 1 and "blocked" not in out["error"]  # streak started over
 
 
-def test_streaks_are_per_tool(gw, monkeypatch):
-    monkeypatch.setattr(gw, "tool_terminal", Counter(ValueError("boom")))
+def test_streaks_are_per_tool(gw):
+    _set_terminal(gw, FakeTool(ValueError("boom")))
     for i in range(8):
         gw.call("terminal", command=f"cmd-{i}")
     assert gw.call("write_log", text="still works")["ok"] is True  # other tools unaffected
 
 
-def test_reset_guardrails_clears_both_gates(gw, monkeypatch):
-    fail = Counter(ValueError("boom"))
-    monkeypatch.setattr(gw, "tool_terminal", fail)
+def test_reset_guardrails_clears_both_gates(gw):
+    fail = _set_terminal(gw, FakeTool(ValueError("boom")))
     for i in range(8):
         gw.call("terminal", command="x" if i < 4 else f"cmd-{i}")
     assert "blocked" in gw.call("terminal", command="y")["error"]
@@ -124,9 +162,8 @@ def test_reset_guardrails_clears_both_gates(gw, monkeypatch):
     assert "loop guard" not in out["error"] and "refusing" not in out["error"]
 
 
-def test_refusals_do_not_compound_state(gw, monkeypatch):
-    fail = Counter(ValueError("boom"))
-    monkeypatch.setattr(gw, "tool_terminal", fail)
+def test_refusals_do_not_compound_state(gw):
+    fail = _set_terminal(gw, FakeTool(ValueError("boom")))
     for _ in range(4):
         gw.call("terminal", command="x")
     for _ in range(10):  # ten refusals must not advance the streak toward 8

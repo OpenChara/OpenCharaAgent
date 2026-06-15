@@ -55,10 +55,10 @@ def agent(tmp_path, monkeypatch):
 
 def test_chara_manages_goals_through_tools(agent):
     a = agent()
-    out = a.tools.call("add_goal", text="learn the operator's favorite key")
+    out = a.tools.call("add_wish", text="learn the operator's favorite key")
     assert out["ok"] and "g" in out["data"]
     gid = a.goals.active()[-1]["id"]
-    out = a.tools.call("set_goal_status", goal_id=gid, status="done")
+    out = a.tools.call("set_wish_status", wish_id=gid, status="done")
     assert out["ok"] and "done" in out["data"]
 
 
