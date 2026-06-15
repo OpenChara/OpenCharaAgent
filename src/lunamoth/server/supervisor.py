@@ -1149,6 +1149,7 @@ class WebHandler(http.server.SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self) -> None:  # noqa: N802 - http.server API
+        self._skip_no_store = False  # never inherit an asset GET's cache flag (keep-alive safety)
         url = urlsplit(self.path)
         qs = parse_qs(url.query)
         token = (qs.get("token") or [""])[0]

@@ -93,6 +93,8 @@ cards/*
 # User-dropped cards live in ~/.lunamoth/cards, so any folder here is bundled.
 !cards/*/
 !cards/*/**
+# …but never OS junk the broad re-include would otherwise sweep back in
+cards/**/.DS_Store
 
 # LunaMoth runtime artifacts (sandbox/logs/ is fully ignored below; created at runtime)
 sandbox/logs/*.jsonl
