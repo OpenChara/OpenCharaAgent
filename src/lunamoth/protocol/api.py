@@ -246,11 +246,12 @@ class CharaHandle:
 
     def _presence_marker(self, kind: str) -> str:
         """The neutral '<user> entered/left the conversation' FACT. Names the
-        operator by {{user}} in the card's language; a card MAY override the
-        wording via extensions.lunamoth.on_attach / on_detach (see
-        presence.marker_text). A passive context line — never a roleplay turn."""
+        operator by {{user}}; the bundled default is English, and a card MAY
+        override the wording (in any language) via extensions.lunamoth.on_attach
+        / on_detach (see presence.marker_text). A passive context line — never a
+        roleplay turn."""
         a = self._agent
-        return presence.marker_text(a.character, kind, a.char_name(), a.settings.user_name, a.lang == "zh")
+        return presence.marker_text(a.character, kind, a.char_name(), a.settings.user_name)
 
     def record_greeting(self, text: str) -> None:
         """Commit a displayed card greeting (first_mes) to the conversation."""

@@ -24,7 +24,7 @@ def _sc(ctx, window, llm):
 
 def _cp(ctx, window, llm):
     ctx.max_tokens, ctx.trim_buffer_tokens = window, 0
-    return compaction.compact(ctx, "en", llm)
+    return compaction.compact(ctx, llm)
 
 
 def _fill(ctx, n, chars=500):
@@ -120,7 +120,7 @@ def test_force_bypasses_the_failure_cooldown(clock):
     llm = FakeLLM(summary="")
     assert _cp(ctx, 4000, llm) is False  # enters cooldown
     ctx.max_tokens, ctx.trim_buffer_tokens = 4000, 0
-    assert compaction.compact(ctx, "en", llm, force=True) is False  # but it TRIED
+    assert compaction.compact(ctx, llm, force=True) is False  # but it TRIED
     assert llm.calls == 2  # the operator's explicit /compact is never silently ignored
 
 

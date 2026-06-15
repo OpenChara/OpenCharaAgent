@@ -43,21 +43,23 @@ def normalize_mode(value: str) -> str:
     return _LEGACY.get(v, DEFAULT_MODE)
 
 
-def _default_marker(kind: str, user: str, zh: bool) -> str:
+def _default_marker(kind: str, user: str) -> str:
     if kind == "entered":
-        return f"［{user}进入了对话。］" if zh else f"[{user} joined the conversation.]"
-    return f"［{user}离开了对话。］" if zh else f"[{user} left the conversation.]"
+        return f"[{user} joined the conversation.]"
+    return f"[{user} left the conversation.]"
 
 
-def marker_text(card, kind: str, char: str, user: str, zh: bool) -> str:
+def marker_text(card, kind: str, char: str, user: str) -> str:
     """The neutral '<user> entered/left the conversation' FACT (a passive context
     line, NOT a turn). A card MAY override the wording via
-    extensions.lunamoth.on_attach (entered) / on_detach (left); macros apply.
-    With no override, the bundled neutral default in the card's language.
-    Generation never produces these — they're an Advanced card-editor field.
+    extensions.lunamoth.on_attach (entered) / on_detach (left); macros apply —
+    a card written in another language carries it through that override. With no
+    override, the bundled neutral default is English, like the whole engine
+    prompt layer. Generation never produces these — they're an Advanced
+    card-editor field.
     """
     if card is not None:
         override = card.defaults().get(_MARKER_KEY[kind])
         if isinstance(override, str) and override.strip():
             return apply_macros(override.strip(), char, user)
-    return _default_marker(kind, user, zh)
+    return _default_marker(kind, user)

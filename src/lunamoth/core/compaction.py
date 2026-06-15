@@ -47,10 +47,7 @@ _TOOL_RESULT_CLIP = 240      # one-line old tool output summaries for the summar
 # trim()).
 _LIVE_PRUNE_MIN_CHARS = 200  # only substantial tool outputs are worth pruning
 _LIVE_PRUNE_PROTECT_MSGS = 6  # always keep the last N messages verbatim (floor)
-_DUP_TOOL_RESULT = {
-    "en": "[duplicate tool output — identical to a more recent call]",
-    "zh": "[重复的工具输出——与更近一次调用的结果相同]",
-}
+_DUP_TOOL_RESULT = "[duplicate tool output — identical to a more recent call]"
 
 # Anti-thrashing guard (audit #10, hermes context_compressor scar #40803):
 # should_compact() re-fires every turn once over threshold, so a failing or
@@ -110,38 +107,24 @@ def _guard(ctx: ContextBuffer) -> _Guard:
         ctx._compaction_guard = g  # type: ignore[attr-defined]
     return g
 
-_HEADER = {
-    "en": "[Earlier conversation — a summary of everything before the recent messages]\n",
-    "zh": "[此前对话的摘要——最近若干条之前的所有内容]\n",
-}
+_HEADER = "[Earlier conversation — a summary of everything before the recent messages]\n"
 
-_INSTRUCTION = {
-    "en": (
-        "You are a precise note-taker compressing an agent's conversation+work log so it can "
-        "continue without losing the thread. Write a TERSE, factual third-person summary — NOT in "
-        "any character's voice. Capture, with concrete detail:\n"
-        "- the operator's standing requests / goals still in play\n"
-        "- what was actually DONE, and specifically what files/works were CREATED in the workspace "
-        "(give real paths); never credit work that wasn't actually produced\n"
-        "- key facts, decisions, and constraints established\n"
-        "- open threads / what is unfinished\n"
-        "Preserve any earlier-summary content that is still relevant. Omit chit-chat. Be compact."
-    ),
-    "zh": (
-        "你是一个精确的记录员，要把一个 agent 的对话与工作日志压缩成摘要，好让它不丢线索地继续。"
-        "写一份**简洁、事实性的第三人称**摘要——不要用任何角色的口吻。要具体地记下：\n"
-        "- 操作者仍在进行中的请求 / 目标\n"
-        "- 实际**做成了什么**，尤其是在 workspace 里**真正创建了哪些文件/作品**（给出真实路径）；"
-        "绝不要把没真正做出来的东西算作已完成\n"
-        "- 已确立的关键事实、决定、约束\n"
-        "- 未了结的线索 / 还没完成的部分\n"
-        "保留更早摘要中仍然相关的内容。略去闲聊。要紧凑。"
-    ),
-}
-
-
-def _lang(lang: str) -> str:
-    return "zh" if str(lang).startswith("zh") else "en"
+# English instruction (the engine prompt layer is English). The summary is the
+# ONE piece of model-generated text that gets persisted back into the context,
+# so it must follow the conversation's language even though this instruction is
+# English — hence the explicit language guard on the last line.
+_INSTRUCTION = (
+    "You are a precise note-taker compressing an agent's conversation+work log so it can "
+    "continue without losing the thread. Write a TERSE, factual third-person summary — NOT in "
+    "any character's voice. Capture, with concrete detail:\n"
+    "- the operator's standing requests / goals still in play\n"
+    "- what was actually DONE, and specifically what files/works were CREATED in the workspace "
+    "(give real paths); never credit work that wasn't actually produced\n"
+    "- key facts, decisions, and constraints established\n"
+    "- open threads / what is unfinished\n"
+    "Preserve any earlier-summary content that is still relevant. Omit chit-chat. Be compact. "
+    "Write the summary in the same language as the conversation being summarized."
+)
 
 
 _PRUNED_MARK = "output pruned: "  # identifies an already-one-lined tool result
@@ -236,8 +219,7 @@ def prune_live_tool_outputs(ctx: ContextBuffer) -> bool:
     if boundary <= 0:
         return False  # the whole window is protected tail — nothing old to prune
     names = _call_names(msgs)
-    dup_marker = _DUP_TOOL_RESULT["en"]
-    dup_marker_zh = _DUP_TOOL_RESULT["zh"]
+    dup_marker = _DUP_TOOL_RESULT
     changed = False
 
     # Pass 1: dedup identical results across the WHOLE window, newest kept.
@@ -249,7 +231,7 @@ def prune_live_tool_outputs(ctx: ContextBuffer) -> bool:
         content = str(msg.get("content") or "")
         if len(content) < _LIVE_PRUNE_MIN_CHARS:
             continue
-        if content == dup_marker or content == dup_marker_zh or _already_pruned(content):
+        if content == dup_marker or _already_pruned(content):
             continue
         h = hashlib.md5(content.encode("utf-8", "replace")).hexdigest()[:12]
         if h in seen:
@@ -269,7 +251,7 @@ def prune_live_tool_outputs(ctx: ContextBuffer) -> bool:
         content = str(msg.get("content") or "")
         if len(content) < _LIVE_PRUNE_MIN_CHARS:
             continue
-        if _already_pruned(content) or content == dup_marker or content == dup_marker_zh:
+        if _already_pruned(content) or content == dup_marker:
             continue
         tool_name = names.get(str(msg.get("tool_call_id") or ""), "tool")
         msgs[i] = {**msg, "content": _tool_output_summary(tool_name, content)}
@@ -369,7 +351,7 @@ def _anchor_last_user(msgs: list[dict], cut: int) -> int:
     return cut
 
 
-def compact(ctx: ContextBuffer, lang: str, llm, *, force: bool = False) -> bool:
+def compact(ctx: ContextBuffer, llm, *, force: bool = False) -> bool:
     """Replace the old head of the window with one summary message. Returns True
     if it changed anything. Safe to call any time; no-ops when not worth it.
 
@@ -436,12 +418,12 @@ def compact(ctx: ContextBuffer, lang: str, llm, *, force: bool = False) -> bool:
             guard.record_ineffective(tokens_before)
         return False
 
-    summary = _summarize(msgs[:cut], lang, budget, llm)
+    summary = _summarize(msgs[:cut], budget, llm)
     if not summary:
         guard.record_failure()
         return False
 
-    summary_msg = {"role": "system", "content": _HEADER[_lang(lang)] + summary, "kind": "summary"}
+    summary_msg = {"role": "system", "content": _HEADER + summary, "kind": "summary"}
     tail = [dict(m) for m in msgs[cut:]]
     ctx.messages = [summary_msg] + tail
     stale = getattr(llm, "mark_usage_stale", None)
@@ -466,13 +448,13 @@ def compact(ctx: ContextBuffer, lang: str, llm, *, force: bool = False) -> bool:
     return True
 
 
-def _summarize(head: list[dict], lang: str, budget: int, llm) -> str:
+def _summarize(head: list[dict], budget: int, llm) -> str:
     convo = _serialize(head)
     if not convo:
         return ""
     out_budget = min(2048, max(512, budget // 8))
     messages = [
-        {"role": "system", "content": _INSTRUCTION[_lang(lang)]},
+        {"role": "system", "content": _INSTRUCTION},
         {"role": "user", "content": convo},
     ]
     return llm.raw_complete(messages, max_tokens=out_budget)

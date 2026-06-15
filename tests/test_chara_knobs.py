@@ -145,7 +145,10 @@ def test_embodiment_actor_bridge_order_override_macros_and_tool_gate(agent_facto
     assert "BRIDGE" not in _blob(no_tools._stable_prefix())
 
 
-def test_default_literal_prefix_is_byte_identical_to_pre_change(agent_factory, tmp_path):
+def test_default_literal_prefix_sequence(agent_factory, tmp_path):
+    """The literal-stance stable prefix is exactly: card identity, then the three
+    neutral English blocks (rules, capabilities, tool-use), then the toolpack note.
+    No actor bridge in literal stance; no per-language branching (engine is English)."""
     from lunamoth.content import rules as rules_layer
     from lunamoth.content.worldinfo import apply_macros
 
@@ -153,26 +156,25 @@ def test_default_literal_prefix_is_byte_identical_to_pre_change(agent_factory, t
     a = agent_factory(card=card)
     a.skills = type("NoSkills", (), {"render_block": lambda self: ""})()
     a._skills_snapshot = ""
-    expected_pre_change_prefix = [
+    expected_prefix = [
         a.character.render_system(a.settings.user_name),
-        apply_macros(rules_layer.rules(a.lang, ""), a.char_name(), a.settings.user_name),
-        (
-            "You have tools available via native function calling. Call them directly when "
-            "you want to act; never paste code in prose or claim a result before the tool returns."
-        ),
+        apply_macros(rules_layer.rules(""), a.char_name(), a.settings.user_name),
+        apply_macros(rules_layer.capabilities(""), a.char_name(), a.settings.user_name),
+        apply_macros(rules_layer.tool_use(""), a.char_name(), a.settings.user_name),
         a.toolpack.note.strip(),
     ]
     actual = a._stable_prefix()
-    assert actual == expected_pre_change_prefix
+    assert actual == expected_prefix
     assert "backstage of this embodiment" not in _blob(actual)
 
 
-def test_bundled_actor_bridge_uses_card_language_and_macros(agent_factory, tmp_path):
-    card = _write_card(tmp_path / "actor.zh.json", {"toolpack": "sandbox", "embodiment": "actor"})
+def test_bundled_actor_bridge_renders_english_with_macros(agent_factory, tmp_path):
+    """The actor bridge is English (engine prompt layer) with {{char}} substituted."""
+    card = _write_card(tmp_path / "actor.json", {"toolpack": "sandbox", "embodiment": "actor"})
     a = agent_factory(card=card)
     blob = _blob(a._stable_prefix())
-    assert "你在赋予KnobCard生命" in blob
-    assert "这场化身的后台" in blob
+    assert "giving KnobCard life" in blob
+    assert "stage machinery the audience never sees" in blob
 
 
 def test_embodiment_is_wake_time_only_no_hot_swap_command(agent_factory, tmp_path):

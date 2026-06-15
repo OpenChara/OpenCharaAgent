@@ -26,8 +26,8 @@ def test_default_card_overrides_the_presence_markers(agent):
     from lunamoth import presence
 
     a = agent()
-    entered = presence.marker_text(a.character, "entered", a.char_name(), a.settings.user_name, a.lang == "zh")
-    left = presence.marker_text(a.character, "left", a.char_name(), a.settings.user_name, a.lang == "zh")
+    entered = presence.marker_text(a.character, "entered", a.char_name(), a.settings.user_name)
+    left = presence.marker_text(a.character, "left", a.char_name(), a.settings.user_name)
     assert a.settings.user_name in entered  # the card's on_attach names {{user}}
     assert left.strip()
 
@@ -37,9 +37,10 @@ def test_card_without_overrides_uses_the_neutral_default():
     from lunamoth import presence
 
     bare = CharacterCard(name="Visitor")
-    assert presence.marker_text(bare, "entered", "Visitor", "op", False) == "[op joined the conversation.]"
-    assert presence.marker_text(bare, "left", "Visitor", "op", False) == "[op left the conversation.]"
-    assert presence.marker_text(bare, "entered", "Visitor", "op", True) == "［op进入了对话。］"
+    # The bundled default marker is English; a card carries any other language
+    # through its on_attach/on_detach override, not through this default.
+    assert presence.marker_text(bare, "entered", "Visitor", "op") == "[op joined the conversation.]"
+    assert presence.marker_text(bare, "left", "Visitor", "op") == "[op left the conversation.]"
 
 
 def test_presence_state_roundtrip(tmp_path):

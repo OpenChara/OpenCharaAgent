@@ -7,7 +7,7 @@ from lunamoth.session.settings import Settings
 
 
 def test_rules_are_neutral_no_identity_claims():
-    r = rules.rules("en")
+    r = rules.rules()
     # operating standard, not "you are an assistant" / "you are a character"
     assert "assistant" not in r.lower()
     assert "you are a character" not in r.lower()
@@ -18,17 +18,17 @@ def test_rules_are_neutral_no_identity_claims():
 def test_global_override_file(tmp_path, monkeypatch):
     monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path))
     (tmp_path / "rules.md").write_text("my house rules", encoding="utf-8")
-    assert rules.rules("en") == "my house rules"
+    assert rules.rules() == "my house rules"
 
 
 def test_card_override_hook_beats_global(tmp_path, monkeypatch):
     monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path))
     (tmp_path / "rules.md").write_text("global rules", encoding="utf-8")
     # extensions.lunamoth.content.rules / rules_closer override both, beating the global file
-    assert rules.rules("en", card_override="card rules") == "card rules"
-    assert rules.closer("en", card_override="card closer") == "card closer"
+    assert rules.rules(card_override="card rules") == "card rules"
+    assert rules.closer(card_override="card closer") == "card closer"
     # empty/blank override falls through to the default chain
-    assert rules.rules("en", card_override="  ") == "global rules"
+    assert rules.rules(card_override="  ") == "global rules"
 
 
 @pytest.fixture
