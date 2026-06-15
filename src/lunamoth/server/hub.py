@@ -808,6 +808,19 @@ def _avatar_data_uri(card_path: Path, card: "CharacterCard") -> str:
     return ""
 
 
+def _asset_url(p: Path | None) -> str | None:
+    """A same-origin URL the static server resolves to an art-asset sidecar.
+
+    The avatar stays an inline data-URI (tiny); the heavier art (sprite /
+    background / keyvisual / stickers) rides cacheable URLs so list_cards (sent
+    in every hub.state) doesn't carry megabytes of base64. Served by the
+    /asset route in supervisor.WebHandler, which confines reads to the card &
+    session dirs."""
+    if p is None:
+        return None
+    return "/asset?p=" + urllib.parse.quote(str(p))
+
+
 def avatar_read(path: str) -> dict[str, Any]:
     """The card's avatar as a data-URI an <img> can use (sidecar preferred)."""
     p = Path(str(path or ""))
@@ -938,6 +951,55 @@ def _card_sources() -> dict[str, list[str]]:
     return refs
 
 
+def _copy_card_assets(card: "CharacterCard", dest_dir: Path, src_base: Path | None = None) -> None:
+    """Copy the art-asset sidecars a card DECLARES (avatar + sprite/background/
+    keyvisual/stickers, preserving their relative names) into dest_dir, reading
+    from src_base (defaults to the card's own folder). `card` supplies the
+    declared list; `src_base` supplies where the files actually live — so a
+    wake that froze an EDITED card still copies from the source template folder.
+    Best-effort; a missing/unreadable asset is skipped, never fatal to wake."""
+    base = Path(src_base) if src_base else (Path(card.source_path).parent if card.source_path else None)
+    if base is None:
+        return
+    rels: list[str] = []
+    if card.avatar_file():
+        rels.append(card.avatar_file())
+    a = card.assets()
+    for kind in ("sprite", "background", "keyvisual"):
+        v = a.get(kind)
+        if isinstance(v, str):
+            rels.append(v)
+    stk = a.get("stickers")
+    if isinstance(stk, list):
+        rels += [s for s in stk if isinstance(s, str)]
+    for rel in rels:
+        rel = rel.strip().replace("\\", "/")
+        if not rel or rel.startswith("/") or ".." in rel.split("/"):
+            continue
+        srcf = base / rel
+        if not srcf.is_file():
+            continue
+        dstf = dest_dir / rel
+        try:
+            dstf.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(srcf, dstf)
+        except OSError:
+            pass
+
+
+def _iter_card_files(base: Path):
+    """Card files under a deck dir: per-character folders (`<Name>/card*.json|png`)
+    plus legacy flat files (`*.json|png`) for back-compat. Skips hidden/LICENSE."""
+    for p in sorted(base.iterdir()):
+        if p.name.startswith("."):
+            continue
+        if p.is_dir():
+            for c in sorted(p.glob("card*.json")) + sorted(p.glob("card*.png")):
+                yield c
+        elif p.suffix.lower() in (".json", ".png") and not p.stem.startswith("LICENSE"):
+            yield p
+
+
 def _card_entry(path: Path, builtin: bool, refs: dict[str, list[str]]) -> dict[str, Any] | None:
     try:
         card = CharacterCard.load(path)
@@ -982,6 +1044,10 @@ def _card_entry(path: Path, builtin: bool, refs: dict[str, list[str]]) -> dict[s
         "theme": {"primary": theme.get("primary", ""), "secondary": theme.get("secondary", "")},
         "avatar_svg": avatar_svg,
         "avatar_uri": avatar_uri,
+        "sprite_url": _asset_url(card.asset_path("sprite")),
+        "bg_url": _asset_url(card.asset_path("background")),
+        "keyvisual_url": _asset_url(card.asset_path("keyvisual")),
+        "stickers_urls": [u for u in (_asset_url(p) for p in card.sticker_paths()) if u],
         "embodiment": embodiment if embodiment in ("literal", "actor") else "",
     }
 
@@ -999,11 +1065,7 @@ def list_cards() -> list[dict[str, Any]]:
     for base, builtin in ((user_cards_dir(), False), (bundled_cards_dir(), True)):
         if not base.is_dir():
             continue
-        for p in sorted(base.iterdir()):
-            if p.suffix.lower() not in (".json", ".png") or p.name.startswith("."):
-                continue
-            if p.stem.startswith("LICENSE"):
-                continue
+        for p in _iter_card_files(base):
             entry = _card_entry(p, builtin, refs)
             if not entry:
                 continue
@@ -1713,6 +1775,18 @@ def wake(card_path: str, name: str = "", isolation: str = "sandbox",
     else:
         shutil.copyfile(src, frozen)
     (meta.root / "card_source").write_text(str(src), encoding="utf-8")
+    # Freeze a copy of the art-asset library beside the frozen card, so a living
+    # chara owns its own visuals (the deck/chat resolve them from the session dir,
+    # not the deck template that may later change or be deleted). Use the FROZEN
+    # card's declarations (it may have been edited) but read the files from the
+    # source template folder where they actually live.
+    asset_decl = card
+    if card_data is not None and src.suffix.lower() != ".png":
+        try:
+            asset_decl = CharacterCard.load(frozen)
+        except Exception:  # noqa: BLE001 - fall back to the template's declarations
+            asset_decl = card
+    _copy_card_assets(asset_decl, meta.root, src_base=Path(card_path).parent)
 
     card_defaults = card.defaults() if hasattr(card, "defaults") else {}
     cfg = dataclasses.asdict(Settings())

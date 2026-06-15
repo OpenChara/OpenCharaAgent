@@ -11,7 +11,7 @@ from typing import Any, Iterator, NoReturn
 from ..config import LLMConfig
 from ..obs import get_logger
 from ..content.persona import fallback_persona
-from ..protocol import Notice, TextDelta, ThinkDelta, ToolEnd, ToolStart
+from ..protocol import Attachment, Notice, TextDelta, ThinkDelta, ToolEnd, ToolStart
 
 _log = get_logger("llm")
 
@@ -910,6 +910,15 @@ class LLMClient:
                             # speak tool): always the say channel — every
                             # frontend delivers it, whatever this turn's channel.
                             yield TextDelta(str(res["say"]) + "\n", "say")
+                        att = res.get("attachment")
+                        if isinstance(att, dict) and att.get("url"):
+                            # A tool put a file in front of the user (send_file):
+                            # an Attachment event, say channel like spoken words.
+                            yield Attachment(
+                                url=str(att["url"]), mime=str(att.get("mime") or ""),
+                                name=str(att.get("name") or ""), caption=str(att.get("caption") or ""),
+                                channel="say",
+                            )
                         t_msg = {"role": "tool", "tool_call_id": tc.get("id") or "", "content": res.get("content", "")}
                         record(t_msg)
                         messages.append(t_msg)

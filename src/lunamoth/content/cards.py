@@ -221,6 +221,56 @@ class CharacterCard:
         p = Path(self.source_path).parent / name
         return p if p.is_file() else None
 
+    # ---- art-asset library (sprite / background / keyvisual / stickers) ----------
+    # Presentation, not soul: optional sidecars living in the card's own folder,
+    # declared under extensions.lunamoth.assets. Resolution is traversal-safe and
+    # confined to the card directory (so a per-character folder can hold a media set).
+    _ASSET_KINDS = ("sprite", "background", "keyvisual")
+
+    def _asset_rel(self, value) -> str:
+        """A safe card-folder-relative path (allows one sub-dir, never escapes)."""
+        if not isinstance(value, str):
+            return ""
+        name = value.strip().replace("\\", "/")
+        if not name or name.startswith("/") or ".." in name.split("/"):
+            return ""
+        return name
+
+    def _resolve(self, rel: str) -> Path | None:
+        if not rel or not self.source_path:
+            return None
+        base = Path(self.source_path).parent.resolve()
+        p = (base / rel).resolve()
+        if base != p and base not in p.parents:  # confine to the card folder
+            return None
+        return p if p.is_file() else None
+
+    def assets(self) -> dict:
+        ext = self.extensions.get("lunamoth")
+        a = ext.get("assets") if isinstance(ext, dict) else None
+        return a if isinstance(a, dict) else {}
+
+    def asset_path(self, kind: str) -> Path | None:
+        """Resolved path of a single-file art asset (sprite/background/keyvisual)."""
+        return self._resolve(self._asset_rel(self.assets().get(kind)))
+
+    def sticker_paths(self) -> list[Path]:
+        """Resolved, existing sticker sidecar paths (order preserved)."""
+        raw = self.assets().get("stickers")
+        if not isinstance(raw, list):
+            return []
+        out = []
+        for v in raw:
+            p = self._resolve(self._asset_rel(v))
+            if p is not None:
+                out.append(p)
+        return out
+
+    def has_art(self) -> bool:
+        """True if any bundled art asset (sprite/background/keyvisual/stickers) exists."""
+        return bool(self.asset_path("sprite") or self.asset_path("background")
+                    or self.asset_path("keyvisual") or self.sticker_paths())
+
     def render_system(self, user: str = "User") -> str:
         """Build the persona system block, roughly the way SillyTavern composes it."""
         char = self.name

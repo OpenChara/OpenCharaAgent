@@ -28,7 +28,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from ..obs.audit import AuditLog
 from ..session import isolation as I
@@ -1096,9 +1096,57 @@ class WebHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         _log.debug("http: " + fmt, *args)
 
+    # Raster only: no svg/html — an attacker-controlled SVG served same-origin
+    # with image/svg+xml would be a stored-XSS vector. Card avatars use inline
+    # SVG via a separate sanitized data-URI path, never this route.
+    _ASSET_MIME = {".png": "image/png", ".webp": "image/webp", ".jpg": "image/jpeg",
+                   ".jpeg": "image/jpeg", ".gif": "image/gif"}
+
     def end_headers(self) -> None:
-        self.send_header("Cache-Control", "no-store")
+        if not getattr(self, "_skip_no_store", False):
+            self.send_header("Cache-Control", "no-store")
         super().end_headers()
+
+    def _asset_roots(self) -> list[Path]:
+        """Dirs an /asset request may read from: the card decks + each session dir."""
+        roots = [H.bundled_cards_dir().resolve(), H.user_cards_dir().resolve()]
+        try:
+            roots += [m.root.resolve() for m in S.list_sessions()]
+        except Exception:  # noqa: BLE001 - serving must not depend on session health
+            pass
+        return roots
+
+    def _serve_asset(self, url) -> None:
+        """Serve a per-character art-asset sidecar (sprite/background/keyvisual/
+        sticker), confined to the card & session dirs, cacheable."""
+        raw = (parse_qs(url.query).get("p") or [""])[0]
+        try:
+            target = Path(unquote(raw)).resolve()
+        except Exception:  # noqa: BLE001
+            self.send_error(404); return
+        mime = self._ASSET_MIME.get(target.suffix.lower())
+        roots = self._asset_roots()
+        if mime is None or not any(target == r or r in target.parents for r in roots) or not target.is_file():
+            self.send_error(404); return
+        try:
+            data = target.read_bytes()
+        except OSError:
+            self.send_error(404); return
+        self._skip_no_store = True
+        self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "public, max-age=86400")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self) -> None:  # noqa: N802 - http.server API
+        self._skip_no_store = False
+        url = urlsplit(self.path)
+        if url.path == "/asset":
+            self._serve_asset(url)
+            return
+        super().do_GET()
 
     def do_POST(self) -> None:  # noqa: N802 - http.server API
         url = urlsplit(self.path)

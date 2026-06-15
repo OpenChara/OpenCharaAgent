@@ -38,7 +38,7 @@ def rpc_error(method, params=None):
 
 
 def luna_card_path():
-    return str(H.bundled_cards_dir() / "LunaMoth.zh.json")
+    return str(H.bundled_cards_dir() / "LunaMoth" / "card.json")
 
 
 def set_defaults():
@@ -81,7 +81,7 @@ def test_state_first_run_and_cards():
     assert r["first_run"] is True
     assert r["sessions"] == []
     names = {c["name"] for c in r["cards"]}
-    assert "月蛾" in names  # bundled deck is visible
+    assert "LunaMoth" in names  # bundled deck is visible
     assert r["defaults"]["has_key"] is False
 
 
@@ -146,7 +146,7 @@ def test_apply_key_validates_names_param():
 def test_wake_freezes_card_and_writes_config():
     set_defaults()
     entry = result("session.wake", {"card": luna_card_path(), "isolation": "sandbox"})
-    assert entry["char_name"] == "月蛾"
+    assert entry["char_name"] == "LunaMoth"
     assert entry["status"] == "idle"
     meta = S.load_session(entry["name"])
     assert meta is not None
@@ -162,7 +162,7 @@ def test_wake_freezes_card_and_writes_config():
 
 def test_wake_with_card_data_freezes_the_edited_card_not_the_source():
     set_defaults()
-    edited = {"data": {"name": "月蛾", "description": "EDITED AT WAKE",
+    edited = {"data": {"name": "LunaMoth", "description": "EDITED AT WAKE",
                        "extensions": {"lunamoth": {"toolpack": "sandbox"}}}}
     entry = result("session.wake", {"card": luna_card_path(), "card_data": edited})
     meta = S.load_session(entry["name"])
@@ -181,7 +181,7 @@ def test_list_cards_includes_living_chara_cards_as_locked():
     assert len(owned) == 1
     assert owned[0]["locked"] is True
     # the bundled template is still present and NOT locked (re-wakeable)
-    template = next(c for c in cards if c["builtin"] and c["name"] == "月蛾" and not c.get("locked"))
+    template = next(c for c in cards if c["builtin"] and c["name"] == "LunaMoth" and not c.get("locked"))
     assert template["locked"] is False
 
 

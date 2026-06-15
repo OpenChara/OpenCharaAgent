@@ -60,4 +60,17 @@ class Notice:
     text: str = ""
 
 
-Event = Union[TextDelta, ThinkDelta, ToolStart, ToolEnd, Notice]
+@dataclass(frozen=True)
+class Attachment:
+    """A file the chara chose to put in front of the user (the send_file tool).
+    `url` is a same-origin link the frontend can render (images inline) or offer
+    for download; `mime` decides which. Carries the same say|muse register as
+    text — `say` reaches every frontend, `muse` is panoramic-only."""
+    url: str
+    mime: str = ""
+    name: str = ""
+    caption: str = ""
+    channel: str = SAY
+
+
+Event = Union[TextDelta, ThinkDelta, ToolStart, ToolEnd, Notice, Attachment]

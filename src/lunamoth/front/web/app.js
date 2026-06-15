@@ -319,6 +319,41 @@ function applyDisplayMode(mode) {
 }
 const isTechnical = () => state.display === "technical";
 
+/* ---- per-card chat visuals: background + 立绘 opacity / sprite position ----
+   Operator presentation prefs (localStorage), applied as CSS vars on :root + a
+   sprite position class. Pure presentation; degrades to nothing when a card has
+   no bg_url/sprite_url. Defaults: bg 18, sprite 16, position "right". */
+const VISUAL_DEFAULTS = { bgOpacity: 18, spriteOpacity: 16, spritePos: "right" };
+function readVisualPrefs() {
+  const num = (k, d) => {
+    const v = Number(localStorage.getItem(k));
+    return Number.isFinite(v) && v >= 0 && v <= 100 ? v : d;
+  };
+  let pos = localStorage.getItem("lm-sprite-pos") || VISUAL_DEFAULTS.spritePos;
+  if (!["off", "left", "center", "right"].includes(pos)) pos = VISUAL_DEFAULTS.spritePos;
+  return {
+    bgOpacity: num("lm-chat-bg-opacity", VISUAL_DEFAULTS.bgOpacity),
+    spriteOpacity: num("lm-sprite-opacity", VISUAL_DEFAULTS.spriteOpacity),
+    spritePos: pos,
+  };
+}
+function applyVisualPrefs() {
+  const p = readVisualPrefs();
+  const root = document.documentElement;
+  root.style.setProperty("--chat-bg-opacity", String(p.bgOpacity / 100));
+  root.style.setProperty("--chat-sprite-opacity", String(p.spriteOpacity / 100));
+  const sprite = $("chat-sprite");
+  if (sprite) {
+    sprite.classList.remove("pos-left", "pos-center", "pos-right");
+    if (p.spritePos !== "off") sprite.classList.add("pos-" + p.spritePos);
+  }
+  // reflect in the settings controls (instant/optimistic)
+  const bg = $("bg-opacity"); if (bg) bg.value = String(p.bgOpacity);
+  const so = $("sprite-opacity"); if (so) so.value = String(p.spriteOpacity);
+  document.querySelectorAll("#sprite-pos-seg span").forEach((s) =>
+    s.classList.toggle("on", s.dataset.pos === p.spritePos));
+}
+
 /* ============================ ROUTER ============================
    #/  #/deck  #/settings  #/chara/<name>[/works|/term] — refresh/back work. */
 function navTo(hash) {
@@ -508,6 +543,7 @@ hub.onReady = async () => {
   setLang(savedLang, false);
   applyTheme(localStorage.getItem("lm-theme") || d.ui_theme || "system");
   applyDisplayMode(state.display);
+  applyVisualPrefs();
   if (!_routedOnce) { _routedOnce = true; route(); }
   if (state.hub && state.hub.first_run) openFirstRun();
 };
@@ -1469,6 +1505,20 @@ $("display-seg").addEventListener("click", (ev) => {
 });
 $("reveal-home").addEventListener("click", () => {
   if (state.hub) hub.call("open.path", { path: state.hub.home, reveal: true }).catch((e) => toast(e.message, true));
+});
+$("bg-opacity").addEventListener("input", (ev) => {
+  try { localStorage.setItem("lm-chat-bg-opacity", String(ev.target.value)); } catch (e) { /* ok */ }
+  applyVisualPrefs();
+});
+$("sprite-opacity").addEventListener("input", (ev) => {
+  try { localStorage.setItem("lm-sprite-opacity", String(ev.target.value)); } catch (e) { /* ok */ }
+  applyVisualPrefs();
+});
+$("sprite-pos-seg").addEventListener("click", (ev) => {
+  const s = ev.target.closest("span");
+  if (!s) return;
+  try { localStorage.setItem("lm-sprite-pos", s.dataset.pos); } catch (e) { /* ok */ }
+  applyVisualPrefs();
 });
 
 /* ============================ FIRST RUN ============================ */

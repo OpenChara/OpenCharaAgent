@@ -20,6 +20,7 @@ _TYPES: dict[str, type] = {
     "tool_start": E.ToolStart,
     "tool_end": E.ToolEnd,
     "notice": E.Notice,
+    "attachment": E.Attachment,
 }
 _NAMES = {cls: name for name, cls in _TYPES.items()}
 

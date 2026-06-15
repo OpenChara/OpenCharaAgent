@@ -32,6 +32,7 @@
     "browser_cdp",
     "browser_dialog",
     "speak",
+    "send_file",
     "rest",
     "add_wish",
     "set_wish_status"

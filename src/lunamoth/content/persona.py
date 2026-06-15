@@ -53,10 +53,22 @@ def _card_tags(path: Path) -> list[str]:
     return [str(t).strip().lower() for t in tags]
 
 
+def _card_files(root: Path) -> list[Path]:
+    """All bundled card JSONs: per-character folders (cards/<Name>/card*.json)
+    plus any legacy flat files (cards/*.json) for back-compat."""
+    files = [p for p in root.glob("*.json")]
+    for d in sorted(root.iterdir()):
+        if d.is_dir():
+            files.extend(sorted(d.glob("card*.json")))
+    return sorted(files)
+
+
 def _localized_json(root: Path, lang: str) -> Path | None:
-    suffixes = (f".{lang}.json", f"-{lang}.json", f"_{lang}.json")
-    candidates = sorted(root.glob("*.json"))
-    localized = [p for p in candidates if p.name.lower().endswith(suffixes)] or candidates
+    from .cards import detect_language
+    candidates = _card_files(root)
+    if not candidates:
+        return None
+    localized = [p for p in candidates if detect_language(str(p)) == lang] or candidates
     for p in localized:
         if DEFAULT_TAG in _card_tags(p):
             return p

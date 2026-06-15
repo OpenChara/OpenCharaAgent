@@ -168,21 +168,46 @@ class ChatController {
     const btn = $("chat-avatar");
     btn.querySelectorAll("img,.glyph-txt").forEach((n) => n.remove());
     btn.classList.remove("p-0", "p-1", "p-2", "p-3", "p-4", "p-5");
-    if (card && card.avatar_svg) {
-      btn.style.cssText = card.theme_color ? `--card-theme:${card.theme_color}` : "";
-      btn.insertBefore(el("img", { src: dataUriSvg(card.avatar_svg), alt: "" }), btn.firstChild);
-    } else if (card && card.theme_color) {
-      btn.style.cssText = `--card-theme:${card.theme_color}`;
+    const style = themeStyle(card);
+    const src = avatarSrc(card);   // PNG/SVG data-URI, or "" → glyph fallback
+    if (src) {
+      btn.style.cssText = style;
+      btn.insertBefore(el("img", { src, alt: "" }), btn.firstChild);
+    } else if (style) {
+      btn.style.cssText = style;
       btn.insertBefore(el("span", { class: "glyph-txt" }, glyphOf(this.charName)), btn.firstChild);
     } else {
       btn.style.cssText = "";
       btn.classList.add(paletteClass(this.charName));
       btn.insertBefore(el("span", { class: "glyph-txt" }, glyphOf(this.charName)), btn.firstChild);
     }
+    this.applyCharVisuals(card);   // background image + 立绘 sprite (graceful when absent)
     const empty = $("stream-inner").querySelector(".chat-empty");
     if (empty) {
       const old = empty.querySelector(".avatar-s");
       if (old) old.replaceWith(this.bigAvatar());
+    }
+  }
+
+  /* The optional per-card visual layers: full background + 立绘 sprite. Both are
+     additive and degrade to nothing when the card carries no URL. We also (re)apply
+     the operator's saved opacity/position prefs so a freshly opened chat is correct
+     even if the global startup hook ran before this page existed. */
+  applyCharVisuals(card) {
+    applyVisualPrefs();   // re-assert --chat-bg-opacity / --chat-sprite-opacity / sprite pos
+    const bg = $("chat-bg");
+    if (bg) {
+      const url = card && card.bg_url;
+      bg.style.backgroundImage = url ? `url("${String(url).replace(/"/g, "%22")}")` : "";
+    }
+    const img = $("chat-sprite-img");
+    if (img) {
+      const url = card && card.sprite_url;
+      // Hide the layer on load failure rather than show a broken-image glyph
+      // (a silent broken visual is a bug; a missing sprite just means no sprite).
+      img.onerror = () => { img.style.display = "none"; };
+      if (url) { img.style.display = ""; img.src = String(url); }
+      else { img.removeAttribute("src"); img.style.display = "none"; }
     }
   }
 
@@ -472,6 +497,8 @@ class ChatController {
       this.showToolEnd(ev);
     } else if (ev.type === "notice") {
       this.note(ev.text || ev.kind);
+    } else if (ev.type === "attachment") {
+      this.appendCharAttachment(ev);
     }
     this.scrollDown();
   }
@@ -500,6 +527,45 @@ class ChatController {
     }
     this.cur.raw = (this.cur.raw || "") + text;
     this.cur.textNode.textContent = this.cur.raw;
+  }
+
+  /* An inline attachment the chara sent: {url, mime, name, caption, channel}.
+     Images render as a centered .wp-img; anything else becomes a small file chip
+     with a download link. muse-channel attachments use the muse register; say is a
+     normal char message. Always its own row (closes any open text/tool group). */
+  appendCharAttachment(ev) {
+    this.clearEmpty();
+    this.closeCurrent();
+    this.breakToolGroup();
+    const isImage = String(ev.mime || "").startsWith("image/");
+    const name = ev.name || (isImage ? "image" : "file");
+    let media;
+    if (isImage) {
+      const img = el("img", { alt: name, loading: "lazy" });
+      // If the image can't load, degrade to a download chip instead of a broken glyph.
+      img.onerror = () => media.replaceWith(
+        el("a", { class: "file-chip", href: String(ev.url || ""), download: name }, name));
+      img.src = String(ev.url || "");   // set after creation so layout never blocks
+      media = el("div", { class: "wp-img" }, img);
+    } else {
+      const link = el("a", { class: "file-chip", href: String(ev.url || ""), download: name }, name);
+      media = link;
+    }
+    const caption = ev.caption ? el("div", { class: "attach-cap" }, ev.caption) : null;
+    if (ev.channel === "muse") {
+      const body = el("div", { class: "muse-text" }, media, caption);
+      const node = el("div", { class: "muse-msg" },
+        el("div", { class: "muse-label" }, t("muse-label")), body);
+      $("stream-inner").appendChild(node);
+    } else {
+      const nameLine = el("div", { class: "name" }, this.charName);
+      if (isTechnical()) nameLine.appendChild(el("span", { class: "chan-badge" }, t("channel-say")));
+      const node = el("div", { class: "char-msg" },
+        this.msgAvatar(),
+        el("div", { class: "body" }, nameLine, media, caption));
+      $("stream-inner").appendChild(node);
+    }
+    this.cur = { kind: null, node: null, textNode: null };
   }
 
   /* 已读 = 淡化：页面可见地渲染过 → superchat.read → 整体淡下去 */

@@ -554,7 +554,7 @@ def test_set_autonomy_and_the_board_agree_via_mode(tmp_path, monkeypatch):
 
     H.save_defaults({"provider": "openrouter", "base_url": "https://x.invalid/v1",
                      "api_key": "k", "model": "m"})
-    entry = H.wake(card_path=str(H.bundled_cards_dir() / "Quinn.zh.json"))
+    entry = H.wake(card_path=str(H.bundled_cards_dir() / "Quinn" / "card.json"))
     meta = S.load_session(entry["name"])
 
     out = []
@@ -675,3 +675,32 @@ def test_driver_send_drops_on_stalled_client_without_blocking():
             SUP._DRIVER_SEND_TIMEOUT_SECONDS = old
 
     asyncio.run(asyncio.wait_for(go(), timeout=5.0))
+
+
+def test_asset_route_serves_image_confines_and_rejects_nonimage():
+    """The /asset static route serves card art, stays inside the card/session
+    dirs, and refuses non-image files (no card.json leak, no path traversal)."""
+    import urllib.parse
+    import urllib.request
+    import urllib.error
+    from lunamoth.server import supervisor as SV
+    from lunamoth.server import hub as H
+
+    port = SV.free_port()
+    srv = SV.start_http("127.0.0.1", port, token="t", supervisor=None)
+
+    def code(abspath):
+        url = f"http://127.0.0.1:{port}/asset?p=" + urllib.parse.quote(abspath)
+        try:
+            return urllib.request.urlopen(url, timeout=5).status
+        except urllib.error.HTTPError as e:
+            return e.code
+
+    try:
+        sprite = (H.bundled_cards_dir() / "Quinn" / "sprite.png").resolve()
+        if sprite.is_file():
+            assert code(str(sprite)) == 200                  # a real card asset serves
+        assert code("/etc/passwd") == 404                    # outside the allowed roots
+        assert code(str((H.bundled_cards_dir() / "Quinn" / "card.json").resolve())) == 404  # non-image
+    finally:
+        srv.shutdown()

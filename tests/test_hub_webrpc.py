@@ -43,7 +43,7 @@ def set_defaults():
 
 def wake_session():
     set_defaults()
-    card = str(H.bundled_cards_dir() / "Quinn.zh.json")
+    card = str(H.bundled_cards_dir() / "Quinn" / "card.json")
     entry = result("session.wake", {"card": card})
     return S.load_session(entry["name"])
 
@@ -215,7 +215,7 @@ def test_avatar_generate_reads_card_summary(monkeypatch):
         return GOOD_SVG
 
     monkeypatch.setattr(H, "_complete", fake_complete)
-    card = str(H.bundled_cards_dir() / "Quinn.en.json")
+    card = str(H.bundled_cards_dir() / "Quinn" / "card.json")
     result("card.avatar_generate", {"card_path": card, "description": "rounder"})
     assert "Character:" in seen["user"]
 
@@ -272,7 +272,7 @@ def test_avatar_upload_png_magic_mismatch_is_an_error():
 
 def test_avatar_upload_refuses_builtin_card():
     set_defaults()
-    builtin = str(H.bundled_cards_dir() / "Quinn.en.json")
+    builtin = str(H.bundled_cards_dir() / "Quinn" / "card.json")
     err = rpc_error("card.avatar_upload",
                     {"path": builtin, "data_b64": _b64(GOOD_SVG.encode()), "ext": "svg"})
     assert err["code"] == -32031
@@ -365,7 +365,8 @@ def test_works_list_visible_under_a_dot_dir_home(tmp_path, monkeypatch):
 # ---- card.duplicate ----------------------------------------------------------------
 
 def test_card_duplicate_is_distinct_and_never_default():
-    src = str(H.bundled_cards_dir() / "Quinn.zh.json")
+    # zh source (archived as an easter egg) → Chinese suffix; en source → English suffix
+    src = str(H.bundled_cards_dir().parent / "archive" / "cards-zh" / "Quinn.card.zh.json")
     out = result("card.duplicate", {"path": src})
     dup = json.loads(open(out["path"], encoding="utf-8").read())
     assert dup["data"]["name"].endswith("（副本）")
@@ -374,7 +375,7 @@ def test_card_duplicate_is_distinct_and_never_default():
     orig = json.loads(open(src, encoding="utf-8").read())
     assert "default" in orig["data"]["tags"] and not orig["data"]["name"].endswith("（副本）")
     # an English card gets the English suffix
-    out2 = result("card.duplicate", {"path": str(H.bundled_cards_dir() / "Quinn.en.json")})
+    out2 = result("card.duplicate", {"path": str(H.bundled_cards_dir() / "Quinn" / "card.json")})
     dup2 = json.loads(open(out2["path"], encoding="utf-8").read())
     assert dup2["data"]["name"].endswith(" (copy)")
 
@@ -420,11 +421,11 @@ def test_wake_with_named_key_uses_its_credentials():
     set_defaults()
     result("keys.save", {"label": "alt", "provider": "openrouter",
                          "base_url": "https://alt.example/v1", "api_key": "sk-alt-2", "model": "alt/model"})
-    entry = result("session.wake", {"card": str(H.bundled_cards_dir() / "Quinn.zh.json"), "key": "alt"})
+    entry = result("session.wake", {"card": str(H.bundled_cards_dir() / "Quinn" / "card.json"), "key": "alt"})
     cfg = json.loads((S.load_session(entry["name"]).root / "config.json").read_text(encoding="utf-8"))
     assert cfg["api_key"] == "sk-alt-2" and cfg["base_url"] == "https://alt.example/v1"
     assert cfg["model"] == "alt/model"  # key's model fills in when wake didn't pick one
-    err = rpc_error("session.wake", {"card": str(H.bundled_cards_dir() / "Quinn.zh.json"), "key": "ghost"})
+    err = rpc_error("session.wake", {"card": str(H.bundled_cards_dir() / "Quinn" / "card.json"), "key": "ghost"})
     assert err["code"] == -32035
 
 
@@ -441,17 +442,17 @@ def test_toolpacks_list_enumerates_bundled_packs():
 # ---- list_cards shadow semantics (webui-needs #11) ---------------------------------
 
 def test_user_card_shadows_builtin_with_annotation_but_never_other_user_cards():
-    builtin = json.loads((H.bundled_cards_dir() / "Quinn.zh.json").read_text(encoding="utf-8"))
+    builtin = json.loads((H.bundled_cards_dir() / "Quinn" / "card.json").read_text(encoding="utf-8"))
     deck = H.user_cards_dir()
     deck.mkdir(parents=True, exist_ok=True)
-    (deck / "my-quinn.zh.json").write_text(json.dumps(builtin, ensure_ascii=False), encoding="utf-8")
-    (deck / "my-quinn-2.zh.json").write_text(json.dumps(builtin, ensure_ascii=False), encoding="utf-8")
+    (deck / "my-quinn.json").write_text(json.dumps(builtin, ensure_ascii=False), encoding="utf-8")
+    (deck / "my-quinn-2.json").write_text(json.dumps(builtin, ensure_ascii=False), encoding="utf-8")
     cards = result("cards.list")
-    same_name = [c for c in cards if c["name"] == builtin["data"]["name"] and c["lang"] == "zh"]
+    same_name = [c for c in cards if c["name"] == builtin["data"]["name"] and c["lang"] == "en"]
     # both user files appear; the builtin is hidden but the shadow is declared
     assert len(same_name) == 2
     assert all(not c["builtin"] for c in same_name)
-    assert any(c.get("shadows", "").endswith("Quinn.zh.json") for c in same_name)
+    assert any(c.get("shadows", "").endswith("card.json") for c in same_name)
 
 
 # ---- generation helpers use the system default model (no per-task aux) -------------

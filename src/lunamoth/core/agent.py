@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import base64
 import os
+import shutil
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
@@ -139,6 +141,7 @@ class LunaMothAgent:
         )
         self._load_toolpack()
         self._stable_prefix_cache: list[str] | None = None
+        self._art_staged = False  # workspace/assets populated once per session, not per prefix build
         self.llm = LLMClient(self.settings.to_llm_config())
         self.thought_cfg = ThoughtConfig()
         self.presence = presence.PresenceState(SANDBOX_ROOT)
@@ -429,6 +432,53 @@ class LunaMothAgent:
     def _freeze_skills(self) -> None:
         self._skills_snapshot = self.skills.render_block()
 
+    def _stage_art_assets(self) -> str:
+        """Copy the card's bundled art into workspace/assets (so the chara can
+        reach and send it via its file tools) and return a NEUTRAL one-line note
+        naming what's there — a fact, never an instruction about what to want.
+        Returns '' when the card carries no art. Runs once per session (the
+        stable prefix is cached)."""
+        card = self.character
+        if card is None or not getattr(card, "has_art", None) or not card.has_art():
+            return ""
+        dest = self.sandbox.workspace_dir / "assets"
+        # Copy ONCE per session (not on every prefix rebuild / reset): the prompt
+        # cache keys on prefix bytes, so this must be an idempotent setup step.
+        if not self._art_staged:
+            def _put(src: "Path | None", rel: str) -> None:
+                if src is None:
+                    return
+                try:
+                    target = dest / rel
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    if not target.exists():
+                        shutil.copyfile(src, target)
+                except OSError as exc:
+                    _log.warning("could not stage art asset %s: %s", rel, exc)
+            _put(card.asset_path("sprite"), "sprite.png")
+            _put(card.asset_path("keyvisual"), "keyvisual.webp")
+            _put(card.asset_path("background"), "background.webp")
+            for i, sp in enumerate(card.sticker_paths()):
+                _put(sp, f"stickers/{i:02d}.png")
+            self._art_staged = True
+        # Build the note from what is ACTUALLY on disk (never assert a missing file).
+        parts: list[str] = []
+        if (dest / "sprite.png").is_file():
+            parts.append("a full-body portrait (assets/sprite.png)")
+        if (dest / "keyvisual.webp").is_file():
+            parts.append("a character key-visual sheet (assets/keyvisual.webp)")
+        if (dest / "background.webp").is_file():
+            parts.append("a scene background (assets/background.webp)")
+        sdir = dest / "stickers"
+        n_stick = len(list(sdir.glob("*.png"))) if sdir.is_dir() else 0
+        if n_stick:
+            parts.append(f"{n_stick} expression stickers (assets/stickers/)")
+        if not parts:
+            return ""
+        return ("[Your art] In workspace/assets you have your own visual set: "
+                + "; ".join(parts)
+                + ". You can send any of these to the foreground when it fits (e.g. with send_file).")
+
     def _stable_prefix(self) -> list[str]:
         """Session-stable prompt prefix. The same list object is reused until a
         session boundary/reconfigure/reset explicitly invalidates it."""
@@ -477,6 +527,11 @@ class LunaMothAgent:
             msgs.append(apply_macros(rules_layer.tool_use(card_tooluse), char, user))
             if self.toolpack and self.toolpack.note.strip():
                 msgs.append(self.toolpack.note.strip())
+            # If the card bundles its own art, stage it into workspace/assets and
+            # name it neutrally (a fact, not a directive) so the chara can send it.
+            art_note = self._stage_art_assets()
+            if art_note:
+                msgs.append(art_note)
         if memory.strip():
             msgs.append(memory)  # already headed (memory / user blocks)
         if tools_on:
@@ -666,6 +721,34 @@ class LunaMothAgent:
             # no dim machinery line — the words ARE the visible result.
             out["say"] = str(args.get("text", ""))
             out["display"] = ""
+        elif name == "send_file" and result.get("ok"):
+            # Read the workspace file and hand the loop a ready attachment payload
+            # (a data-URI, so no extra serving route) → an Attachment event.
+            try:
+                meta = _json.loads(result.get("data") or "{}")
+            except _json.JSONDecodeError:
+                meta = {}
+            relp = str(meta.get("path") or args.get("path") or "")
+            mime = str(meta.get("mime") or "application/octet-stream")
+            caption = str(meta.get("caption") or args.get("caption") or "")
+            try:
+                fp = self.sandbox.resolve_inside(relp, base=self.sandbox.workspace_dir)
+                if fp.stat().st_size > 8 * 1024 * 1024:  # re-check at read time (TOCTOU)
+                    raise ValueError("file grew past the 8MB send limit")
+                data_b64 = base64.b64encode(fp.read_bytes()).decode("ascii")
+                out["attachment"] = {
+                    "url": f"data:{mime};base64,{data_b64}",
+                    "mime": mime,
+                    "name": Path(relp).name,
+                    "caption": caption,
+                }
+                out["display"] = f"🖼️ sent {Path(relp).name}"
+            except Exception as exc:  # noqa: BLE001 - surface the failure, don't fake success
+                # The tool said delivered=True, but the file couldn't be read: make the
+                # failure visible to the chara (no silent no-op) so it can react.
+                out["ok"] = False
+                out["display"] = f"⚙ send_file ✗ {_abbrev(str(exc), 120)}"
+                out["content"] = f"ERROR: could not send {relp!r}: {exc}"
         return out
 
     def _ingest_attachments(self, attachments) -> IngestResult:

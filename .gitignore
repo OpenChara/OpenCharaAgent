@@ -89,10 +89,10 @@ docs/_build/
 # world books live INSIDE cards as the embedded character_book
 cards/*
 !cards/.gitkeep
-!cards/LunaMoth.zh.json
-!cards/LunaMoth.en.json
-!cards/Quinn.zh.json
-!cards/Quinn.en.json
+# Bundled characters are per-character folders (card.json + art-asset library).
+# User-dropped cards live in ~/.lunamoth/cards, so any folder here is bundled.
+!cards/*/
+!cards/*/**
 
 # LunaMoth runtime artifacts (sandbox/logs/ is fully ignored below; created at runtime)
 sandbox/logs/*.jsonl
@@ -118,5 +118,8 @@ sandbox/logs/
 
 hermes ui/
 
-# chara-visual generation experiment (owner's WIP — never commit)
-visuals/
+# chara-visual generation pipeline: track the CODE + docs, ignore the heavy
+# generated results (final assets live in cards/<Name>/; archives in archive/).
+visuals/*
+!visuals/*.py
+!visuals/README.md

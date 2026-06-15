@@ -8,9 +8,12 @@ list; a wish is what the character LIVES FOR — its own aspiration, never force
 """
 from __future__ import annotations
 
+import mimetypes
 import time
 
 from ..registry import registry, tool_error, tool_result
+
+_MAX_SEND_BYTES = 8 * 1024 * 1024  # don't push more than ~8MB to the foreground
 
 _MIN_REST_MINUTES = 1
 _MAX_REST_MINUTES = 120
@@ -25,6 +28,49 @@ def speak(args, ctx) -> str:
     if not text.strip():
         return tool_error("nothing to say — `text` is empty")
     return tool_result(ok=True, delivered=True)
+
+
+def send_file(args, ctx) -> str:
+    """Put a file from your workspace in front of the user. Images render inline;
+    anything else is offered as a download. The actual delivery (an attachment
+    event) happens in the agent loop — this validates the file and confirms."""
+    rel = str(args.get("path") or "").strip()
+    if not rel:
+        return tool_error("send_file needs `path` — a file inside your workspace")
+    try:
+        p = ctx.sandbox.resolve_inside(rel, base=ctx.sandbox.workspace_dir)
+    except Exception as exc:  # noqa: BLE001 - SandboxViolation / bad path
+        return tool_error(f"path not allowed: {exc}")
+    if not p.is_file():
+        return tool_error(f"no such file in your workspace: {rel}")
+    size = p.stat().st_size
+    if size > _MAX_SEND_BYTES:
+        return tool_error(f"file is too large to send ({size} bytes; limit ~8MB)")
+    mime, _ = mimetypes.guess_type(str(p))
+    return tool_result(ok=True, path=rel, mime=mime or "application/octet-stream",
+                       caption=str(args.get("caption") or ""), bytes=size, delivered=True)
+
+
+registry.register(
+    "send_file", "chara-life",
+    {
+        "description": (
+            "Show the user a file from your workspace — an image you made or saved, a "
+            "document, a sticker from assets/. Images appear inline in the conversation; "
+            "other files are offered as a download. Give the workspace-relative `path` and "
+            "an optional `caption`. Like speak, it reaches the user even when they are away."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Workspace-relative path, e.g. assets/stickers/01.png"},
+                "caption": {"type": "string", "description": "Optional line shown with the file."},
+            },
+            "required": ["path"],
+        },
+    },
+    send_file, emoji="🖼️",
+)
 
 
 registry.register(

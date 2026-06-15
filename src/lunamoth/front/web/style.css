@@ -245,8 +245,38 @@ body.col-resizing *{cursor:col-resize !important}
 .chat-page{flex:1; min-height:0; display:none; flex-direction:column; position:relative}
 .chat-page.on{display:flex}
 
-.stream{flex:1; overflow-y:auto; padding:26px 0 10px}
-.stream-inner{max-width:640px; margin:0 auto; padding:0 24px; display:flex; flex-direction:column; gap:18px}
+.stream{flex:1; overflow-y:auto; padding:26px 0 10px; position:relative; z-index:1; background:transparent}
+.stream-inner{max-width:640px; margin:0 auto; padding:0 24px; display:flex; flex-direction:column; gap:18px; background:transparent}
+
+/* 角色视觉层（背景图 + 立绘）：永远坐在对话流之下，不吃点击 */
+:root{ --chat-bg-opacity:.18; --chat-sprite-opacity:.16 }
+.chat-bg{
+  position:absolute; inset:0; z-index:0; pointer-events:none;
+  background-size:cover; background-position:center; background-repeat:no-repeat;
+  opacity:var(--chat-bg-opacity);
+}
+.chat-sprite{
+  position:absolute; inset:0; z-index:0; pointer-events:none; overflow:hidden;
+  display:none;   /* shown by a position class: .pos-left/.pos-center/.pos-right */
+}
+.chat-sprite img{
+  position:absolute; bottom:0; height:76%; width:auto; max-width:60%;
+  object-fit:contain; opacity:var(--chat-sprite-opacity);
+}
+.chat-sprite.pos-left{display:block}
+.chat-sprite.pos-center{display:block}
+.chat-sprite.pos-right{display:block}
+.chat-sprite.pos-left img{left:0}
+.chat-sprite.pos-right img{right:0}
+.chat-sprite.pos-center img{left:50%; transform:translateX(-50%)}
+
+/* 设置里的滑块（外观/立绘浓度），随主题着色 */
+.lm-range{ -webkit-appearance:none; appearance:none; width:180px; height:4px; border-radius:3px;
+  background:rgba(20,40,60,.14); cursor:pointer }
+.lm-range::-webkit-slider-thumb{ -webkit-appearance:none; appearance:none; width:15px; height:15px;
+  border-radius:50%; background:var(--accent); box-shadow:0 1px 3px rgba(10,30,50,.25) }
+.lm-range::-moz-range-thumb{ width:15px; height:15px; border:none; border-radius:50%; background:var(--accent) }
+body.dark .lm-range{ background:rgba(255,255,255,.16) }
 
 /* 空聊天状态：每张卡的品牌时刻 */
 .chat-empty{
@@ -720,6 +750,18 @@ body.dark .ctx-big .ctx-ring.hot{background:conic-gradient(var(--amber) calc(var
 .wp-img{display:flex; justify-content:center; background:rgba(20,40,60,.04); border-radius:9px; padding:10px}
 .wp-img img{max-width:100%; max-height:58vh; object-fit:contain}
 .wp-note{font-size:12.5px; color:var(--text-3); line-height:1.7; padding:14px 4px}
+/* inline attachment (chara-sent): non-image file chip + optional caption */
+.file-chip{
+  display:inline-flex; align-items:center; gap:7px; margin-top:4px;
+  padding:7px 12px; border-radius:9px; font-size:13px; font-weight:500;
+  color:var(--accent-deep); text-decoration:none;
+  background:rgba(20,40,60,.05); border:1px solid var(--hairline);
+}
+.file-chip::before{content:"⭳"; font-size:14px; opacity:.7}
+.file-chip:hover{background:rgba(20,40,60,.09)}
+.attach-cap{font-size:13px; color:var(--text-2); line-height:1.6; margin-top:5px}
+body.dark .file-chip{background:rgba(255,255,255,.06)}
+body.dark .file-chip:hover{background:rgba(255,255,255,.10)}
 
 /* ---------- 终端页（xterm 直通 PTY；常驻不卸载） ---------- */
 .term-head{

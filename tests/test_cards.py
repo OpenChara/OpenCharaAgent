@@ -7,9 +7,9 @@ CARDS_DIR = Path(__file__).resolve().parents[1] / "cards"
 
 
 def test_language_from_filename():
-    assert detect_language("cards/LunaMoth.zh.json") == "zh"
-    assert detect_language("cards/LunaMoth.en.json") == "en"
-    assert detect_language("cards/Quinn.zh.json") == "zh"
+    assert detect_language("archive/cards-zh/LunaMoth.card.zh.json") == "zh"
+    assert detect_language("cards/LunaMoth/card.json") == "en"
+    assert detect_language("archive/cards-zh/Quinn.card.zh.json") == "zh"
 
 
 def test_language_from_content_when_no_hint():
@@ -18,7 +18,7 @@ def test_language_from_content_when_no_hint():
 
 
 def test_bundled_cards_declare_defaults_and_language():
-    moth = CharacterCard.load("cards/LunaMoth.zh.json")
+    moth = CharacterCard.load("archive/cards-zh/LunaMoth.card.zh.json")
     assert moth.language == "zh"
     d = moth.defaults()
     assert d["toolpack"] == "sandbox"
@@ -28,7 +28,7 @@ def test_bundled_cards_declare_defaults_and_language():
     # The context window is NOT card-declared — it's the model's real window.
     assert "context_tokens" not in d
 
-    quinn = CharacterCard.load("cards/Quinn.en.json")
+    quinn = CharacterCard.load("cards/Quinn/card.json")
     assert quinn.language == "en"
     assert "world" not in quinn.defaults()
     assert quinn.defaults()["memory_chars"] == 8000  # the card declares its own memory budget
@@ -36,7 +36,7 @@ def test_bundled_cards_declare_defaults_and_language():
 
 def test_every_bundled_card_carries_its_world_inside():
     """The card is the ONE external file: each bundled card embeds its book."""
-    cards = sorted(CARDS_DIR.glob("*.json"))
+    cards = sorted(CARDS_DIR.glob("*.json")) + sorted(CARDS_DIR.glob("*/card*.json"))
     assert cards, "no bundled cards found"
     for path in cards:
         card = CharacterCard.load(path)
@@ -99,3 +99,23 @@ def test_avatar_path_none_when_sidecar_missing(tmp_path):
     p.write_text(json.dumps({"data": {"name": "X",
         "extensions": {"lunamoth": {"avatar_file": "c.avatar.png"}}}}))
     assert CharacterCard.load(str(p)).avatar_path() is None  # referenced but not on disk
+
+
+def test_asset_resolution_is_confined_and_rejects_traversal(tmp_path):
+    """sprite/background/keyvisual/sticker sidecars resolve inside the card folder;
+    traversal / absolute paths are refused (the /asset route depends on this)."""
+    folder = tmp_path / "Zed"
+    (folder / "stickers").mkdir(parents=True)
+    (folder / "sprite.png").write_bytes(b"img")
+    (folder / "stickers" / "00.png").write_bytes(b"s")
+    (tmp_path / "secret.png").write_bytes(b"nope")
+    card = {"name": "Zed", "data": {"name": "Zed", "first_mes": "hi", "extensions": {"lunamoth": {
+        "assets": {"sprite": "sprite.png",
+                   "stickers": ["stickers/00.png", "../secret.png", "/etc/passwd.png"]}}}}}
+    p = folder / "card.json"
+    p.write_text(json.dumps(card), encoding="utf-8")
+    c = CharacterCard.load(str(p))
+    assert c.asset_path("sprite") == (folder / "sprite.png").resolve()
+    assert c.asset_path("background") is None          # not declared
+    assert c.sticker_paths() == [(folder / "stickers" / "00.png").resolve()]  # traversal+abs dropped
+    assert c.has_art()
