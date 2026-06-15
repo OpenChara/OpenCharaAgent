@@ -124,6 +124,34 @@ def _stdin_permission_hook(kind: str, reason: str, detail: str, wait_seconds: in
     return False
 
 
+def _stdin_clarify_hook(question: str, choices: "list | None") -> str:
+    """clarify hook for the plain terminal: print the question (numbered choices
+    when offered), read one line on stdin, return the answer.
+
+    Mirrors _stdin_permission_hook: single-threaded, blocks the stream until the
+    operator answers. A numbered pick maps to that choice; anything else is
+    returned verbatim as a free-form answer (the model's 'Other' path). An empty
+    line returns "" — clarify turns that into its own no-answer tool_error."""
+    print(f"\n❓ {question.strip()}", flush=True)
+    opts = [str(c) for c in (choices or []) if str(c).strip()]
+    for i, opt in enumerate(opts, 1):
+        print(f"  {i}. {opt}", flush=True)
+    if opts:
+        print("  → enter a number, or type your own answer: ", end="", flush=True)
+    else:
+        print("  → type your answer: ", end="", flush=True)
+    # Block until the operator types something (clarify is already presence-gated).
+    while True:
+        if _stdin_line_ready():
+            line = (_read_line() or "").strip()
+            if not line:
+                return ""
+            if opts and line.isdigit() and 1 <= int(line) <= len(opts):
+                return opts[int(line) - 1]
+            return line
+        time.sleep(0.05)
+
+
 def _idle_ready(state: TerminalState, handle: CharaHandle, last_user_at: float) -> bool:
     """Gate spontaneous cycles: live/chat state, quiet engagement, rest, backoff."""
     if not state.eternal or state.idle_delay_remaining() > 0:
@@ -196,6 +224,7 @@ def main(argv: list[str] | None = None) -> int:
     handle = CharaHandle()
     if interactive:
         handle.set_permission_hook(_stdin_permission_hook)
+        handle.set_clarify_hook(_stdin_clarify_hook)
     info = handle.attach(present=interactive)
     if base_patience is None:
         base_patience = float(getattr(handle.snapshot(fresh=True), "patience", 600.0) or 600.0)

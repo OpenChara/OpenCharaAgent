@@ -121,11 +121,12 @@ class LunaMothAgent:
         self.memory = MemoryStore(SANDBOX_ROOT / "memory", self._memory_limits())
         self._memory_snapshot: dict[str, list[str]] = self.memory.snapshot()
         self._memory_warnings: list[str] = []  # last limit-shrink warnings (for the frontend)
-        # Charas are goal-driven: a persistent goal list (operator's ⭑ + its own)
+        # Charas are wish-driven: a persistent wish list (operator's ⭑ + its own)
         # steers every turn — and gives unattended time (empty user messages) a
-        # direction without any engine-authored prompt.
-        self.goals = GoalStore(SANDBOX_ROOT / "goals.json")
-        self._seed_card_goals()
+        # direction without any engine-authored prompt. The store stays on disk
+        # as goals.json (legacy filename, invisible to users).
+        self.wishes = GoalStore(SANDBOX_ROOT / "goals.json")
+        self._seed_card_wishes()
         # Skills: know-how the chara reads on demand AND writes for itself
         # (workspace/skills/ shadows user + bundled — hermes's local-first rule).
         self.skills = SkillStore()
@@ -133,7 +134,7 @@ class LunaMothAgent:
         # MCP: operator-configured external tool servers (mcp.json); packs opt in.
         self.mcp = McpManager(config_dir=Path(os.getenv("LUNAMOTH_CONFIG_DIR", "")) if os.getenv("LUNAMOTH_CONFIG_DIR") else None)
         self.tools = ToolGateway(
-            self.sandbox, self.state, self.audit, self.memory, self.goals,
+            self.sandbox, self.state, self.audit, self.memory, self.wishes,
             skills=self.skills, mcp=self.mcp,
         )
         self._load_toolpack()
@@ -160,7 +161,7 @@ class LunaMothAgent:
             self.audit.write("memory_shrunk", detail=w)
         self._freeze_memory()  # a reconfigure starts a fresh prompt — reload the snapshot
         self._load_toolpack()
-        self._seed_card_goals()
+        self._seed_card_wishes()
         self._freeze_skills()
         self._invalidate_stable_prefix()
         self.llm = LLMClient(settings.to_llm_config())
@@ -240,11 +241,11 @@ class LunaMothAgent:
             mcp_servers=self.toolpack.mcp_servers if self.toolpack else None,
         )
 
-    def _seed_card_goals(self) -> None:
+    def _seed_card_wishes(self) -> None:
         defaults = self.character.defaults() if self.character else {}
-        goals = defaults.get("goals") if isinstance(defaults, dict) else None
-        if isinstance(goals, list):
-            self.goals.seed_once([str(g) for g in goals], by="card")
+        wishes = defaults.get("wishes") if isinstance(defaults, dict) else None
+        if isinstance(wishes, list):
+            self.wishes.seed_once([str(w) for w in wishes], by="card")
 
     def _card_limit(self, key: str) -> int | None:
         """A limit declared by the card, in extensions.lunamoth or top-level extensions."""
@@ -545,9 +546,9 @@ class LunaMothAgent:
         if world_blocks:
             msgs.append("[World Info / 世界书]\n" + "\n\n".join(world_blocks))
 
-        goals_block = self.goals.render_block()
-        if goals_block:
-            msgs.append(goals_block)
+        wishes_block = self.wishes.render_block()
+        if wishes_block:
+            msgs.append(wishes_block)
 
         post_history = self._post_history_slot()
         if post_history:
@@ -587,6 +588,7 @@ class LunaMothAgent:
             if force or compaction.should_compact(session.context, self.llm):
                 changed = compaction.compact(session.context, self.lang, self.llm, force=force)
                 if changed:
+                    self._reinject_todo(session)
                     self.audit.write("compacted", tokens=session.context.token_count())
                     _log.info("context compacted to ~%d tokens", session.context.token_count())
                 return changed
@@ -594,6 +596,18 @@ class LunaMothAgent:
             self.audit.write("compact_error", error=str(e)[:200])
             _log.warning("compaction failed (turn continues uncompacted): %s", e)
         return False
+
+    def _reinject_todo(self, session: Session) -> None:
+        """After a compaction, re-inject the active todo list so the model's
+        in-progress task list isn't summarized away (hermes parity). The block
+        is live-only (not persisted) — it reflects current TodoStore state and
+        is re-derived on the next compaction; appending it to ctx.messages
+        directly keeps it out of the append-only transcript, like the verbatim
+        tail. No-op when the todo tool was never used."""
+        block = self.tools.todo_injection()
+        if not block:
+            return
+        session.context.messages.append({"role": "system", "content": block, "kind": "todo"})
 
     def _reply_stream(
         self, user_text: str, context: list[dict], stable: list[str], volatile: list[str],

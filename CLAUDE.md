@@ -56,7 +56,8 @@ example) and Quinn 小Q (the default).)
 
 - **The card is the soul — and the ONE external file.** Identity, voice, world
   (embedded `character_book`), rules hooks, permissions (toolpack), memory
-  size, seed goals (`extensions.lunamoth.goals`) all live in the card. The
+  size, seed wishes (`extensions.lunamoth.wishes`, legacy `.goals` still read)
+  all live in the card. The
   engine injects no identity and ships ZERO default flavor text: a card that
   doesn't declare a prompt gets silence, not a default.
 - **No specific character anywhere in src/** — not in code, comments, or
@@ -283,7 +284,7 @@ Every API request is assembled as **three zones**:
    > bundled rules closer (the latter two only when tools are enabled).
 
 Card override hooks: `extensions.lunamoth.{rules,rules_closer,embodiment,
-embodiment_bridge,goals,toolpack,memory_chars,on_attach,on_detach}`;
+embodiment_bridge,wishes,toolpack,memory_chars,on_attach,on_detach}`;
 global `~/.lunamoth/rules.md`. (`on_attach`/`on_detach` override the wording of
 the neutral enter/leave conversation MARKER — a passive fact line, NOT a reaction
 turn; empty = the bundled neutral default. They're an Advanced card-editor field;

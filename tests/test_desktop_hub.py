@@ -441,7 +441,7 @@ def test_card_save_roundtrips_new_lunamoth_extension_fields():
     assert ext["embodiment"] == "actor"
     assert "tempo" not in ext
     assert ext["tagline"] == "A gentle keeper of orbital lanterns"
-    assert ext["goals"] == ["Map the mirror-season drift", "Welcome careful visitors"]
+    assert ext["wishes"] == ["Map the mirror-season drift", "Welcome careful visitors"]
     assert raw["data"]["character_book"]["entries"][0]["keys"] == ["Orbital Garden"]
     listed = result("cards.list")
     mine = next(c for c in listed if c["path"] == r["path"])

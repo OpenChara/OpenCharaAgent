@@ -113,29 +113,29 @@ def _reset(agent, session, arg: str) -> Reply:
     return Reply(True, "session context zeroed (new transcript epoch). durable memory remains.")
 
 
-def _goal(agent, session, arg: str) -> Reply:
+def _wish(agent, session, arg: str) -> Reply:
     parts = arg.split(maxsplit=1)
     try:
         if not arg:
-            goals = agent.goals.all()
-            if not goals:
-                body = "(no goals yet)\n\n/goal <text>      add a goal (yours show as ⭑)\n/goal done g3     mark done\n/goal drop g3     drop it"
+            wishes = agent.wishes.all()
+            if not wishes:
+                body = "(no wishes yet)\n\n/wish <text>      add a wish (yours show as ⭑)\n/wish done g3     mark done\n/wish drop g3     drop it"
             else:
                 icon = {"active": "○", "done": "●", "dropped": "✕"}
                 lines = [
-                    f"{icon.get(g['status'], '?')} {g['id']}  {'⭑ ' if g.get('by') == 'operator' else ''}{g['text']}"
-                    for g in goals
+                    f"{icon.get(w['status'], '?')} {w['id']}  {'⭑ ' if w.get('by') == 'operator' else ''}{w['text']}"
+                    for w in wishes
                 ]
-                body = "\n".join(lines) + "\n\n○ active  ● done  ✕ dropped\n/goal <text> · /goal done|drop <id>"
-            return Reply(True, body, tuple(goals), verbose=True)
+                body = "\n".join(lines) + "\n\n○ active  ● done  ✕ dropped\n/wish <text> · /wish done|drop <id>"
+            return Reply(True, body, tuple(wishes), verbose=True)
         if parts[0] in {"done", "drop", "active"} and len(parts) == 2:
             status = {"done": "done", "drop": "dropped", "active": "active"}[parts[0]]
-            goal = agent.goals.set_status(parts[1].strip(), status)
-            return Reply(True, f"goal {goal['id']} → {goal['status']}", goal)
-        goal = agent.goals.add(arg, by="operator")
-        return Reply(True, f"goal {goal['id']} added ⭑ — it now steers every turn", goal)
+            wish = agent.wishes.set_status(parts[1].strip(), status)
+            return Reply(True, f"wish {wish['id']} → {wish['status']}", wish)
+        wish = agent.wishes.add(arg, by="operator")
+        return Reply(True, f"wish {wish['id']} added ⭑ — it now steers every turn", wish)
     except ValueError as e:
-        return Reply(False, f"goal error: {e}")
+        return Reply(False, f"wish error: {e}")
 
 
 def _skills(agent, session, arg: str) -> Reply:
@@ -320,7 +320,7 @@ _REGISTRY: dict[str, Command] = dict([
     _cmd("wread", "/wread <file>", "read a workspace file", _wread),
     _cmd("write", "/write <file> <text>", "write a sandbox file", _write),
     _cmd("logs", "/logs", "recent audit events", _logs),
-    _cmd("goal", "/goal [text | done <id> | drop <id>]", "the chara's goal list (⭑ = yours)", _goal),
+    _cmd("wish", "/wish [text | done <id> | drop <id>]", "the chara's wish list (⭑ = yours)", _wish),
     _cmd("skills", "/skills", "skill index (the chara writes its own)", _skills),
     _cmd("mcp", "/mcp", "configured MCP tool servers", _mcp),
     _cmd("net", "/net on|off", "terminal network access", _net),
@@ -337,7 +337,7 @@ _REGISTRY: dict[str, Command] = dict([
     _cmd("help", "/help", "this list", _help),
 ])
 
-_ALIASES = {"presence": "mode", "skill": "skills"}
+_ALIASES = {"presence": "mode", "skill": "skills", "goal": "wish"}
 
 # Pre-rename muscle memory, whole-line spellings (every frontend gets them).
 _LINE_ALIASES = {

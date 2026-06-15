@@ -149,6 +149,8 @@ export OPENAI_MODEL=qwen2.5:3b-instruct
 
 **权限运行时可改，不是一刀切。** 网络默认关闭，`/net on` 实时打开（按会话持久化）；`sandbox` 档下用 `/allow-dir <path>` 放开 workspace 之外某个路径的写入。会话像 Hermes/Claude Code 一样**跨次运行持久化**——除非加 `--clean-on-exit`，退出时什么都不清。
 
+**浏览器工具（可选）。** 一组 `browser_*` 工具（驱动真实 Chromium 做导航、点击、快照）在安装驱动前一直隐藏：运行 `lunamoth setup browser`（它安装 Node 版 `agent-browser` CLI 及其 Chromium；若缺失则打印两条 `npm` 步骤与 Node 前置要求）。真实 Chromium **无法**在默认 `sandbox` 隔离下启动——只在跑 `dir` 或 `docker` 隔离的 chara 上启用浏览器工具包（配合 `--no-sandbox`，驱动会在 root / AppArmor 受限场景下自动注入）。`lunamoth doctor` 会显示驱动是否就绪。
+
 ## TUI 速查
 
 ```bash
@@ -160,7 +162,7 @@ lunamoth --plain          # 旧版纯终端模式
 
 Patience 默认 600 秒，可由角色卡 `extensions.lunamoth.patience` 声明，可用 `LUNAMOTH_PATIENCE` 注入，也可在会话中 `/patience <秒>` 按 chara 持久化。它只决定自发循环的节奏；`/quiet` 与 `rest` 各自独立。
 
-会话内命令：`/help`、`/goal`、`/skills`、`/mcp`、`/status`、`/memory`、`/files`、`/mode live|chat`、`/patience`、`/reasoning`、`/net on|off`、`/allow-dir <path>`、`/panel`、`/theme`、`/settings`、`/clear`、`/exit` —— 冗长输出会点亮右侧**聚光板**（遥测 / 记忆 / 文件树点击预览 / 操作员终端 / 帮助），控制台始终是干净的聊天记录。`! <cmd>` 以你的身份在 chara 沙盒里跑 shell（同一牢笼，输出进面板）；`Esc` 让面板回到遥测。
+会话内命令：`/help`、`/wish`（别名 `/goal`）、`/skills`、`/mcp`、`/status`、`/memory`、`/files`、`/mode live|chat`、`/patience`、`/reasoning`、`/net on|off`、`/allow-dir <path>`、`/panel`、`/theme`、`/settings`、`/clear`、`/exit` —— 冗长输出会点亮右侧**聚光板**（遥测 / 记忆 / 文件树点击预览 / 操作员终端 / 帮助），控制台始终是干净的聊天记录。`! <cmd>` 以你的身份在 chara 沙盒里跑 shell（同一牢笼，输出进面板）；`Esc` 让面板回到遥测。
 
 ## 消息网关
 

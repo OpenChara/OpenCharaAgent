@@ -178,6 +178,52 @@ def test_clarify_hook_exception():
 
 
 # --------------------------------------------------------------------------- #
+# terminal clarify hook (front/terminal.py)
+# --------------------------------------------------------------------------- #
+
+def _wire_stdin(monkeypatch, lines):
+    """Feed the terminal stdin helpers a queue of answer lines."""
+    from lunamoth.front import terminal as term
+    queue = list(lines)
+    monkeypatch.setattr(term, "_stdin_line_ready", lambda: bool(queue))
+    monkeypatch.setattr(term, "_read_line", lambda: queue.pop(0) if queue else None)
+    return term
+
+
+def test_terminal_clarify_numbered_choice(monkeypatch):
+    term = _wire_stdin(monkeypatch, ["2"])
+    answer = term._stdin_clarify_hook("pick one", ["alpha", "beta", "gamma"])
+    assert answer == "beta"
+
+
+def test_terminal_clarify_free_text(monkeypatch):
+    term = _wire_stdin(monkeypatch, ["my own answer"])
+    answer = term._stdin_clarify_hook("anything?", None)
+    assert answer == "my own answer"
+
+
+def test_terminal_clarify_out_of_range_is_free_text(monkeypatch):
+    # A number outside the choice range is treated as a free-form answer.
+    term = _wire_stdin(monkeypatch, ["9"])
+    answer = term._stdin_clarify_hook("pick", ["a", "b"])
+    assert answer == "9"
+
+
+def test_terminal_clarify_empty_line_returns_blank(monkeypatch):
+    term = _wire_stdin(monkeypatch, [""])
+    assert term._stdin_clarify_hook("q", ["a"]) == ""
+
+
+def test_terminal_clarify_drives_the_tool(monkeypatch):
+    # End-to-end: the terminal hook feeds clarify a real answer.
+    term = _wire_stdin(monkeypatch, ["1"])
+    hook = term._stdin_clarify_hook
+    ctx = FakeCtx(state=FakeState({"user_present": True}), clarify_hook=hook)
+    out = json.loads(clarify_mod.clarify({"question": "go?", "choices": ["yes", "no"]}, ctx))
+    assert out["user_response"] == "yes"
+
+
+# --------------------------------------------------------------------------- #
 # session_search
 # --------------------------------------------------------------------------- #
 

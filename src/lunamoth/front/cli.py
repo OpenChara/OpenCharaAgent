@@ -8,6 +8,7 @@
     lunamoth stop [NAME]     stop an agent's background loop; --all
     lunamoth rm NAME         delete an agent
     lunamoth setup [NAME]    (re)run the setup wizard
+    lunamoth setup browser   install the optional agent-browser tool driver
     lunamoth update          update the installed checkout (git pull + uv sync)
     lunamoth doctor          check environment & sandbox backends
 
@@ -520,6 +521,11 @@ def cmd_daemon(args: argparse.Namespace) -> int:
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
+    # `lunamoth setup browser` installs the optional agent-browser driver +
+    # Chromium that the browser_* tools are gated on — not a chara named
+    # "browser". (No chara may be named "browser"; the name is reserved here.)
+    if args.name == "browser":
+        return cmd_setup_browser(args)
     meta = S.load_session(args.name)
     if meta is None:
         print(f"error: no chara named {args.name!r} (see `lunamoth ls` or `lunamoth new {args.name}`)", file=sys.stderr)
@@ -529,6 +535,55 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
     run_wizard(non_interactive_ok=False)
     return 0
+
+
+def cmd_setup_browser(args: argparse.Namespace) -> int:
+    """Install the Node `agent-browser` CLI + its Chromium so the browser_*
+    tools can be enabled. Honest about prerequisites; never pretends to succeed.
+
+    The 12 browser tools stay hidden (check_fn-gated) until BOTH the CLI and a
+    Chromium build are present. A real Chromium will NOT launch under the default
+    `sandbox` isolation (sandbox-exec/bwrap block namespaces, /dev/shm, sockets)
+    — the browser toolpack needs `dir` or `docker` isolation, plus --no-sandbox
+    (the driver injects that automatically as root / under AppArmor userns)."""
+    from ..protocol.api import browser_driver_status
+
+    check = bool(getattr(args, "check", False))
+    cli, chromium = browser_driver_status()
+
+    print("lunamoth setup browser — the optional browser_* tool driver\n")
+    print(f"  {'✓' if cli else '✗'} agent-browser CLI" + (f" — {cli}" if cli else " — not found"))
+    print(f"  {'✓' if chromium else '✗'} Chromium build" + ("" if chromium else " — not found"))
+
+    if cli and chromium:
+        print("\nBrowser driver is ready. Enable the browser toolpack on a chara")
+        print("running under `dir` or `docker` isolation (a real Chromium will not")
+        print("launch under the default `sandbox` isolation).")
+        return 0
+
+    node = shutil.which("node")
+    npm = shutil.which("npm")
+    if not (node and npm):
+        print("\n✗ Node.js is required (node + npm) and was not found.")
+        print("  Install Node 18+ first: https://nodejs.org  (or `brew install node`).")
+        print("  Then re-run: lunamoth setup browser")
+        return 1
+
+    print(f"\n  node: {node}")
+    print(f"  npm:  {npm}")
+    print("\nTo install the driver:")
+    print("  1. npm install -g agent-browser     # the automation CLI")
+    print("  2. agent-browser install            # downloads its Chromium")
+    print("\nIsolation caveat: enable the browser toolpack only on a chara running")
+    print("under `dir` or `docker` isolation, with --no-sandbox (Chromium will not")
+    print("start under the default sandbox-exec/bwrap jail).")
+
+    if check:
+        return 1
+    print("\n(Re-run with the steps above, or pass nothing to see this guidance again.)")
+    print("This command does not install automatically — run the two npm steps yourself,")
+    print("then `lunamoth setup browser` confirms the driver is ready.")
+    return 1
 
 
 def cmd_update(args: argparse.Namespace) -> int:
@@ -574,6 +629,14 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     else:
         line("bubblewrap (simple sandbox)", bool(shutil.which("bwrap")), "install: apt/dnf install bubblewrap")
     line("docker (optional)", bool(shutil.which("docker")))
+    # Optional browser_* tool driver (hidden until installed; `lunamoth setup browser`).
+    try:
+        from ..protocol.api import browser_driver_status
+        _cli, _chromium = browser_driver_status()
+        line("browser tools (optional)", bool(_cli) and _chromium,
+             "ready" if (_cli and _chromium) else "run `lunamoth setup browser` to enable")
+    except Exception:
+        line("browser tools (optional)", False, "run `lunamoth setup browser`")
     print(f"  home: {S.lunamoth_home()}  sessions: {len(S.list_sessions())}")
     # Diagnostics live per chara, next to its audit trail.
     for m in S.list_sessions():
@@ -736,8 +799,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("action", choices=["stop", "status"])
     sp.set_defaults(func=cmd_daemon)
 
-    sp = sub.add_parser("setup", help="(re)run the setup wizard")
-    sp.add_argument("name")
+    sp = sub.add_parser("setup", help="(re)run the setup wizard; `setup browser` installs the browser_* tool driver")
+    sp.add_argument("name", help="chara name, or `browser` to set up the optional browser tool driver")
+    sp.add_argument("--check", action="store_true", help="(browser) report status only, don't print install guidance")
     sp.set_defaults(func=cmd_setup)
 
     sp = sub.add_parser("update", help="update the installed checkout")

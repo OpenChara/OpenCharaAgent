@@ -367,3 +367,53 @@ def test_effective_compaction_resets_the_guard(clock):
     assert _cp(ctx, 4000, good) is True  # effective: big shrink
     guard = compaction._guard(ctx)
     assert guard.ineffective == 0 and guard.cooldown_until == 0.0  # both reset on success
+
+
+# ---- todo list survives compaction (hermes parity) --------------------------------------
+
+
+@pytest.fixture
+def agent(tmp_path, monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
+    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sandbox"))
+    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
+    from lunamoth.session.settings import Settings
+    from lunamoth.core.agent import LunaMothAgent
+
+    return LunaMothAgent(Settings(character_path="", toolpack="sandbox"))
+
+
+def test_todo_injection_renders_active_items(agent):
+    # No todo used yet → nothing to inject.
+    assert agent.tools.todo_injection() is None
+    agent.tools.call("todo", todos=[
+        {"id": "1", "content": "draft the nocturne", "status": "in_progress"},
+        {"id": "2", "content": "tune the strings", "status": "pending"},
+        {"id": "3", "content": "warm up", "status": "completed"},
+    ])
+    block = agent.tools.todo_injection()
+    assert block is not None
+    assert "draft the nocturne" in block and "tune the strings" in block
+    assert "warm up" not in block  # completed items are dropped (no re-doing finished work)
+
+
+def test_compaction_reinjects_active_todo(agent):
+    from lunamoth.core.agent import Session
+    agent.tools.call("todo", todos=[
+        {"id": "1", "content": "draft the nocturne", "status": "in_progress"},
+    ])
+    session = Session()
+    session.context.add("user", "hi")
+    agent._reinject_todo(session)
+    last = session.context.messages[-1]
+    assert last["kind"] == "todo"
+    assert "draft the nocturne" in last["content"]
+
+
+def test_compaction_without_todo_injects_nothing(agent):
+    from lunamoth.core.agent import Session
+    session = Session()
+    session.context.add("user", "hi")
+    before = len(session.context.messages)
+    agent._reinject_todo(session)  # no todo used → no-op
+    assert len(session.context.messages) == before

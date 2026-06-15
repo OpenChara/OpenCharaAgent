@@ -2118,9 +2118,9 @@ def draft_to_card(draft: dict[str, Any], origin_text: str = "", as_draft: bool =
     ext: dict[str, Any] = {"origin": origin_text[:8000], "embodiment": "literal"}
     if as_draft:
         ext["draft"] = True
-    goals = _draft_goals(draft)
-    if goals:
-        ext["goals"] = goals
+    wishes = _draft_goals(draft)
+    if wishes:
+        ext["wishes"] = wishes
     if draft.get("rules"):
         ext["rules"] = str(draft["rules"])
     if draft.get("toolpack_hint"):

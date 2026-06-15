@@ -53,17 +53,17 @@ def agent(tmp_path, monkeypatch):
     return make
 
 
-def test_chara_manages_goals_through_tools(agent):
+def test_chara_manages_wishes_through_tools(agent):
     a = agent()
     out = a.tools.call("add_wish", text="learn the operator's favorite key")
     assert out["ok"] and "g" in out["data"]
-    gid = a.goals.active()[-1]["id"]
+    gid = a.wishes.active()[-1]["id"]
     out = a.tools.call("set_wish_status", wish_id=gid, status="done")
     assert out["ok"] and "done" in out["data"]
 
 
-def test_active_goals_steer_the_system_prompt(agent):
+def test_active_wishes_steer_the_system_prompt(agent):
     a = agent()
-    a.goals.add("finish the moonlight study", by="operator")
+    a.wishes.add("finish the moonlight study", by="operator")
     blob = "\n".join(a._build_system_messages("hi"))
     assert "finish the moonlight study" in blob and "⭑" in blob

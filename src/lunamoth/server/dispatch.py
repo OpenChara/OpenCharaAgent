@@ -22,6 +22,11 @@ _log = logging.getLogger("lunamoth.server.dispatch")
 
 FrameWriter = Callable[[dict[str, Any]], object]
 
+# How long the clarify hook blocks a turn waiting for the client's answer.
+# clarify has no model-supplied deadline (unlike request_permission); this
+# bounds the worker thread so a client that never replies can't hang it.
+_CLARIFY_WAIT_SECONDS = 300
+
 
 class RpcError(Exception):
     """An error that should be serialized as a JSON-RPC error response."""
@@ -36,6 +41,12 @@ class RpcError(Exception):
 class _PendingPermission:
     event: threading.Event
     granted: bool = False
+
+
+@dataclass
+class _PendingClarify:
+    event: threading.Event
+    answer: str = ""
 
 
 def hello_frame() -> dict[str, Any]:
@@ -101,11 +112,13 @@ class JsonRpcDispatcher:
         self._write = write
         self.handle = handle or CharaHandle()
         self.handle.set_permission_hook(self._permission_hook)
+        self.handle.set_clarify_hook(self._clarify_hook)
         self._lock = threading.RLock()
         self._stream_thread: threading.Thread | None = None
         self._stream_kind: str = ""  # kind of the in-flight stream (send|event|idle)
         self._stream_interrupt = threading.Event()
         self._pending_permissions: dict[str, _PendingPermission] = {}
+        self._pending_clarifies: dict[str, _PendingClarify] = {}
         self._attached = False
         self._closed = False
         self.should_close = False
@@ -141,6 +154,8 @@ class JsonRpcDispatcher:
                 result = self._snapshot(params)
             elif method == "permission_reply":
                 result = self._permission_reply(params)
+            elif method == "clarify_reply":
+                result = self._clarify_reply(params)
             elif method == "presence.set":
                 result = self._presence_set(params)
             elif method in ("messaging.start", "messaging.stop", "messaging.status"):
@@ -177,6 +192,10 @@ class JsonRpcDispatcher:
             self.handle.set_permission_hook(None)
         except Exception:
             _log.exception("clearing permission hook failed")
+        try:
+            self.handle.set_clarify_hook(None)
+        except Exception:
+            _log.exception("clearing clarify hook failed")
 
     # ---- method handlers -----------------------------------------------------
 
@@ -288,6 +307,21 @@ class JsonRpcDispatcher:
             if pending is None:
                 raise RpcError(-32004, "unknown permission request")
             pending.granted = granted
+            pending.event.set()
+        return {"ok": True}
+
+    def _clarify_reply(self, params: dict[str, Any]) -> dict[str, bool]:
+        pid = params.get("id")
+        answer = params.get("answer", "")
+        if not isinstance(pid, str) or not pid:
+            raise RpcError(-32602, "clarify_reply.id must be a non-empty string")
+        if not isinstance(answer, str):
+            raise RpcError(-32602, "clarify_reply.answer must be a string")
+        with self._lock:
+            pending = self._pending_clarifies.get(pid)
+            if pending is None:
+                raise RpcError(-32004, "unknown clarify request")
+            pending.answer = answer
             pending.event.set()
         return {"ok": True}
 
@@ -514,10 +548,45 @@ class JsonRpcDispatcher:
             self._pending_permissions.pop(pid, None)
         return bool(answered and pending.granted)
 
+    def _clarify_hook(self, question: str, choices: "list | None") -> str:
+        """The web/remote clarify round-trip, structurally identical to the
+        permission hook: emit a `clarify_ask` notification carrying the question
+        and choices, block the stream thread on an Event, return the answer the
+        client sends via `clarify_reply`. clarify is presence-gated before this
+        runs; a bounded wait keeps the worker from hanging forever if the client
+        never answers (returns "" → the tool reports a clean no-answer error)."""
+        with self._lock:
+            if self._closed:
+                return ""
+            pid = uuid.uuid4().hex
+            pending = _PendingClarify(threading.Event())
+            self._pending_clarifies[pid] = pending
+        opts = [str(c) for c in (choices or []) if str(c).strip()]
+        sent = self._emit(
+            "clarify_ask",
+            {
+                "id": pid,
+                "question": str(question or ""),
+                "choices": opts,
+                "wait_seconds": _CLARIFY_WAIT_SECONDS,
+            },
+        )
+        if not sent:
+            with self._lock:
+                self._pending_clarifies.pop(pid, None)
+            return ""
+        answered = pending.event.wait(_CLARIFY_WAIT_SECONDS)
+        with self._lock:
+            self._pending_clarifies.pop(pid, None)
+        return pending.answer if answered else ""
+
     def _cancel_pending_permissions_locked(self) -> None:
         for pending in self._pending_permissions.values():
             pending.granted = False
             pending.event.set()
+        for clarify in self._pending_clarifies.values():
+            clarify.answer = ""
+            clarify.event.set()
 
     # ---- outbound frames -----------------------------------------------------
 

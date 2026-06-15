@@ -211,6 +211,7 @@ class ChatController {
       await this.client.connect();
       this.client.onProtocolEvent = (ev) => this.onEvent(ev);
       this.client.onPermissionAsk = (p) => this.onPermission(p);
+      this.client.onClarifyAsk = (p) => this.onClarify(p);
       this.client.onPeerMessage = (p) => this.onPeerMessage(p);
       this.client.onTurnEnd = () => this.onTurnEnd();
       this.client.onLifeState = (p) => this.onLifeState(p);
@@ -1779,6 +1780,30 @@ class ChatController {
         el("div", { class: "grow" }),
         el("button", { class: "btn primary", onclick: () => { this.client.permissionReply(p.id, true).catch(() => {}); box.remove(); } }, "✓")));
     $("stream-inner").appendChild(box);
+    this.scrollDown();
+  }
+
+  /* ---- clarify questions, inline ---- */
+  // Mirrors the permission round-trip: render the question with one button per
+  // offered choice plus a free-text "Other" field, and reply with the answer
+  // text (the server-side _clarify_hook is blocking the turn until we do).
+  onClarify(p) {
+    const reply = (answer) => { this.client.clarifyReply(p.id, answer).catch(() => {}); box.remove(); };
+    const choices = Array.isArray(p.choices) ? p.choices : [];
+    const acts = el("div", { class: "acts", style: "margin-top:10px;flex-wrap:wrap;gap:6px" });
+    choices.forEach((c) => acts.appendChild(
+      el("button", { class: "btn soft", onclick: () => reply(String(c)) }, String(c))));
+    const other = el("input", { class: "clarify-other", type: "text", placeholder: t("clarify-other") });
+    other.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && other.value.trim()) reply(other.value.trim());
+    });
+    const send = el("button", { class: "btn primary", onclick: () => { if (other.value.trim()) reply(other.value.trim()); } }, "→");
+    const box = el("div", { class: "sec", style: "max-width:430px;margin-left:40px" },
+      el("h3", null, `❓ ${p.question || ""}`),
+      acts,
+      el("div", { class: "acts", style: "margin-top:8px;gap:6px" }, other, send));
+    $("stream-inner").appendChild(box);
+    other.focus();
     this.scrollDown();
   }
 

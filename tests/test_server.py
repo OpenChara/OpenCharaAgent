@@ -11,11 +11,15 @@ from lunamoth.protocol.events import TextDelta
 @dataclass
 class DummyHandle:
     permission_hook: Any = None
+    clarify_hook: Any = None
     attached: bool = False
     detached: bool = False
 
     def set_permission_hook(self, hook):
         self.permission_hook = hook
+
+    def set_clarify_hook(self, hook):
+        self.clarify_hook = hook
 
     def set_present(self, present: bool):
         self.attached = bool(present)
@@ -210,6 +214,35 @@ def test_permission_ask_then_reply_granted():
     done = wait_response(frames, 2)
     assert done["result"]["interrupted"] is False
     assert any(f.get("method") == "event" and f["params"]["text"] == "granted" for f in frames)
+
+
+class ClarifyHandle(DummyHandle):
+    def stream_user(self, text: str):
+        answer = self.clarify_hook("which way?", ["left", "right"])
+        yield TextDelta(f"chose:{answer}")
+
+
+def test_clarify_ask_then_reply():
+    dispatch, frames = make_dispatcher(ClarifyHandle())
+    dispatch.dispatch({"jsonrpc": "2.0", "id": 1, "method": "attach", "params": {}})
+    assert dispatch.dispatch({"jsonrpc": "2.0", "id": 2, "method": "send", "params": {"text": "ask"}}) is None
+    deadline = time.time() + 1.0
+    ask = None
+    while time.time() < deadline:
+        asks = [f for f in frames if f.get("method") == "clarify_ask"]
+        if asks:
+            ask = asks[0]
+            break
+        time.sleep(0.01)
+    assert ask is not None
+    assert ask["params"]["question"] == "which way?"
+    assert ask["params"]["choices"] == ["left", "right"]
+    pid = ask["params"]["id"]
+    reply = dispatch.dispatch({"jsonrpc": "2.0", "id": 3, "method": "clarify_reply", "params": {"id": pid, "answer": "right"}})
+    assert reply["result"] == {"ok": True}
+    done = wait_response(frames, 2)
+    assert done["result"]["interrupted"] is False
+    assert any(f.get("method") == "event" and f["params"]["text"] == "chose:right" for f in frames)
 
 
 def test_second_attach_is_adoption_safe_presence_update():

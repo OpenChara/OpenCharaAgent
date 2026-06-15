@@ -104,21 +104,21 @@ class GoalStore:
     # ---- prompt block ---------------------------------------------------------------
 
     def render_block(self) -> str:
-        """The system-prompt goals block ('' when no active goals).
+        """The system-prompt wishes block ('' when no active wishes).
 
-        Operator goals are marked; the framing stays functional — how a chara
-        pursues a goal is its card's business, never the engine's.
+        Operator wishes are marked; the framing stays functional — how a chara
+        pursues a wish is its card's business, never the engine's.
         """
         active = self.active()
         if not active:
             return ""
-        lines = ["Your current goals (⭑ = set by the operator):"]
+        lines = ["Your current wishes (⭑ = set by the operator):"]
         for g in active:
             mark = "⭑ " if g.get("by") == "operator" else ""
             lines.append(f"  {g['id']}: {mark}{g['text']}")
         lines.append(
-            "Pursue them in your own way and pace. When one is truly finished, mark it with "
-            "set_goal_status — never claim completion that isn't real. You may add goals of "
-            "your own with add_goal, and drop ones that no longer matter."
+            "Pursue them in your own way and pace. When one is truly fulfilled, mark it with "
+            "set_wish_status — never claim completion that isn't real. You may add wishes of "
+            "your own with add_wish, and drop ones that no longer matter."
         )
         return "\n".join(lines)

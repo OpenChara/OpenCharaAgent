@@ -39,8 +39,8 @@ class Reply:
 
 @dataclass(frozen=True)
 class CommandInfo:
-    name: str   # "goal"
-    usage: str  # "/goal [text | done <id> | drop <id>]"
+    name: str   # "wish"
+    usage: str  # "/wish [text | done <id> | drop <id>]"
     help: str   # one line
 
 
@@ -99,9 +99,9 @@ class StateSnapshot:
     memory_path: str
     sandbox_root: str
     workspace_root: str
-    # Goals/skills/MCP listings are NOT here on purpose: the snapshot feeds a
+    # Wishes/skills/MCP listings are NOT here on purpose: the snapshot feeds a
     # status line polled several times a second, and those need disk walks.
-    # Rich UIs get them from /goal /skills /mcp Reply.data on demand.
+    # Rich UIs get them from /wish /skills /mcp Reply.data on demand.
 
 
 def test_connection(settings) -> tuple[bool, str]:
@@ -109,6 +109,17 @@ def test_connection(settings) -> tuple[bool, str]:
     from ..core.llm import LLMClient
 
     return LLMClient(settings.to_llm_config()).test_connection()
+
+
+def browser_driver_status() -> tuple[str | None, bool]:
+    """The optional browser_* tool driver's state, for `lunamoth setup browser`
+    / `doctor`. Returns (agent_browser_cli_path_or_None, chromium_installed).
+    Frontends reach the backend only through this layer; cli.py must not import
+    tools/ directly (architecture rule)."""
+    from ..tools.builtin import _browser_driver as drv
+
+    drv._reset_caches_for_test()  # report the real current state, not a stale cache
+    return drv.find_agent_browser(), drv.chromium_installed()
 
 
 class CharaHandle:
@@ -348,6 +359,14 @@ class CharaHandle:
 
     def set_permission_hook(self, hook: "Callable[[str, str, str, int], bool] | None") -> None:
         self._agent.tools.permission_hook = hook
+
+    def set_clarify_hook(self, hook: "Callable[[str, list], str] | None") -> None:
+        """Supply the interactive callback the `clarify` tool blocks on
+        (question, choices) -> answer. Mirrors set_permission_hook: an
+        interactive frontend installs it; without one, clarify degrades to a
+        clear tool_error instead of fabricating an answer. Presence-gated at
+        call time, like request_permission."""
+        self._agent.tools.clarify_hook = hook
 
     def operator_command(self, command: str, timeout: int = 120) -> str:
         """The OPERATOR's shell in the chara's sandbox — same runner, same

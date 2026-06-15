@@ -145,22 +145,31 @@ class CharacterCard:
         """The card's recommended tool pack / limits / life knobs.
 
         Lives in `extensions.lunamoth` (SillyTavern-compatible free-form field):
-            {"toolpack": "sandbox", "memory_chars": 8000, "goals": ["..."]}
+            {"toolpack": "sandbox", "memory_chars": 8000, "wishes": ["..."]}
         The world is NOT here — it lives in the standard `character_book` field
         (the card is the ONE external file). The context window is NOT here
         either — it's the model's real window (providers.py). Cards that omit
         this block (e.g. plain SillyTavern imports) just get the global
         fallbacks — so any imported card Just Works.
+
+        Seed wishes are read from `extensions.lunamoth.wishes` first, falling
+        back to the legacy `extensions.lunamoth.goals` (one-load migration —
+        an existing card's seeds are never lost). The normalized list is
+        exposed under `wishes`.
         """
         ext = self.extensions.get("lunamoth")
         if not isinstance(ext, dict):
             return {}
         out = dict(ext)
-        goals = out.get("goals")
-        if isinstance(goals, list):
-            out["goals"] = [str(g).strip() for g in goals if str(g).strip()]
+        # wishes (new) first, then legacy goals — never lose an existing card's seeds.
+        raw = out.get("wishes")
+        if not isinstance(raw, list):
+            raw = out.get("goals")
+        out.pop("goals", None)
+        if isinstance(raw, list):
+            out["wishes"] = [str(g).strip() for g in raw if str(g).strip()]
         else:
-            out.pop("goals", None)
+            out.pop("wishes", None)
         return out
 
     def theme_colors(self) -> dict[str, str]:

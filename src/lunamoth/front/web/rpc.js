@@ -166,6 +166,7 @@ class CharaClient {
       }
       if (method === "event" && this.onProtocolEvent) this.onProtocolEvent(params);
       else if (method === "permission_ask" && this.onPermissionAsk) this.onPermissionAsk(params);
+      else if (method === "clarify_ask" && this.onClarifyAsk) this.onClarifyAsk(params);
       else if (method === "peer_message" && this.onPeerMessage) this.onPeerMessage(params);
       else if (method === "turn_end" && this.onTurnEnd) this.onTurnEnd(params);
       else if (method === "life.state" && this.onLifeState) this.onLifeState(params);
@@ -212,6 +213,7 @@ class CharaClient {
   command(line) { return this.sock.call("command", { line }, 60000); }
   snapshot() { return this.sock.call("snapshot", {}, 20000); }
   permissionReply(id, granted) { return this.sock.call("permission_reply", { id, granted }, 10000); }
+  clarifyReply(id, answer) { return this.sock.call("clarify_reply", { id, answer }, 10000); }
   detach() { return this.sock.call("detach", {}, 5000); }
   close() { this.sock.close(); }
   get open() { return this.sock.open; }

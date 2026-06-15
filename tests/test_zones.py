@@ -12,12 +12,14 @@ from lunamoth.session.settings import Settings
 
 
 def _write_card(path: Path, *, phi: str = "", rules_closer: str = "", goals: list[str] | None = None,
-                book: list[dict] | None = None) -> Path:
+                wishes: list[str] | None = None, book: list[dict] | None = None) -> Path:
     lunamoth: dict[str, object] = {"toolpack": "sandbox"}
     if rules_closer:
         lunamoth["rules_closer"] = rules_closer
     if goals is not None:
         lunamoth["goals"] = goals
+    if wishes is not None:
+        lunamoth["wishes"] = wishes
     data: dict[str, object] = {
         "name": "TestCard",
         "description": "Persona marker.",
@@ -217,11 +219,19 @@ def test_volatile_tail_never_enters_transcript(agent_factory, tmp_path, monkeypa
     assert "Environment:" not in text
 
 
-def test_card_goals_seed_once(agent_factory, tmp_path):
+def test_card_legacy_goals_seed_once(agent_factory, tmp_path):
+    # Legacy `extensions.lunamoth.goals` still seeds (one-load migration).
     card = _write_card(tmp_path / "card.json", goals=["seed one", "seed two"])
     a = agent_factory(card=card)
-    assert [g["text"] for g in a.goals.all()] == ["seed one", "seed two"]
-    a.goals.add("operator-added", by="operator")
+    assert [g["text"] for g in a.wishes.all()] == ["seed one", "seed two"]
+    a.wishes.add("operator-added", by="operator")
 
     again = agent_factory(card=card)
-    assert [g["text"] for g in again.goals.all()] == ["seed one", "seed two", "operator-added"]
+    assert [g["text"] for g in again.wishes.all()] == ["seed one", "seed two", "operator-added"]
+
+
+def test_card_wishes_seed_and_take_precedence(agent_factory, tmp_path):
+    # The new `wishes` key seeds; when both exist, wishes wins.
+    card = _write_card(tmp_path / "card.json", wishes=["a wish"], goals=["legacy goal"])
+    a = agent_factory(card=card)
+    assert [g["text"] for g in a.wishes.all()] == ["a wish"]

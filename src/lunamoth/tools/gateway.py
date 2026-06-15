@@ -99,6 +99,26 @@ class ToolGateway:
         self._ctx_obj.clarify_hook = self.clarify_hook
         return self._ctx_obj
 
+    def todo_injection(self) -> str | None:
+        """The active todo list rendered for re-injection after a compaction.
+
+        Hermes re-injects the live task list once the old window is summarized,
+        so the model's in-progress work is never compressed away. Returns the
+        text block (pending/in_progress items only) or None when there is no
+        active task list. Reads the TodoStore stashed on the ToolContext by the
+        todo tool (builtin/todo.py); no-op when the tool was never used."""
+        ctx = self._ctx_obj
+        if ctx is None:
+            return None
+        store = ctx._scratch.get("todo_store")
+        fmt = getattr(store, "format_for_injection", None)
+        if not callable(fmt):
+            return None
+        try:
+            return fmt()
+        except Exception:
+            return None
+
     def _code_dispatch(self, name: str, args: dict) -> str:
         """The tool surface execute_code exposes to sandboxed Python: same gate +
         guard + audit as a model call, returning the raw JSON string."""

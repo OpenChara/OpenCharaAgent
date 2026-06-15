@@ -38,6 +38,9 @@ class _Handle:
     def set_permission_hook(self, hook):
         pass
 
+    def set_clarify_hook(self, hook):
+        pass
+
     def attach(self, present=True):
         self.attached = True
         return {"opening": "adopt"}
