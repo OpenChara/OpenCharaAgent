@@ -530,26 +530,34 @@ class ChatController {
   }
 
   /* An inline attachment the chara sent: {url, mime, name, caption, channel}.
-     Images render as a centered .wp-img; anything else becomes a small file chip
-     with a download link. muse-channel attachments use the muse register; say is a
-     normal char message. Always its own row (closes any open text/tool group). */
+     The url points at the LIVE sandbox file (served on demand, not persisted).
+     Images render inline as .wp-img and degrade to a placeholder if the file is
+     gone; other files render as an .artifact card whose Open button hits the url
+     (a moved/deleted file → 404, i.e. "doesn't exist"). muse → muse register. */
   appendCharAttachment(ev) {
     this.clearEmpty();
     this.closeCurrent();
     this.breakToolGroup();
+    const url = String(ev.url || "");
     const isImage = String(ev.mime || "").startsWith("image/");
     const name = ev.name || (isImage ? "image" : "file");
     let media;
     if (isImage) {
       const img = el("img", { alt: name, loading: "lazy" });
-      // If the image can't load, degrade to a download chip instead of a broken glyph.
+      // Sandbox file may be gone → show a placeholder, never a broken-image glyph.
       img.onerror = () => media.replaceWith(
-        el("a", { class: "file-chip", href: String(ev.url || ""), download: name }, name));
-      img.src = String(ev.url || "");   // set after creation so layout never blocks
+        el("div", { class: "att-missing" }, t("att-img-missing")));
+      img.src = url;   // set after creation so layout never blocks
       media = el("div", { class: "wp-img" }, img);
     } else {
-      const link = el("a", { class: "file-chip", href: String(ev.url || ""), download: name }, name);
-      media = link;
+      const ext = (name.split(".").pop() || "").toUpperCase().slice(0, 4) || "FILE";
+      media = el("div", { class: "artifact" },
+        el("div", { class: "thumb" }, ext),
+        el("div", { class: "meta" },
+          el("b", {}, name),
+          el("span", {}, ev.mime || t("att-file"))),
+        el("div", { class: "acts" },
+          el("a", { class: "go", href: url, target: "_blank", rel: "noopener", download: name }, t("att-open"))));
     }
     const caption = ev.caption ? el("div", { class: "attach-cap" }, ev.caption) : null;
     if (ev.channel === "muse") {

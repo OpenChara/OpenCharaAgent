@@ -86,6 +86,9 @@ const I18N = {
   "tool-no-summary": ["（无结果摘要）", "(no result summary)"],
   "superchat-tip": ["它想引起你的注意，希望你回复", "a bid for your attention — it hopes you'll reply"],
   "channel-say": ["say", "say"],
+  "att-open": ["打开", "Open"],
+  "att-file": ["文件", "file"],
+  "att-img-missing": ["图片已不在沙盒里", "image no longer in the sandbox"],
   "reset-confirm": ["清空当前上下文、开启新纪元？完整转录仍会保留在磁盘上。", "Clear the current context and start a new epoch? The full transcript stays on disk."],
   // right panel
   "pg-status": ["状态", "Status"],

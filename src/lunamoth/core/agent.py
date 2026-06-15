@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import base64
 import os
 import shutil
+import urllib.parse
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
@@ -733,19 +733,21 @@ class LunaMothAgent:
             caption = str(meta.get("caption") or args.get("caption") or "")
             try:
                 fp = self.sandbox.resolve_inside(relp, base=self.sandbox.workspace_dir)
-                if fp.stat().st_size > 8 * 1024 * 1024:  # re-check at read time (TOCTOU)
-                    raise ValueError("file grew past the 8MB send limit")
-                data_b64 = base64.b64encode(fp.read_bytes()).decode("ascii")
+                if not fp.is_file():
+                    raise FileNotFoundError(relp)
+                # Reference the LIVE sandbox file, served on demand — never embed or
+                # persist the bytes. If the chara later moves/deletes it, the frontend
+                # shows a placeholder (image) or a "missing" file chip on click.
                 out["attachment"] = {
-                    "url": f"data:{mime};base64,{data_b64}",
+                    "url": "/asset?p=" + urllib.parse.quote(str(fp)),
                     "mime": mime,
                     "name": Path(relp).name,
                     "caption": caption,
                 }
                 out["display"] = f"🖼️ sent {Path(relp).name}"
             except Exception as exc:  # noqa: BLE001 - surface the failure, don't fake success
-                # The tool said delivered=True, but the file couldn't be read: make the
-                # failure visible to the chara (no silent no-op) so it can react.
+                # The tool said delivered=True, but the file is gone: make the failure
+                # visible to the chara (no silent no-op) so it can react.
                 out["ok"] = False
                 out["display"] = f"⚙ send_file ✗ {_abbrev(str(exc), 120)}"
                 out["content"] = f"ERROR: could not send {relp!r}: {exc}"

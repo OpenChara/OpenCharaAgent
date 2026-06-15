@@ -762,6 +762,36 @@ body.dark .ctx-big .ctx-ring.hot{background:conic-gradient(var(--amber) calc(var
 .attach-cap{font-size:13px; color:var(--text-2); line-height:1.6; margin-top:5px}
 body.dark .file-chip{background:rgba(255,255,255,.06)}
 body.dark .file-chip:hover{background:rgba(255,255,255,.10)}
+/* non-image attachment: an artifact card (thumb + name + open) — mockup .artifact */
+.artifact{
+  display:flex; align-items:center; gap:12px; margin-top:4px; padding:11px 13px;
+  background:var(--panel); border-radius:12px; max-width:430px;
+  box-shadow:0 0 0 1px var(--hairline-2),0 1px 3px rgba(10,30,50,.05);
+}
+.artifact .thumb{
+  width:44px; height:44px; border-radius:9px; flex:none; display:flex; align-items:center; justify-content:center;
+  background:linear-gradient(150deg,#10243C,#2E6E8E 60%,#7FE8C9); color:#EAFAFF;
+  font-size:11px; font-weight:600; font-family:var(--mono); letter-spacing:.5px;
+}
+.artifact .meta{flex:1; min-width:0}
+.artifact .meta b{font-size:13px; font-weight:600; display:block; font-family:var(--mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.artifact .meta span{font-size:11.5px; color:var(--text-2)}
+.artifact .acts{display:flex; gap:6px; flex:none}
+.artifact .acts .go{
+  font-size:12px; border:none; cursor:pointer; padding:5px 13px; border-radius:7px;
+  background:var(--accent); color:#fff; text-decoration:none;
+}
+.artifact .acts .go:hover{background:var(--accent-deep)}
+.att-missing{
+  display:inline-flex; align-items:center; gap:6px; margin-top:4px; padding:9px 13px;
+  border-radius:9px; font-size:12.5px; color:var(--text-3);
+  background:rgba(20,40,60,.04); border:1px dashed var(--hairline);
+}
+.att-missing::before{content:"🖼"; opacity:.6}
+body.dark .file-chip{background:rgba(255,255,255,.06)}
+body.dark .file-chip:hover{background:rgba(255,255,255,.10)}
+body.dark .artifact{background:#262E36}
+body.dark .att-missing{background:rgba(255,255,255,.05)}
 
 /* ---------- 终端页（xterm 直通 PTY；常驻不卸载） ---------- */
 .term-head{

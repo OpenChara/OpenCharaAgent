@@ -1107,27 +1107,46 @@ class WebHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
-    def _asset_roots(self) -> list[Path]:
-        """Dirs an /asset request may read from: the card decks + each session dir."""
-        roots = [H.bundled_cards_dir().resolve(), H.user_cards_dir().resolve()]
+    def _card_roots(self) -> list[Path]:
+        return [H.bundled_cards_dir().resolve(), H.user_cards_dir().resolve()]
+
+    def _session_roots(self) -> list[Path]:
         try:
-            roots += [m.root.resolve() for m in S.list_sessions()]
+            return [m.root.resolve() for m in S.list_sessions()]
         except Exception:  # noqa: BLE001 - serving must not depend on session health
-            pass
-        return roots
+            return []
 
     def _serve_asset(self, url) -> None:
-        """Serve a per-character art-asset sidecar (sprite/background/keyvisual/
-        sticker), confined to the card & session dirs, cacheable."""
+        """Serve a file by absolute path, confined to the card decks + session dirs.
+
+        - Raster card art (png/webp/jpg/gif) → inline, cacheable.
+        - Other files (e.g. a doc the chara sent with send_file) → only when they
+          live under a SESSION dir, and only as a FORCED DOWNLOAD (octet-stream +
+          attachment) so nothing executes inline. Card-dir non-images (card.json)
+          stay refused. Session files are served no-store so a moved/deleted file
+          turns into a 404 the frontend can show as a placeholder / "missing".
+        """
         raw = (parse_qs(url.query).get("p") or [""])[0]
         try:
             target = Path(unquote(raw)).resolve()
         except Exception:  # noqa: BLE001
             self.send_error(404); return
-        mime = self._ASSET_MIME.get(target.suffix.lower())
-        roots = self._asset_roots()
-        if mime is None or not any(target == r or r in target.parents for r in roots) or not target.is_file():
+        card_roots, session_roots = self._card_roots(), self._session_roots()
+
+        def under(roots: list[Path]) -> bool:
+            return any(target == r or r in target.parents for r in roots)
+
+        if not target.is_file() or not under(card_roots + session_roots):
             self.send_error(404); return
+        in_session = under(session_roots)
+        mime = self._ASSET_MIME.get(target.suffix.lower())
+        disposition = None
+        if mime is None:
+            if not in_session:           # non-image outside a sandbox (e.g. card.json)
+                self.send_error(404); return
+            mime = "application/octet-stream"
+            safe = target.name.replace("\\", "").replace('"', "").replace("\r", "").replace("\n", "")
+            disposition = f'attachment; filename="{safe}"'
         try:
             data = target.read_bytes()
         except OSError:
@@ -1136,7 +1155,11 @@ class WebHandler(http.server.SimpleHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "public, max-age=86400")
+        if disposition:
+            self.send_header("Content-Disposition", disposition)
+        # Sandbox files are volatile (the chara may move/delete them) → never cache;
+        # bundled card art is stable → cacheable.
+        self.send_header("Cache-Control", "no-store" if in_session else "public, max-age=86400")
         self.end_headers()
         self.wfile.write(data)
 
