@@ -184,12 +184,25 @@ class CharaHandle:
 
         # present=True — a human is watching.
         a.presence.pop_event()  # discard any stale handoff — we're here now
-        # Entering the room never wakes a sleeper, and a reconnect after the
-        # opener was already delivered is presence bookkeeping only.
-        resting = float(a.state.load().get("rest_until", 0.0) or 0.0) > time.time()
-        if resting or self._greeted:
+        # A reconnect after the opener was already delivered (same life) is
+        # presence bookkeeping only — a resident greets once per life, not once
+        # per page-load.
+        if self._greeted:
             a.presence.mark_met()
-            self._greeted = True
+            self._begin_visit()
+            return AttachInfo(
+                char_name=a.char_name(), lang=a.lang, mode=a.settings.mode,
+                show_thinking=bool(a.settings.show_thinking),
+                restored=self._display_restored(), opening="none", opening_text="",
+            )
+        # Entering the room never wakes a RESTING chara: stay silent — but do NOT
+        # consume the first meeting. The card's first_mes is the chara's one
+        # introduction; a nap must DEFER it, never burn it, so it still shows the
+        # first time the chara is awake and actually seen (regression: folding
+        # `resting` into the greeted short-circuit marked-met a never-greeted
+        # sleeper and lost its first_mes forever).
+        resting = float(a.state.load().get("rest_until", 0.0) or 0.0) > time.time()
+        if resting:
             self._begin_visit()
             return AttachInfo(
                 char_name=a.char_name(), lang=a.lang, mode=a.settings.mode,

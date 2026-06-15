@@ -107,3 +107,13 @@ def test_keyboard_interrupt_still_propagates(gw):
     _set_terminal(interrupt)
     with pytest.raises(KeyboardInterrupt):
         gw.call("terminal", command="x")  # safety quit must never be swallowed
+
+
+def test_error_null_is_not_a_failure():
+    """Regression: a success result that merely carries `"error": null` (the terminal
+    background path) must NOT be classified as a failure. Gating on key presence
+    turned such successes into a spurious 'ERROR: None'."""
+    from lunamoth.tools.gateway import _is_error_json
+    assert _is_error_json(json.dumps({"output": "started", "pid": 1, "error": None})) is False
+    assert _is_error_json(json.dumps({"error": ""})) is False
+    assert _is_error_json(json.dumps({"error": "real failure"})) is True

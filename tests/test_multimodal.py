@@ -249,3 +249,59 @@ def test_wechat_junk_never_crashes():
     assert item_list_to_parts([None, 5]) == ("", [])
     text, atts = item_list_to_parts([None, 5, {"type": "x"}])
     assert text == "[媒体]" and atts == []
+
+
+# ---- tool→model image vision (read_file on an image) -------------------------
+# A chara reading a workspace image: when the model has vision, the agent injects
+# the pixels as a follow-up USER message (hermes image_url shape); otherwise the
+# honest no-vision note stands. Unit-tests the agent helper in isolation.
+import types as _types
+
+from lunamoth.core.agent import LunaMothAgent
+
+
+class _StubLLM:
+    def __init__(self, vision):
+        self._v = vision
+
+    def vision_supported(self):
+        return self._v
+
+
+def _agent_stub(sandbox, vision):
+    return _types.SimpleNamespace(sandbox=sandbox, llm=_StubLLM(vision))
+
+
+def _png(nbytes=64):
+    return b"\x89PNG\r\n\x1a\n" + b"x" * nbytes
+
+
+def test_image_vision_followup_injects_user_image_when_vision():
+    sb = _sandbox()
+    rel = sb.write_bytes("look.png", _png())
+    out = LunaMothAgent._image_vision_followup(_agent_stub(sb, True), rel)
+    assert out is not None
+    note, follow = out
+    assert "attached" in note.lower()
+    assert follow["role"] == "user"            # image rides a USER message, not the tool message
+    parts = follow["content"]
+    assert parts[-1]["type"] == "image_url"
+    assert parts[-1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_image_vision_followup_none_without_vision():
+    sb = _sandbox()
+    rel = sb.write_bytes("look.png", _png())
+    assert LunaMothAgent._image_vision_followup(_agent_stub(sb, False), rel) is None
+
+
+def test_image_vision_followup_none_for_oversized():
+    sb = _sandbox()
+    rel = sb.write_bytes("big.png", _png(INLINE_IMAGE_MAX_BYTES + 1))
+    assert LunaMothAgent._image_vision_followup(_agent_stub(sb, True), rel) is None
+
+
+def test_image_vision_followup_none_for_nonimage():
+    sb = _sandbox()
+    rel = sb.write_bytes("notes.txt", b"hello, not an image")
+    assert LunaMothAgent._image_vision_followup(_agent_stub(sb, True), rel) is None

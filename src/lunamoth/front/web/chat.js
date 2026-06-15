@@ -60,6 +60,40 @@ function humanSize(n) {
   return (n / 1024 / 1024).toFixed(1) + " MB";
 }
 
+/* Compact, hermes-style summary for a run of tool calls: {read_file:1, terminal:2}
+   → "read 1 file · ran 2 commands". Unknown tools fall back to "name ×N". */
+const _TOOL_SUMMARY = {
+  read_file:    { verb: "read",         noun: "file" },
+  write_file:   { verb: "wrote",        noun: "file" },
+  patch:        { verb: "edited",       noun: "file" },
+  search_files: { verb: "searched",     noun: "" },
+  terminal:     { verb: "ran",          noun: "command" },
+  execute_code: { verb: "ran",          noun: "script" },
+  process:      { verb: "managed",      noun: "process", plural: "processes" },
+  web_search:   { verb: "web-searched", noun: "" },
+  web_extract:  { verb: "fetched",      noun: "page" },
+  send_file:    { verb: "sent",         noun: "file" },
+  memory:       { verb: "noted",        noun: "memory", plural: "memories" },
+  todo:         { verb: "updated",      noun: "todo" },
+};
+function summarizeToolTally(tally, fails) {
+  const parts = [];
+  for (const name of Object.keys(tally)) {
+    const n = tally[name];
+    const m = _TOOL_SUMMARY[name];
+    if (m) {
+      let noun = m.noun;
+      if (noun && n !== 1) noun = m.plural || noun + "s";
+      parts.push(noun ? `${m.verb} ${n} ${noun}` : `${m.verb} ${n}×`);
+    } else {
+      parts.push(`${name} ×${n}`);
+    }
+  }
+  let s = parts.join(" · ");
+  if (fails) s += ` · ${fails} failed`;
+  return s || "working…";
+}
+
 /* ============================ GATEWAY（右侧面板「网关」页） ============================ */
 const GW_MASK = "••••••••"; // hub.py _SECRET_MASK：后端给秘密字段回显的掩码
 /* GW_PLATFORMS — 纯数据注册表（Hermes field-copy 三件套：label/help/placeholder）。
@@ -296,7 +330,11 @@ class ChatController {
     $("chat-root").removeAttribute("data-life");
     const c = this.client;
     (async () => {
-      try { if (c.streaming) await c.interrupt(); } catch (e) { /* gone */ }
+      // Leaving the chat is a pure presence fact — NEVER interrupt the in-flight
+      // turn. The resident keeps running; the supervisor translates this detach
+      // into `presence.set false`, the reply finishes and is delivered, and on
+      // return _display_restored() rebuilds the tail. (Only the explicit ■ stop
+      // button calls interrupt(); leaving the page must not.)
       try { await c.detach(); } catch (e) { /* gone */ }
       c.close();
     })();
@@ -441,6 +479,7 @@ class ChatController {
   restoreToolCall(fn, callId) {
     const name = fn.name || "?";
     const group = this.ensureToolGroup();
+    this._tallyTool(name);
     const detail = el("div", { class: "tool-detail" });
     if (isTechnical()) {
       const args = toolArgsSummary(fn.arguments);
@@ -677,10 +716,30 @@ class ChatController {
   ensureToolGroup() {
     if (this.toolChips && this.toolChips.isConnected) return this.toolChips;
     this.closeCurrent();
-    const node = el("div", { class: "tool-chip-line" });
-    $("stream-inner").appendChild(node);
-    this.toolChips = node;
-    return node;
+    // A run of consecutive tool calls folds behind ONE compact summary line
+    // (hermes-style: "⚙ read 1 file · ran 2 commands"), collapsed by default;
+    // click the summary to expand the individual chips. Keeps the stream tidy
+    // instead of one line per call.
+    const wrap = el("div", { class: "tool-group collapsed" });
+    const summary = el("button", { class: "tool-group-summary" }, "⚙ …");
+    const chips = el("div", { class: "tool-chip-line" });
+    summary.onclick = () => wrap.classList.toggle("collapsed");
+    wrap.appendChild(summary);
+    wrap.appendChild(chips);
+    $("stream-inner").appendChild(wrap);
+    chips._summary = summary;
+    chips._tally = {};
+    chips._fails = 0;
+    this.toolChips = chips;
+    return chips;
+  }
+
+  /* Update the current group's compact summary as calls stream in / restore. */
+  _tallyTool(name) {
+    const chips = this.toolChips;
+    if (!chips || !chips._tally) return;
+    chips._tally[name] = (chips._tally[name] || 0) + 1;
+    if (chips._summary) chips._summary.textContent = "⚙ " + summarizeToolTally(chips._tally, chips._fails);
   }
 
   breakToolGroup() {
@@ -696,6 +755,7 @@ class ChatController {
     this.closeCurrent();
     const name = ev.name || "?";
     const group = this.ensureToolGroup();
+    this._tallyTool(name);
     const detail = el("div", { class: "tool-detail" }, isTechnical() ? (ev.preview || "") : "");
     const button = el("button", { class: "tool-chip running" },
       el("span", { class: "spin" }), el("span", null, `⚙ ${name}`));
@@ -713,6 +773,7 @@ class ChatController {
     let rec = this.activeTools.get(key);
     if (!rec) {
       const group = this.ensureToolGroup();
+      this._tallyTool(name);   // orphan end (no matching start) still counts in the summary
       const detail = el("div", { class: "tool-detail" });
       const button = el("button", { class: "tool-chip" });
       const item = el("div", { class: "tool-chip-item" }, button, detail);
@@ -721,6 +782,10 @@ class ChatController {
       rec = { item, button, detail, name };
     }
     const ok = ev.ok !== false;
+    if (!ok && this.toolChips && this.toolChips._summary) {
+      this.toolChips._fails = (this.toolChips._fails || 0) + 1;
+      this.toolChips._summary.textContent = "⚙ " + summarizeToolTally(this.toolChips._tally || {}, this.toolChips._fails);
+    }
     rec.button.className = "tool-chip " + (ok ? "ok" : "err");
     rec.button.textContent = `⚙ ${name} ${ok ? "✓" : "✗"} · ${durationText(ev.duration)}`;
     rec.detail.textContent = ev.summary || t("tool-no-summary");
@@ -1219,6 +1284,37 @@ class ChatController {
       el("div", { class: "ctl" },
         el("span", { class: "fact" }, emb),
         el("span", { class: "fact-hint" }, t("emb-fact-hint")))));
+    // Per-chara visuals — background / 立绘 opacity + position. Stored PER SESSION
+    // (app.js visualKey scopes the keys by chat name) and set HERE in the chara's
+    // own panel, not in the global settings page: visuals belong to the session.
+    const vp = (typeof readVisualPrefs === "function")
+      ? readVisualPrefs() : { bgOpacity: 18, spriteOpacity: 16, spritePos: "right" };
+    const setVis = (k, v) => {
+      try { localStorage.setItem(visualKey(k), String(v)); } catch (e) { /* ok */ }
+      applyVisualPrefs();
+    };
+    const visuals = el("div", { class: "pgroup", style: "margin-top:16px" });
+    visuals.appendChild(el("div", { class: "pfield" },
+      el("label", null, t("set-chat-bg")),
+      el("div", { class: "ctl" },
+        el("input", { type: "range", class: "lm-range", id: "bg-opacity", min: "0", max: "100", step: "1",
+          value: String(vp.bgOpacity), oninput: (ev) => setVis("lm-chat-bg-opacity", ev.target.value) }))));
+    visuals.appendChild(el("div", { class: "pfield" },
+      el("label", null, t("set-sprite-opacity")),
+      el("div", { class: "ctl" },
+        el("input", { type: "range", class: "lm-range", id: "sprite-opacity", min: "0", max: "100", step: "1",
+          value: String(vp.spriteOpacity), oninput: (ev) => setVis("lm-sprite-opacity", ev.target.value) }))));
+    const posSeg = el("div", { class: "seg", id: "sprite-pos-seg" });
+    ["off", "left", "center", "right"].forEach((p) => {
+      const sp = el("span", { "data-pos": p, onclick: () => setVis("lm-sprite-pos", p) }, t("pos-" + p));
+      if (p === vp.spritePos) sp.classList.add("on");
+      posSeg.appendChild(sp);
+    });
+    visuals.appendChild(el("div", { class: "pfield" },
+      el("label", null, t("set-sprite-pos")),
+      el("div", { class: "ctl" }, posSeg)));
+    body.appendChild(visuals);
+
     const danger = el("div", { class: "pgroup", style: "margin-top:22px" });
     danger.appendChild(this.prow({
       label: t("p-reset"), cls: "danger click",

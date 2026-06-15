@@ -375,3 +375,19 @@ def test_subagent_toolsets_excludes_delegation_and_code():
     ts = dt_mod._subagent_toolsets()
     assert "delegation" not in ts
     assert "code_execution" not in ts
+
+
+def test_execute_code_runs_from_workspace_not_double_cd(tmp_path):
+    """Regression: execute_code must NOT pass workdir=stage_dir. Doing so made the
+    real cwd the stage dir under sandbox-darwin/dir isolation, so the command's own
+    `cd {rel}` double-applied (stage_dir/.execute_code_* → not found): the script
+    never ran yet status=success. cwd must default to the workspace, with a single
+    relative cd into the stage dir."""
+    records = []
+    ctx = make_ctx(tmp_path, dispatch=lambda n, a: "{}",
+                   terminal_output="ok\n", terminal_records=records)
+    ec_mod.execute_code({"code": "print('ok')"}, ctx)
+    assert records, "run_terminal was not called"
+    rec = records[0]
+    assert rec["workdir"] is None, "must not pass workdir=stage_dir (the double-cd bug)"
+    assert rec["command"].startswith("cd ") and ".execute_code_" in rec["command"]

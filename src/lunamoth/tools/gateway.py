@@ -277,8 +277,11 @@ class ToolGateway:
 
 
 def _is_error_json(payload: str) -> bool:
-    """A handler signalled failure when it returned a JSON object with a top-level
-    "error" key (hermes' tool_error shape)."""
+    """A handler signalled failure when it returned a JSON object whose top-level
+    "error" key carries a non-empty value (hermes' tool_error shape). A success
+    result that merely *includes* an "error": null field (e.g. the terminal
+    background path) is NOT a failure — gating on key presence alone turned such
+    successes into a spurious "ERROR: None" and sent the model chasing ghosts."""
     if not isinstance(payload, str):
         return False
     s = payload.lstrip()
@@ -288,13 +291,13 @@ def _is_error_json(payload: str) -> bool:
         obj = json.loads(s)
     except (json.JSONDecodeError, ValueError):
         return False
-    return isinstance(obj, dict) and "error" in obj
+    return isinstance(obj, dict) and obj.get("error") not in (None, "")
 
 
 def _error_text(payload: str) -> str:
     try:
         obj = json.loads(payload)
-        if isinstance(obj, dict) and "error" in obj:
+        if isinstance(obj, dict) and obj.get("error") not in (None, ""):
             return str(obj["error"])
     except (json.JSONDecodeError, ValueError, TypeError):
         pass

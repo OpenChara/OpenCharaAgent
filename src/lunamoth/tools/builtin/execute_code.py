@@ -410,6 +410,13 @@ def execute_code(args: dict, ctx) -> str:
         # Run the child inside the chara isolation. PYTHONPATH points at the
         # stage dir so `from hermes_tools import ...` (and lunamoth_tools)
         # resolve. We force UTF-8 + no bytecode, exactly like hermes (:1225-1244).
+        # Run from the workspace (the default cwd) and `cd` into the stage dir by
+        # its workspace-relative name. Do NOT pass workdir=stage_dir: that makes
+        # run_terminal set the real cwd to stage_dir under sandbox-darwin/dir
+        # isolation, so this `cd {rel}` would double-apply (stage_dir/.execute_code_*
+        # → "No such file or directory", script never runs, yet status=success).
+        # With cwd=workspace for every isolation (docker/bwrap chdir to workspace
+        # themselves), `cd {rel}` resolves to the stage dir uniformly.
         rel = stage_dir.name
         command = (
             f"cd {_q(rel)} && "
@@ -417,7 +424,7 @@ def execute_code(args: dict, ctx) -> str:
             f"PYTHONPATH={_q(str(stage_dir))} "
             f"python3 script.py"
         )
-        raw_output = ctx.run_terminal(command, timeout=timeout, workdir=stage_dir)
+        raw_output = ctx.run_terminal(command, timeout=timeout)
         stop_event.set()
         if rpc_thread:
             rpc_thread.join(timeout=3)

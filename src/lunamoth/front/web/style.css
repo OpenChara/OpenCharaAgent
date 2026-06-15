@@ -363,7 +363,17 @@ body.technical .chan-badge{display:inline-block}
 .md-code{font-family:var(--mono); font-size:.92em; background:rgba(20,40,60,.06); border-radius:4px; padding:0 4px}
 body.dark .md-pre{background:rgba(255,255,255,.06)}
 body.dark .md-code{background:rgba(255,255,255,.08)}
-.tool-chip-line{padding-left:40px; display:flex; flex-wrap:wrap; align-items:flex-start; gap:6px 7px}
+.tool-group{margin:2px 0}
+.tool-group-summary{
+  border:none; cursor:pointer; user-select:none; background:transparent;
+  margin-left:40px; padding:2px 4px 2px 0; font-size:11.5px; color:var(--text-3);
+  display:inline-flex; align-items:center; gap:6px; border-radius:6px;
+}
+.tool-group-summary:hover{color:var(--text-2)}
+.tool-group-summary::before{content:"▸"; font-size:9px; opacity:.7; transition:transform .12s ease}
+.tool-group:not(.collapsed) .tool-group-summary::before{transform:rotate(90deg)}
+.tool-group.collapsed .tool-chip-line{display:none}
+.tool-chip-line{padding-left:40px; display:flex; flex-wrap:wrap; align-items:flex-start; gap:6px 7px; margin-top:4px}
 .tool-chip-item{display:flex; flex-direction:column; align-items:flex-start; gap:4px; max-width:100%}
 .tool-chip{
   border:none; cursor:pointer; user-select:none; border-radius:99px; padding:4px 9px;

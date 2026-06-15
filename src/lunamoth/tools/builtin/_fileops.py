@@ -372,8 +372,8 @@ class FileOps:
                 is_binary=True,
                 file_size=file_size,
                 hint=(
-                    "Image file detected. Automatically redirected to vision_analyze tool. "
-                    "Use vision_analyze with this file path to inspect the image contents."
+                    "Image file — cannot be read as text. You can show it to your user "
+                    "with send_file, but cannot inspect its pixels here."
                 ),
             )
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import base64
+import mimetypes
 import os
 import shutil
 import urllib.parse
@@ -21,7 +23,9 @@ from .context import ContextBuffer, _msg_text, estimate_tokens
 from ..tools.goals import GoalStore
 from .llm import LLMClient
 from ..protocol import MUSE, Notice, TextDelta
-from .attachments import IngestResult, RawAttachment, build_user_content, ingest_attachments
+from .attachments import (
+    INLINE_IMAGE_MAX_BYTES, IngestResult, RawAttachment, build_user_content, ingest_attachments,
+)
 from ..tools.memory import MemoryLimits, MemoryStore
 from ..content.persona import (
     DEFAULT_NAME,
@@ -475,9 +479,12 @@ class LunaMothAgent:
             parts.append(f"{n_stick} expression stickers (assets/stickers/)")
         if not parts:
             return ""
-        return ("[Your art] In workspace/assets you have your own visual set: "
+        return ("[Your visual set] Your workspace's assets/ folder holds your card's "
+                "reference art — read-only roleplay visuals, kept out of your works: "
                 + "; ".join(parts)
-                + ". You can send any of these to the foreground when it fits (e.g. with send_file).")
+                + ". Reach them with plain workspace-relative paths — e.g. assets/sprite.png, "
+                "NOT workspace/assets/... . You can show any of these to the foreground when "
+                "it fits (e.g. with send_file).")
 
     def _stable_prefix(self) -> list[str]:
         """Session-stable prompt prefix. The same list object is reused until a
@@ -751,7 +758,56 @@ class LunaMothAgent:
                 out["ok"] = False
                 out["display"] = f"⚙ send_file ✗ {_abbrev(str(exc), 120)}"
                 out["content"] = f"ERROR: could not send {relp!r}: {exc}"
+        elif name == "read_file" and result.get("ok"):
+            # read_file on an image can't return pixels as text. When the model has
+            # vision, hand the loop a follow-up USER message carrying the image_url
+            # (hermes shape — pixels ride a user message, never the tool message);
+            # without vision, the honest "can't see it" note stands.
+            try:
+                meta = _json.loads(result.get("data") or "{}")
+            except _json.JSONDecodeError:
+                meta = {}
+            if meta.get("is_image"):
+                relp = str(meta.get("path") or args.get("path") or "")
+                inj = self._image_vision_followup(relp)
+                if inj is not None:
+                    note, follow = inj
+                    out["content"] = note
+                    out["follow_up"] = follow
+                    out["display"] = f"🖼️ read {Path(relp).name} (attached to view)"
         return out
+
+    def _image_vision_followup(self, relp: str):
+        """Turn a workspace image into a follow-up USER message carrying the pixels,
+        when (and only when) the active model can see images. Returns
+        ``(tool_note, user_message)`` or ``None`` to keep the honest no-vision note.
+
+        hermes shape (mirrors core/attachments.py): an ``image_url`` data-URI on a
+        user message — NEVER on the tool message (OpenAI-compatible APIs reject
+        image parts in tool-role content). Oversized/non-image/unreadable → None,
+        so the file stays on disk and the truthful note is shown (no fabrication)."""
+        try:
+            if not self.llm.vision_supported():
+                return None
+            fp = self.sandbox.resolve_inside(relp, base=self.sandbox.workspace_dir)
+            if not fp.is_file():
+                return None
+            data = fp.read_bytes()
+        except Exception:  # noqa: BLE001 - any failure → keep the honest note
+            return None
+        if not data or len(data) > INLINE_IMAGE_MAX_BYTES:
+            return None  # too large to inline — leave it on disk, note unchanged
+        mime, _ = mimetypes.guess_type(str(fp))
+        if not mime or not mime.startswith("image/"):
+            return None
+        b64 = base64.b64encode(data).decode("ascii")
+        note = (f"Image {relp} is attached for you to see in the next message — "
+                "describe or use what is actually in it, not a guess.")
+        follow = {"role": "user", "content": [
+            {"type": "text", "text": f"[image: {relp}]"},
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+        ]}
+        return note, follow
 
     def _ingest_attachments(self, attachments) -> IngestResult:
         """Decode + place inbound attachments. Never raises into a turn: a bad

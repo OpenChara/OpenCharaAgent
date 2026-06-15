@@ -84,6 +84,29 @@ def test_attach_never_wakes_a_resting_chara(agent):
     assert a.state.load()["user_present"] is True
 
 
+def test_resting_defers_first_meeting_does_not_burn_it(agent):
+    """Regression: a never-met chara that happens to be resting when the human
+    first attaches must NOT have its first_mes burned. The resting attach stays
+    silent BUT defers the meeting (no mark_met); once awake, the next attach still
+    greets. (The old `if resting or self._greeted:` marked-met the sleeper and lost
+    the introduction forever.)"""
+    import time as _time
+
+    from lunamoth.protocol.api import CharaHandle
+
+    a = agent()
+    a.transcript.reset()
+    a.presence.path.unlink(missing_ok=True)  # shared SANDBOX_ROOT: ensure first meeting
+    a.state.set_rest_until(_time.time() + 600)
+    handle = CharaHandle(agent=a)
+    first = handle.attach(present=True)
+    assert first.opening == "none"                  # resting → silent
+    assert a.presence.first_meeting() is True        # but the meeting is NOT consumed
+    a.state.set_rest_until(0)                         # now awake
+    second = handle.attach(present=True)
+    assert second.opening == "greeting" and second.opening_text  # first_mes still shows
+
+
 # ---- entering never forces a turn; speak inserts entered; leave only if spoke ----
 
 def test_entering_a_return_visit_forces_nothing(agent):

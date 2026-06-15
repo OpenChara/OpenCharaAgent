@@ -1975,7 +1975,9 @@ def list_toolpacks() -> list[dict[str, Any]]:
 
 # ---- sandbox reads for the drawer ------------------------------------------------
 
-_WORK_SKIP_DIRS = {"logs", "memory", "skills", "__pycache__", ".git", "node_modules"}
+# assets/ is the card's staged reference art (roleplay visuals), not the chara's
+# own work — exclude it from the works listing just like skills/ know-how.
+_WORK_SKIP_DIRS = {"logs", "memory", "skills", "assets", "__pycache__", ".git", "node_modules"}
 _KIND_BY_EXT = {
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".gif": "image", ".webp": "image", ".svg": "image",
     ".html": "web", ".htm": "web",

@@ -324,12 +324,19 @@ const isTechnical = () => state.display === "technical";
    sprite position class. Pure presentation; degrades to nothing when a card has
    no bg_url/sprite_url. Defaults: bg 18, sprite 16, position "right". */
 const VISUAL_DEFAULTS = { bgOpacity: 18, spriteOpacity: 16, spritePos: "right" };
+/* Visuals (background / 立绘 opacity + position) are PER-CHARA, not global: each
+   session keeps its own. Scope the storage key by the open chat's name; fall back
+   to the bare key only when no chat is open (a harmless default). */
+function visualKey(base) {
+  const n = state.chat && state.chat.name;
+  return n ? `${base}:${n}` : base;
+}
 function readVisualPrefs() {
   const num = (k, d) => {
-    const v = Number(localStorage.getItem(k));
+    const v = Number(localStorage.getItem(visualKey(k)));
     return Number.isFinite(v) && v >= 0 && v <= 100 ? v : d;
   };
-  let pos = localStorage.getItem("lm-sprite-pos") || VISUAL_DEFAULTS.spritePos;
+  let pos = localStorage.getItem(visualKey("lm-sprite-pos")) || VISUAL_DEFAULTS.spritePos;
   if (!["off", "left", "center", "right"].includes(pos)) pos = VISUAL_DEFAULTS.spritePos;
   return {
     bgOpacity: num("lm-chat-bg-opacity", VISUAL_DEFAULTS.bgOpacity),
@@ -1506,20 +1513,10 @@ $("display-seg").addEventListener("click", (ev) => {
 $("reveal-home").addEventListener("click", () => {
   if (state.hub) hub.call("open.path", { path: state.hub.home, reveal: true }).catch((e) => toast(e.message, true));
 });
-$("bg-opacity").addEventListener("input", (ev) => {
-  try { localStorage.setItem("lm-chat-bg-opacity", String(ev.target.value)); } catch (e) { /* ok */ }
-  applyVisualPrefs();
-});
-$("sprite-opacity").addEventListener("input", (ev) => {
-  try { localStorage.setItem("lm-sprite-opacity", String(ev.target.value)); } catch (e) { /* ok */ }
-  applyVisualPrefs();
-});
-$("sprite-pos-seg").addEventListener("click", (ev) => {
-  const s = ev.target.closest("span");
-  if (!s) return;
-  try { localStorage.setItem("lm-sprite-pos", s.dataset.pos); } catch (e) { /* ok */ }
-  applyVisualPrefs();
-});
+// The bg/sprite/position controls now live in the chat panel's per-session
+// settings pane (chat.js renderSettingsPane), wired there per-chara. applyVisualPrefs()
+// (called on load and on chat open) still applies the CSS vars and reflects the
+// controls when they exist.
 
 /* ============================ FIRST RUN ============================ */
 let frPendingAction = null;

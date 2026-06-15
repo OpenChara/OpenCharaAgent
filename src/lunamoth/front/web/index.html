@@ -116,23 +116,10 @@
                 <span data-disp="technical" data-i18n="disp-technical">Technical</span>
               </div>
             </div>
-            <div class="set-row">
-              <div class="lbl"><span data-i18n="set-chat-bg">对话背景</span><small data-i18n="set-chat-bg-sub"></small></div>
-              <input type="range" class="lm-range" id="bg-opacity" min="0" max="100" step="1">
-            </div>
-            <div class="set-row">
-              <div class="lbl"><span data-i18n="set-sprite-opacity">立绘浓度</span><small data-i18n="set-sprite-opacity-sub"></small></div>
-              <input type="range" class="lm-range" id="sprite-opacity" min="0" max="100" step="1">
-            </div>
-            <div class="set-row">
-              <div class="lbl"><span data-i18n="set-sprite-pos">立绘位置</span></div>
-              <div class="seg" id="sprite-pos-seg">
-                <span data-pos="off" data-i18n="pos-off">关闭</span>
-                <span data-pos="left" data-i18n="pos-left">左</span>
-                <span data-pos="center" data-i18n="pos-center">中</span>
-                <span data-pos="right" data-i18n="pos-right">右</span>
-              </div>
-            </div>
+            <!-- Per-chara visuals (background / 立绘 opacity + position) moved into
+                 the chat panel's per-session settings pane (renderSettingsPane in
+                 chat.js): they belong to a session, not to global settings. -->
+
           </div>
           <div class="settings-pane" id="pane-gateway">
             <h2 data-i18n="set-gateway">网关</h2>

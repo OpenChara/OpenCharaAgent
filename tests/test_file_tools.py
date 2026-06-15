@@ -340,3 +340,22 @@ def test_patch_v4a_parse_error(ctx):
 def test_patch_content_required(ctx):
     out = _call(file_tools.patch, {"mode": "patch"}, ctx)
     assert out["error"] == "patch content required"
+
+
+# ---- assets/ is read-only to the chara ---------------------------------------
+def test_assets_dir_is_read_only(ctx):
+    (ctx.workspace / "assets").mkdir()
+    (ctx.workspace / "assets" / "sprite.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    # write_file under assets/ is refused
+    out = _call(file_tools.write_file, {"path": "assets/x.txt", "content": "nope"}, ctx)
+    assert out.get("error") and "read-only" in out["error"].lower()
+    # patch replace under assets/ is refused
+    pout = _call(file_tools.patch, {"mode": "replace", "path": "assets/sprite.png",
+                                    "old_string": "a", "new_string": "b"}, ctx)
+    assert pout.get("error") and "read-only" in pout["error"].lower()
+    # a normal workspace write still works
+    ok = _call(file_tools.write_file, {"path": "work.txt", "content": "hi"}, ctx)
+    assert not ok.get("error")
+    # reads are NOT blocked (it's read-only, not hidden)
+    r = _call(file_tools.read_file, {"path": "assets/sprite.png"}, ctx)
+    assert r.get("is_image")

@@ -894,6 +894,7 @@ class LLMClient:
                 messages.append(a_msg if echo else {k: v for k, v in a_msg.items() if k != "reasoning_content"})
 
                 if tool_calls:
+                    img_followups = []
                     for i, tc in enumerate(tool_calls):
                         fn = tc.get("function", {})
                         name = fn.get("name", "?")
@@ -922,6 +923,16 @@ class LLMClient:
                         t_msg = {"role": "tool", "tool_call_id": tc.get("id") or "", "content": res.get("content", "")}
                         record(t_msg)
                         messages.append(t_msg)
+                        follow = res.get("follow_up")
+                        if isinstance(follow, dict) and follow.get("content"):
+                            img_followups.append(follow)
+                    # A tool surfaced an image for the model to SEE (read_file on an
+                    # image, vision models only): inject it as a user message AFTER
+                    # every tool result, so the tool replies for this assistant turn
+                    # stay contiguous and the image_url rides a user message.
+                    for follow in img_followups:
+                        record(follow)
+                        messages.append(follow)
                     continue
 
                 if truncated:

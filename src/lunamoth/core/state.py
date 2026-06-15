@@ -30,7 +30,7 @@ FULL_TOOL_ACCESS = [
     "browser_scroll", "browser_back", "browser_press", "browser_get_images",
     "browser_vision", "browser_console", "browser_cdp", "browser_dialog",
     # chara-life (LunaMoth's own)
-    "speak", "rest", "add_wish", "set_wish_status",
+    "speak", "send_file", "rest", "add_wish", "set_wish_status",
 ]
 
 DEFAULT_STATUS["tool_access"] = list(FULL_TOOL_ACCESS)

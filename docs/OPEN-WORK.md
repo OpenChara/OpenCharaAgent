@@ -241,6 +241,77 @@ file is *ahead* of hermes' pty handling in care); zombie-aware
 
 ---
 
+## Structural root-causes — the recurring smell (diagnosis 2026-06-16)
+
+A batch of real-trace bugs (`send_file` invisible; `execute_code` faked success;
+`ERROR: None` on a started server; `resting` ate the first-meeting greeting; the
+`workspace/workspace` double-path) were all symptoms of **two structural smells**,
+not independent defects. Fixing them one-by-one is whack-a-mole; the durable fix
+is to collapse the shared root. (Owner decision 2026-06-16: **document this round,
+do not refactor** — the bugs themselves are patched. This is the simplification
+backlog.)
+
+**Smell A — one fact owned in several places that drift:**
+- **Tool allowlist has FOUR owners**, the worst offender. `FULL_TOOL_ACCESS`
+  (`core/state.py:22-34`) is a hand-kept third list beside `registry` and
+  `pack.tools`; the migration at `state.py:80-82` *force-resets* `tool_access`
+  back to it on every `load()` (so a tool missing from the list is not "forgotten"
+  but **actively deleted each load**); and `execute_code._enabled_tools`
+  (`tools/builtin/execute_code.py:346-352`) derives the sandbox's tool set from
+  `state.tool_access` alone, bypassing `registry ∩ pack` entirely. This is the
+  `send_file`-vanished root.
+- **`isolation` derived on two paths**: foreground `ctx.run_terminal`
+  (`tools/context.py:64-75`) never reads `state["isolation"]` (falls to
+  `runner.backend()`); background `terminal._run_background`
+  (`tools/builtin/terminal.py:221-224`) does — so fg/bg can run at different
+  isolation. Plus `ISOLATION_TO_BACKEND` is mirrored in 3 files.
+- **`execute_code` cwd set in two owners** (`run_terminal(workdir=)` + the
+  command's own `cd`) — the double-cd (now patched by dropping `workdir`).
+- **`mode`/autonomy double-written** to disk config + the live agent (`supervisor.py`).
+
+**Smell B — distinct meanings collapsed into one flag / shape:**
+- **Tool success/failure inferred from JSON shape** (`gateway._is_error_json`,
+  `gateway.py:279-294`) instead of an explicit status — `{"error": null}` read as
+  failure (patched, but the *judge-by-shape* root remains; five different
+  result shapes flow through it). `execute_code` status is `"success"` unless a
+  substring match — and the matched literal `"[runner: timeout after"` doesn't
+  even match runner's actual `"[timed out after"` (`runner.py:287`); a non-zero
+  script exit still reports success because the exit code is never returned.
+- **`attach` decision** (`protocol/api.py:149-237`) chains four orthogonal facts
+  (`present`/`_greeted`/`resting`/`first_meeting`) as sequential short-circuits;
+  `_greeted` (process) and `presence.met` (disk) are two owners of "have we met".
+- **`LifeState.state`** single string carries 6 meanings with an overloaded
+  `detail` field (`supervisor.py:383-460`).
+
+**The simplification plan (prioritized):**
+- **P0 (low-risk, no protocol/cache/card impact):**
+  - *Isolation single-source*: `ctx.run_terminal` passes `isolation=ctx.isolation()`;
+    `terminal._run_background` uses the `ctx` accessors; extract the one
+    `ISOLATION_TO_BACKEND` map. (`context.py`, `terminal.py`, `runner.py`)
+  - *Allowlist stop-the-bleed*: delete the `state.py:80-82` force-reset and make
+    `_effective` treat `state.tool_access` as a soft narrowing of `registry ∩ pack`
+    (missing ⇒ not narrowed), so a new tool can't be silently deleted.
+- **P1 (medium-risk, high-value):**
+  - *Explicit tool status*: `tool_error` writes a namespaced `{"__tool_error__": msg}`;
+    gateway judges on that key, not a scan for `"error"`; `runner`/`execute_code`
+    return structured status (real exit code), not parsed text. Migrate in two
+    steps (recognize both, write the new) so replayed transcripts stay valid.
+  - *attach decision table*: evaluate the four facts then a pure
+    `_decide_opening(present, greeted, resting, first)` — unit-testable, which this
+    bug family has always lacked. Pick `presence.met` as the single authority.
+- **P2 (needs owner sign-off — touches default capability / Settings schema /
+  card semantics):** allowlist white→deny-list inversion (default-open, same
+  philosophy as network-on-by-default); `patience` dropping its companion
+  `patience_override` bool; card `wishes` re-seeding on edit; `LifeState` struct.
+
+Sharpest framing: the shared root is that **`tool_access`/`isolation` are modeled
+as "raw-loaded in many places, each with its own default, with a migration that
+rewrites them"**, and **tool success is modeled as "no explicit status, guess from
+JSON shape"**. Collapse those two (single derived source + explicit status) and at
+least six known defects lose their common root instead of being patched one at a time.
+
+---
+
 # Part 2 — Deferred product ideas (worth considering)
 
 Salvaged from the deleted desktop design doc, the webui needs register, and the

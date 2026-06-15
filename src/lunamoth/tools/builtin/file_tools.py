@@ -70,6 +70,23 @@ def read_file(args: dict, ctx) -> str:
     result = fops.read_file(path, offset, limit)
     result_dict = result.to_dict()
 
+    # An image can't be read as text, and there is no in-context image vision for
+    # the chara yet (no vision_analyze tool exists — pointing at one was a dead
+    # end). Tell the truth about what IS possible instead of sending the model
+    # chasing a phantom tool.
+    if result_dict.get("is_image"):
+        return json.dumps({
+            "is_image": True,
+            "path": path,
+            "file_size": result_dict.get("file_size", 0),
+            "note": (
+                "This is an image — it can't be read as text, and you can't inspect "
+                "its pixels here. You CAN show it to your user with send_file. "
+                "(Images under assets/ are your card's reference visuals, already "
+                "described in your visual set.)"
+            ),
+        }, ensure_ascii=False)
+
     content_len = len(result.content or "")
     if content_len > _DEFAULT_MAX_READ_CHARS:
         total_lines = result_dict.get("total_lines", "unknown")
@@ -111,6 +128,24 @@ def read_file(args: dict, ctx) -> str:
 # ---------------------------------------------------------------------------
 # write_file
 # ---------------------------------------------------------------------------
+def _assets_readonly_error(ctx, fops, path: str):
+    """assets/ is the card's staged reference art — read-only to the chara. Refuse
+    writes/edits that resolve inside it (reads and send_file still work). Returns a
+    tool_error string when blocked, else None."""
+    try:
+        resolved = fops._resolve(path)
+        assets = fops._resolve("assets")  # same resolver writes go through
+        if resolved == assets or assets in resolved.parents:
+            return tool_error(
+                "assets/ holds your card's reference visuals and is read-only — it "
+                "can't be written to or modified. Keep your own work elsewhere in the "
+                "workspace; you can still read these files and show them with send_file."
+            )
+    except Exception:
+        return None
+    return None
+
+
 def write_file(args: dict, ctx) -> str:
     path = args.get("path")
     if not path or not isinstance(path, str):
@@ -132,6 +167,9 @@ def write_file(args: dict, ctx) -> str:
         )
 
     fops = _fileops(ctx)
+    blocked = _assets_readonly_error(ctx, fops, path)
+    if blocked:
+        return blocked
     result = fops.write_file(path, content)
     result_dict = result.to_dict()
     # Report the absolute path actually written (mis-resolution is visible).
@@ -180,10 +218,17 @@ def patch(args: dict, ctx) -> str:
                 return tool_error("path required")
             if old_string is None or new_string is None:
                 return tool_error("old_string and new_string required")
+            blocked = _assets_readonly_error(ctx, fops, path)
+            if blocked:
+                return blocked
             result = fops.patch_replace(path, old_string, new_string, replace_all)
         elif mode == "patch":
             if not patch_body:
                 return tool_error("patch content required")
+            for m in _V4A_HEADER_RE.finditer(patch_body):
+                blocked = _assets_readonly_error(ctx, fops, m.group(1).strip())
+                if blocked:
+                    return blocked
             result = fops.patch_v4a(patch_body)
         else:
             return tool_error(f"Unknown mode: {mode}")
@@ -235,7 +280,7 @@ def patch(args: dict, ctx) -> str:
 # Schemas (verbatim from hermes file_tools.py — the model is post-trained on these)
 # ---------------------------------------------------------------------------
 READ_FILE_SCHEMA = {
-    "description": "Read a text file with line numbers and pagination. Use this instead of cat/head/tail in terminal. Output format: 'LINE_NUM|CONTENT'. Suggests similar filenames if not found. Use offset and limit for large files. Reads exceeding ~100K characters are rejected; use offset and limit to read specific sections of large files. NOTE: Cannot read images or binary files — use vision_analyze for images.",
+    "description": "Read a text file with line numbers and pagination. Use this instead of cat/head/tail in terminal. Output format: 'LINE_NUM|CONTENT'. Suggests similar filenames if not found. Use offset and limit for large files. Reads exceeding ~100K characters are rejected; use offset and limit to read specific sections of large files. NOTE: For an IMAGE, when your model can see images it is shown to you directly (you can then describe or use it); otherwise the image is left on disk and you can still show it to your user with send_file. Cannot read other binary files as text.",
     "parameters": {
         "type": "object",
         "properties": {
