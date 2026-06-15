@@ -117,3 +117,6 @@ sandbox/memory/
 sandbox/logs/
 
 hermes ui/
+
+# chara-visual generation experiment (owner's WIP — never commit)
+visuals/
