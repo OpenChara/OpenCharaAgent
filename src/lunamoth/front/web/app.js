@@ -846,7 +846,10 @@ function closeModal() { $("modal-layer").classList.remove("open"); }
 $("modal-layer").addEventListener("click", (ev) => { if (ev.target === $("modal-layer")) closeModal(); });
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") { closeModal(); closeMenus(); closePopovers(); } });
 
-function closePopovers() { document.querySelectorAll(".popover").forEach((p) => p.remove()); }
+function closePopovers() {
+  document.querySelectorAll(".popover, .attach-menu").forEach((p) => p.remove());
+  document.querySelectorAll(".attach-btn.on").forEach((b) => b.classList.remove("on"));
+}
 
 /* ============================ DECK ============================ */
 /* Duplicate must NOT shadow the original: the backend dedupes by name+lang and

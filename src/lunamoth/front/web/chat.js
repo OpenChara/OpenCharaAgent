@@ -4,6 +4,12 @@
    Idle driving is SERVER-SIDE only (supervisor) — this file never calls idle. */
 "use strict";
 
+/* Line icons for the attach menu (16×16, currentColor stroke — match the theme). */
+const ICON_IMAGE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15l-5-5L5 21"/></svg>';
+const ICON_FILE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6.5A1.5 1.5 0 0 0 5 4.5v15A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V8z"/><path d="M14 3v5h5"/></svg>';
+const ICON_CLIP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>';
+const ATTACH_ACCEPT_ALL = "image/*,.pdf,.txt,.md,.json,.csv,.docx,.doc,.xlsx,.zip,.log";
+
 /* The avatar/theme editor (openAvatarEditor) now lives in app.js — it edits
    the presentation only (sidecar avatar + dual theme), soul untouched. */
 /* Encode text into a QR image data-URL locally (vendored qrcode-generator).
@@ -1877,6 +1883,59 @@ class ChatController {
     };
   }
 
+  // The + menu: pick images-only / any file (routes the one hidden input), or
+  // paste an image from the clipboard. Only honest options — no dead rows.
+  openAttachMenu(btn) {
+    closePopovers();
+    const input = $("attach-input");
+    const pick = (accept) => {
+      input.setAttribute("accept", accept);
+      input.click();   // optimistic: the OS picker opens at once
+    };
+    const menu = el("div", { class: "attach-menu" });
+    menu.appendChild(el("h4", null, t("attach-menu-title")));
+    const row = (icon, label, run) => {
+      const r = el("div", { class: "row" }, el("span", null, label));
+      const ic = el("span"); ic.innerHTML = icon; r.insertBefore(ic, r.firstChild);
+      r.onclick = () => { closePopovers(); run(); };
+      return r;
+    };
+    menu.appendChild(row(ICON_IMAGE, t("attach-images"), () => pick("image/*")));
+    menu.appendChild(row(ICON_FILE, t("attach-files"), () => pick(ATTACH_ACCEPT_ALL)));
+    if (navigator.clipboard && navigator.clipboard.read)
+      menu.appendChild(row(ICON_CLIP, t("attach-paste"), () => this.pasteImage()));
+    menu.appendChild(el("div", { class: "tip" }, t("attach-tip")));
+
+    document.body.appendChild(menu);   // append first so offsetHeight is real
+    const rect = btn.getBoundingClientRect();
+    menu.style.left = rect.left + "px";
+    menu.style.top = Math.max(8, rect.top - menu.offsetHeight - 8) + "px";
+    btn.classList.add("on");
+    setTimeout(() => document.addEventListener("click", function close(e2) {
+      if (!menu.contains(e2.target) && e2.target !== btn) {
+        closePopovers(); document.removeEventListener("click", close);
+      }
+    }), 0);
+  }
+
+  // Stage an image straight from the clipboard (the "Paste image" row).
+  async pasteImage() {
+    try {
+      const items = await navigator.clipboard.read();
+      const files = [];
+      for (const it of items) {
+        const type = (it.types || []).find((x) => x.startsWith("image/"));
+        if (!type) continue;
+        const blob = await it.getType(type);
+        files.push(new File([blob], `pasted.${(type.split("/")[1] || "png")}`, { type }));
+      }
+      if (files.length) this.stageFiles(files);
+      else this.note(t("attach-no-clip-image"));
+    } catch (e) {
+      this.note(t("attach-no-clip-image"));
+    }
+  }
+
   /* ---- composer & UI bindings ---- */
   setSending(streaming) {
     const btn = $("send-btn");
@@ -1909,13 +1968,19 @@ class ChatController {
         this.client.interrupt().catch(() => {});
       } else this.submit();
     };
-    // Attachments: + button opens the hidden file input (instant click feedback),
-    // selecting files stages them; drag-and-drop onto the chat surface does the same.
+    // Attachments: + opens a small menu (Hermes-style); each row routes to the
+    // OS picker (images-only / all files) or the clipboard. Drag-and-drop onto
+    // the chat surface stages the same way.
     const attachBtn = $("attach-btn");
     const attachInput = $("attach-input");
     attachBtn.title = t("attach-add");
     attachBtn.setAttribute("aria-label", t("attach-add"));
-    attachBtn.onclick = () => attachInput.click();   // optimistic: opens the OS picker at once
+    attachBtn.onclick = (ev) => {
+      ev.stopPropagation();
+      // Toggle: a second click on an open menu closes it.
+      if (attachBtn.classList.contains("on")) { closePopovers(); return; }
+      this.openAttachMenu(attachBtn);
+    };
     attachInput.onchange = () => {
       this.stageFiles(attachInput.files);
       attachInput.value = "";   // allow re-picking the same file
