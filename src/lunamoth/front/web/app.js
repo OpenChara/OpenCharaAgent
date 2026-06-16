@@ -332,10 +332,13 @@ const isTechnical = () => state.display === "technical";
    Operator presentation prefs (localStorage), applied as CSS vars on :root + a
    sprite position class. Pure presentation; degrades to nothing when a card has
    no bg_url/sprite_url. Defaults: bg 18, sprite 16, position "right". */
-const VISUAL_DEFAULTS = { bgOpacity: 18, spriteOpacity: 16, spritePos: "right" };
-/* Visuals (background / 立绘 opacity + position) are PER-CHARA, not global: each
-   session keeps its own. Scope the storage key by the open chat's name; fall back
-   to the bare key only when no chat is open (a harmless default). */
+const VISUAL_DEFAULTS = { bgOn: true, veilOpacity: 80, spriteOpacity: 16, spritePos: "right" };
+/* Visuals are PER-CHARA, not global: each session keeps its own. Scope the
+   storage key by the open chat's name; fall back to the bare key only when no
+   chat is open (a harmless default).
+   Model: the background IMAGE is a plain on/off toggle (shown at full strength
+   on the sides); the adjustable opacity is the centred readability VEIL behind
+   the chat column. 立绘 sprite opacity + position stay as they were. */
 function visualKey(base) {
   const n = state.chat && state.chat.name;
   return n ? `${base}:${n}` : base;
@@ -347,8 +350,10 @@ function readVisualPrefs() {
   };
   let pos = localStorage.getItem(visualKey("lm-sprite-pos")) || VISUAL_DEFAULTS.spritePos;
   if (!["off", "left", "center", "right"].includes(pos)) pos = VISUAL_DEFAULTS.spritePos;
+  const bgRaw = localStorage.getItem(visualKey("lm-chat-bg-on"));
   return {
-    bgOpacity: num("lm-chat-bg-opacity", VISUAL_DEFAULTS.bgOpacity),
+    bgOn: bgRaw === null ? VISUAL_DEFAULTS.bgOn : bgRaw === "1",
+    veilOpacity: num("lm-chat-veil-opacity", VISUAL_DEFAULTS.veilOpacity),
     spriteOpacity: num("lm-sprite-opacity", VISUAL_DEFAULTS.spriteOpacity),
     spritePos: pos,
   };
@@ -356,7 +361,9 @@ function readVisualPrefs() {
 function applyVisualPrefs() {
   const p = readVisualPrefs();
   const root = document.documentElement;
-  root.style.setProperty("--chat-bg-opacity", String(p.bgOpacity / 100));
+  // bg image: full strength when on, gone when off (the veil handles legibility)
+  root.style.setProperty("--chat-bg-opacity", p.bgOn ? "1" : "0");
+  root.style.setProperty("--chat-veil-opacity", String(p.veilOpacity / 100));
   root.style.setProperty("--chat-sprite-opacity", String(p.spriteOpacity / 100));
   const sprite = $("chat-sprite");
   if (sprite) {
@@ -364,7 +371,8 @@ function applyVisualPrefs() {
     if (p.spritePos !== "off") sprite.classList.add("pos-" + p.spritePos);
   }
   // reflect in the settings controls (instant/optimistic)
-  const bg = $("bg-opacity"); if (bg) bg.value = String(p.bgOpacity);
+  const bgsw = $("bg-on-switch"); if (bgsw) bgsw.classList.toggle("on", p.bgOn);
+  const veil = $("veil-opacity"); if (veil) veil.value = String(p.veilOpacity);
   const so = $("sprite-opacity"); if (so) so.value = String(p.spriteOpacity);
   document.querySelectorAll("#sprite-pos-seg span").forEach((s) =>
     s.classList.toggle("on", s.dataset.pos === p.spritePos));

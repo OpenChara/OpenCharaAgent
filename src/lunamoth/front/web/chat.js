@@ -296,6 +296,7 @@ class ChatController {
       $("chat-dot").className = "mini-dot";
       this.refreshIdentity();
       this.renderRestored(info.restored || []);
+      this.maybeEmptyState();   // pin the welcome header at the top (robust even if the snapshot call fails)
       this.flushSuperReads();
       this.refreshSnapshot().then(() => {
         // attach ≠ 唤醒：resting 时保持沉睡氛围，不宣称"它知道你来了"
@@ -390,24 +391,20 @@ class ChatController {
     }
   }
 
-  /* ---- empty chat = the card's brand moment ---- */
+  /* ---- the welcome header: a PERMANENT brand moment at the very top ----
+     Not just an empty-state. It stays pinned above the first message for the
+     whole conversation, so scrolling to the top of a long chat always shows the
+     avatar + name + tagline. Inserted once (idempotent); never removed. */
   maybeEmptyState() {
     const inner = $("stream-inner");
-    if (inner.children.length > 1) return;
-    const onlyArrived = inner.children.length === 1 && inner.firstChild.classList.contains("arrived");
-    if (inner.children.length === 0 || onlyArrived) {
-      const card = this.deckCard;
-      const tagline = (card && card.tagline) || "";
-      const av = this.bigAvatar();
-      inner.insertBefore(el("div", { class: "chat-empty" },
-        av, el("b", null, this.charName),
-        tagline ? el("div", { class: "tagline" }, tagline) : null), inner.firstChild);
-    }
+    if (inner.querySelector(".chat-empty")) return;   // already pinned at the top
+    const card = this.deckCard;
+    const tagline = (card && card.tagline) || "";
+    inner.insertBefore(el("div", { class: "chat-empty" },
+      this.bigAvatar(), el("b", null, this.charName),
+      tagline ? el("div", { class: "tagline" }, tagline) : null), inner.firstChild);
   }
-  clearEmpty() {
-    const node = $("stream-inner").querySelector(".chat-empty");
-    if (node) node.remove();
-  }
+  clearEmpty() { /* the welcome header is permanent now — pinned at the top, never removed */ }
 
   /* ---- restored history ----
      The restored messages now carry the full forensic shape (reasoning_content,
@@ -1291,17 +1288,24 @@ class ChatController {
     // (app.js visualKey scopes the keys by chat name) and set HERE in the chara's
     // own panel, not in the global settings page: visuals belong to the session.
     const vp = (typeof readVisualPrefs === "function")
-      ? readVisualPrefs() : { bgOpacity: 18, spriteOpacity: 16, spritePos: "right" };
+      ? readVisualPrefs() : { bgOn: true, veilOpacity: 80, spriteOpacity: 16, spritePos: "right" };
     const setVis = (k, v) => {
       try { localStorage.setItem(visualKey(k), String(v)); } catch (e) { /* ok */ }
       applyVisualPrefs();
     };
     const visuals = el("div", { class: "pgroup", style: "margin-top:16px" });
+    // Background image: a plain on/off toggle (no opacity — the veil handles that).
+    const bgSwitch = el("button", { class: "switch" + (vp.bgOn ? " on" : ""), id: "bg-on-switch",
+      onclick: () => setVis("lm-chat-bg-on", bgSwitch.classList.contains("on") ? "0" : "1") });
     visuals.appendChild(el("div", { class: "pfield" },
-      el("label", null, t("set-chat-bg")),
+      el("label", null, t("set-bg-image")),
+      el("div", { class: "ctl" }, bgSwitch)));
+    // Chat panel (veil) opacity — the white/dark backing behind the chat column.
+    visuals.appendChild(el("div", { class: "pfield" },
+      el("label", null, t("set-chat-veil")),
       el("div", { class: "ctl" },
-        el("input", { type: "range", class: "lm-range", id: "bg-opacity", min: "0", max: "100", step: "1",
-          value: String(vp.bgOpacity), oninput: (ev) => setVis("lm-chat-bg-opacity", ev.target.value) }))));
+        el("input", { type: "range", class: "lm-range", id: "veil-opacity", min: "0", max: "100", step: "1",
+          value: String(vp.veilOpacity), oninput: (ev) => setVis("lm-chat-veil-opacity", ev.target.value) }))));
     visuals.appendChild(el("div", { class: "pfield" },
       el("label", null, t("set-sprite-opacity")),
       el("div", { class: "ctl" },

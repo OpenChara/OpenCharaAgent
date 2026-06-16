@@ -249,12 +249,21 @@ body.col-resizing *{cursor:col-resize !important}
 .stream-inner{max-width:640px; margin:0 auto; padding:0 24px; display:flex; flex-direction:column; gap:18px; background:transparent}
 
 /* 角色视觉层（背景图 + 立绘）：永远坐在对话流之下，不吃点击 */
-:root{ --chat-bg-opacity:.18; --chat-sprite-opacity:.16 }
+:root{ --chat-bg-opacity:1; --chat-sprite-opacity:.16; --chat-veil-opacity:.8 }
 .chat-bg{
   position:absolute; inset:0; z-index:0; pointer-events:none;
   background-size:cover; background-position:center; background-repeat:no-repeat;
   opacity:var(--chat-bg-opacity);
 }
+/* Readability veil: a centered panel behind the chat column. The SIDES keep the
+   background image; the centre gets a (light or dark) wash so messages stay
+   legible. Opacity is operator-adjustable; the bg image is a simple on/off. */
+.chat-veil{
+  position:absolute; top:0; bottom:0; left:50%; transform:translateX(-50%);
+  width:min(720px,100%); z-index:0; pointer-events:none;
+  background:#fff; opacity:var(--chat-veil-opacity);
+}
+body.dark .chat-veil{ background:#0f141a }
 .chat-sprite{
   position:absolute; inset:0; z-index:0; pointer-events:none; overflow:hidden;
   display:none;   /* shown by a position class: .pos-left/.pos-center/.pos-right */
@@ -416,7 +425,7 @@ body.dark .md-code{background:rgba(255,255,255,.08)}
 }
 body.dark .lm-thinking.block{background:rgba(255,255,255,.05)}
 
-.composer-wrap{flex:none; padding:8px 24px 18px; position:relative}
+.composer-wrap{flex:none; padding:8px 24px 18px; position:relative; z-index:1}
 .work-status{
   max-width:640px; margin:0 auto 7px; min-height:19px;
   color:var(--text-2); font-size:12px; display:flex; align-items:center; gap:7px;

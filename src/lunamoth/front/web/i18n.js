@@ -418,6 +418,8 @@ const I18N = {
   "disp-technical": ["Technical", "Technical"],
   "disp-sub": ["Product 隐藏原始载荷；Technical 显示完整输入输出与信道来源", "Product hides raw payloads; Technical shows full I/O and channel sources"],
   "set-chat-bg": ["对话背景", "Chat background"],
+  "set-bg-image": ["背景图片", "Background image"],
+  "set-chat-veil": ["聊天底色浓度", "Chat panel opacity"],
   "set-chat-bg-sub": ["角色背景图的浓度（卡片提供图片时生效）", "Opacity of the character's background image (when the card provides one)"],
   "set-sprite-opacity": ["立绘浓度", "Sprite opacity"],
   "set-sprite-opacity-sub": ["全身立绘的浓度（卡片提供立绘时生效）", "Opacity of the full-body sprite (when the card provides one)"],
