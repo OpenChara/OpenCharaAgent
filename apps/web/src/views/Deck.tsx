@@ -36,7 +36,10 @@ export function Deck() {
   const [waking, setWaking] = useState<DeckCard | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
 
-  const allCards = (snapshot?.cards as DeckCard[] | undefined) || [];
+  const allCards = useMemo(
+    () => (snapshot?.cards as DeckCard[] | undefined) || [],
+    [snapshot?.cards],
+  );
   const defaults = (snapshot?.defaults as { has_key?: boolean; base_url?: string }) || {};
 
   const cards = useMemo(() => {
