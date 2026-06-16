@@ -479,13 +479,13 @@ docker compose up -d
   cloudflared documented as the no-inbound alternative.
 - **Markdown/icon libs — RESOLVED.** Matched hermes-desktop (`react-markdown`+`remark-gfm`; chat
   fidelity). lucide-react is a dep but the SVGs are inline (no functional gap).
-- **Login system — DELIBERATE NON-GOAL (not a gap).** The token gate already secures every bind
-  (loopback/SSH/0.0.0.0; the Docker entrypoint generates+prints one), and §10 #2 is verified working
-  with it. Adding an AstrBot-style password-login subsystem (storage + endpoint + rate-limit + login
-  UI) to the security-critical, 841-test-green auth core — for a single-operator tool where the token
-  already does the job — is complexity the maintainability mandate doesn't justify. It's a genuine
-  product-direction choice (token-URL vs password UX), so it stays an explicit owner decision, not
-  something to bake in unilaterally. Revisit only if you want the password UX.
+- **Login system — IMPLEMENTED (commit `feat(remote): optional public-bind password login`).**
+  AstrBot-modeled, additive: on a non-loopback bind an operator can bookmark the bare `https://host/`
+  and sign in with a password (`LUNAMOTH_PASSWORD`, else generated+printed-once) instead of the
+  `#token=` URL. PBKDF2-HMAC-SHA256 (600k), hash-only `auth.json` (chmod 600), per-IP rate-limit,
+  `/login`+`/authinfo` pre-auth, mints the SAME cookie. The token path is untouched and the
+  loopback/Electron/SSH app stays byte-for-byte inert (verified e2e: /authinfo:false, /login 404,
+  no auth.json, token 204/200). 854 pytest / 147 vitest green.
 
 **Verification still needing a real host (environment-blocked here, not code gaps):**
 - **Docker `docker compose up`**: the wheel builds + bundles the UI (verified via build-wheel.sh:
