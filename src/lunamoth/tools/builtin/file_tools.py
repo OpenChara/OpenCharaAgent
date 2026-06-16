@@ -198,6 +198,20 @@ def write_file(args: dict, ctx) -> str:
 import re as _re
 
 _V4A_HEADER_RE = _re.compile(r'^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+)$', _re.MULTILINE)
+# Move headers name TWO paths (`*** Move File: src -> dst`); both must pass the
+# same traversal + assets-readonly checks as the single-path headers.
+_V4A_MOVE_RE = _re.compile(r'^\*\*\*\s+Move\s+File:\s*(.+?)\s*->\s*(.+)$', _re.MULTILINE)
+
+
+def _v4a_header_paths(patch_body: str) -> list[str]:
+    """Every file path named in a V4A header: Update/Add/Delete (one path each)
+    plus Move (both src and dst). One source of truth so the traversal guard and
+    the assets-readonly pre-check cover Move exactly like the others."""
+    paths = [m.group(1).strip() for m in _V4A_HEADER_RE.finditer(patch_body)]
+    for m in _V4A_MOVE_RE.finditer(patch_body):
+        paths.append(m.group(1).strip())
+        paths.append(m.group(2).strip())
+    return paths
 
 
 def patch(args: dict, ctx) -> str:
@@ -210,13 +224,12 @@ def patch(args: dict, ctx) -> str:
 
     # V4A header traversal guard (V4A headers only; explicit path= exempt).
     if mode == "patch" and patch_body:
-        for m in _V4A_HEADER_RE.finditer(patch_body):
-            v4a_path = m.group(1).strip()
+        for v4a_path in _v4a_header_paths(patch_body):
             if has_traversal_component(v4a_path):
                 return tool_error(
                     f"V4A patch header contains '..' traversal: {v4a_path!r}. "
-                    "Use the agent's cwd-relative path (no '..') or an absolute "
-                    "path in '*** Update File:' / '*** Add File:' / '*** Delete File:' headers."
+                    "Use the agent's cwd-relative path (no '..') or an absolute path "
+                    "in '*** Update/Add/Delete/Move File:' headers."
                 )
 
     try:
@@ -234,8 +247,8 @@ def patch(args: dict, ctx) -> str:
         elif mode == "patch":
             if not patch_body:
                 return tool_error("patch content required")
-            for m in _V4A_HEADER_RE.finditer(patch_body):
-                blocked = _assets_readonly_error(ctx, fops, m.group(1).strip())
+            for p in _v4a_header_paths(patch_body):
+                blocked = _assets_readonly_error(ctx, fops, p)
                 if blocked:
                     return blocked
             result = fops.patch_v4a(patch_body)

@@ -414,13 +414,6 @@ Game-style multi-page card view: 设定 / 视觉(立绘+主视觉) / 表情 / wo
 Well-designed interaction; depends on R4.
 
 
-## R7-followup (LOW, from the R7 security audit) — V4A Move header polish
-`file_tools._V4A_HEADER_RE` matches Update|Add|Delete but not Move, so a V4A
-`Move File: src -> dst` skips both the friendly assets read-only message and the
-`..`-traversal pre-guard. NOT a confinement hole (move_file's write-mode resolver
-still refuses assets/escape destinations — verified by the audit), only a less
-helpful error. Add Move to the regex (and check its destination) for consistency.
-
 DONE this loop: R1 tool-access single-source (4435d77), R2 on-disk image vision
 (f34a55e), R3 tool-call fold i18n (e4dcce4), R7 sandbox geography (assets read-only
 sibling / workspace / works/ — full suite green, security-audited, live-Quinn verified),

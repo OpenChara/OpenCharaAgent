@@ -135,6 +135,33 @@ def test_v4a_patch_into_assets_is_refused(sandbox, ctx):
     assert (sandbox.assets_dir / "lore.txt").read_text(encoding="utf-8") == "original\n"
 
 
+def test_v4a_move_into_assets_is_refused(sandbox, ctx):
+    """A V4A `Move File: src -> assets/dst` is refused with the friendly read-only
+    message (the Move header is covered by the same scan as Update/Add/Delete)."""
+    (sandbox.workspace_dir / "note.txt").write_text("hi", encoding="utf-8")
+    body = (
+        "*** Begin Patch\n"
+        "*** Move File: note.txt -> assets/note.txt\n"
+        "*** End Patch\n"
+    )
+    out = _j(file_tools.patch, {"mode": "patch", "patch": body}, ctx)
+    assert "error" in out and "read-only" in out["error"]
+    assert not (sandbox.assets_dir / "note.txt").exists()
+    assert (sandbox.workspace_dir / "note.txt").is_file()  # source untouched
+
+
+def test_v4a_move_traversal_in_dest_is_refused(sandbox, ctx):
+    """A `..` traversal in a Move destination is caught by the header guard."""
+    body = (
+        "*** Begin Patch\n"
+        "*** Move File: note.txt -> ../escape.txt\n"
+        "*** End Patch\n"
+    )
+    out = _j(file_tools.patch, {"mode": "patch", "patch": body}, ctx)
+    assert "error" in out and "traversal" in out["error"].lower()
+    assert not (sandbox.root / "escape.txt").exists()
+
+
 def test_write_to_works_shelf_succeeds(sandbox, ctx):
     out = _j(file_tools.write_file, {"path": "works/poem.md", "content": "# hi"}, ctx)
     assert "error" not in out
