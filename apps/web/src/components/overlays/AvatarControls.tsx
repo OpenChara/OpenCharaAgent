@@ -220,6 +220,9 @@ export function AvatarControls({
           </label>
         </div>
       </div>
+      {/* The avatar editor sets the face only; sprite/background come later in the
+          deck card editor's 视觉 tab (R9). app.js:2446 visual-after-wake. */}
+      <div className="av-note">{t("visual-after-wake")}</div>
     </div>
   );
 }
