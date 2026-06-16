@@ -2394,6 +2394,35 @@ class HubDispatcher:
         if method == "card.avatar_upload":
             return avatar_upload(str(p.get("path") or ""), str(p.get("data_b64") or ""),
                                  str(p.get("ext") or ""))
+        if method == "card.visual_generate":
+            # R9: card → brief (GLOBAL default text model) → Seedream image →
+            # optional matte → preview bytes. Unopinionated about placement: it
+            # returns the image for the UI to show/save (avatars via avatar_upload).
+            from ..visuals import pipeline
+            path = str(p.get("path") or p.get("card_path") or "")
+            kind = str(p.get("kind") or "avatar")
+            if kind not in pipeline.KINDS:
+                raise RpcError(-32602, f"unknown visual kind: {kind} "
+                               f"(one of {', '.join(pipeline.KINDS)})")
+            try:
+                card = json.loads(Path(path).read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RpcError(-32035, f"unreadable card: {exc}") from exc
+            defaults = load_defaults()
+            matte_opt = p.get("matte")
+            try:
+                out = pipeline.generate(
+                    card, kind,
+                    llm_call=lambda s, u: _complete(defaults, s, u, temperature=0.7, max_tokens=3000),
+                    matte=(None if matte_opt is None else bool(matte_opt)),
+                )
+            except (RuntimeError, ValueError) as exc:
+                raise HubRpcError(-32050, str(exc), {"kind": "visual_generate"}) from exc
+            return {
+                "data_b64": base64.b64encode(out["data"]).decode("ascii"),
+                "mime": out["mime"], "kind": out["kind"],
+                "matted": out["matted"], "note": out["note"], "brief": out["brief"],
+            }
         if method == "card.avatar_read":
             return avatar_read(str(p.get("path") or ""))
         if method == "cards.list":

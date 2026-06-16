@@ -428,6 +428,30 @@ def test_image_key_and_model_global_defaults_never_echo_secret():
     assert raw["image_api_key"] == "ark-secret-1"
 
 
+def test_card_visual_generate_preview(monkeypatch):
+    # R9: brief (via the global default model — _complete) → image → preview.
+    set_defaults()
+    monkeypatch.setenv("ARK_API_KEY", "sk-img-test")
+    card = str(H.bundled_cards_dir() / "Quinn" / "card.json")
+    monkeypatch.setattr(H, "_complete",
+                        lambda *a, **k: '{"appearance":"a","palette":"p","world":"w","theme":"#1a2"}')
+    from lunamoth.tools.builtin import _image_gen
+    monkeypatch.setattr(_image_gen, "ark_generate", lambda prompt, size: ["http://x/a.png"])
+    monkeypatch.setattr(_image_gen, "download_bytes", lambda url: b"\x89PNG\r\n\x1a\nFAKE")
+    out = result("card.visual_generate", {"path": card, "kind": "avatar"})
+    assert out["kind"] == "avatar" and out["mime"] == "image/png"
+    assert out["matted"] is False
+    # base64 of the fake PNG round-trips
+    import base64 as _b64
+    assert _b64.b64decode(out["data_b64"]) == b"\x89PNG\r\n\x1a\nFAKE"
+    # unknown kind is a clean param error
+    assert rpc_error("card.visual_generate", {"path": card, "kind": "nope"})["code"] == -32602
+    # no image key → a visible -32050 (not a crash, not a fake image)
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+    monkeypatch.setenv("LUNAMOTH_HOME", str(os.path.join(os.environ["LUNAMOTH_HOME"], "no-img")))
+    assert rpc_error("card.visual_generate", {"path": card, "kind": "avatar"})["code"] == -32050
+
+
 def test_matte_status_use_and_guards(monkeypatch):
     # R11: matte.status reports models + deps; matte.use persists the active id to
     # desktop.json (read by visuals.matte.selected_model); guards reject bad input.

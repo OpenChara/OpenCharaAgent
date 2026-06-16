@@ -245,8 +245,9 @@ def status() -> dict:
 # --- runtime matte (used by R9; lazy heavy imports) ---------------------------
 
 def cut(src, *, model_id: str | None = None, despill: bool = True) -> bytes:
-    """Cut the subject out of *src* (a path or PIL image) and return PNG (RGBA)
-    bytes. Lazily imports rembg/PIL/numpy — a missing extra is a clear error.
+    """Cut the subject out of *src* (a path, PIL image, or raw image bytes) and
+    return PNG (RGBA) bytes. Lazily imports rembg/PIL/numpy — a missing extra is a
+    clear error.
 
     Mirrors the dev pipeline's flagship matte (full-res, post-processed mask,
     optional green-spill suppression for chroma-background sources)."""
@@ -268,7 +269,12 @@ def cut(src, *, model_id: str | None = None, despill: bool = True) -> bytes:
             f"matte model '{mid}' is not downloaded yet — download it in "
             "Settings·生图 first.")
 
-    image = src if hasattr(src, "convert") else Image.open(src)
+    if isinstance(src, (bytes, bytearray)):
+        image = Image.open(io.BytesIO(bytes(src)))
+    elif hasattr(src, "convert"):
+        image = src
+    else:
+        image = Image.open(src)
     out = remove(image.convert("RGBA"), session=new_session(mid),
                  post_process_mask=True)
     if despill:

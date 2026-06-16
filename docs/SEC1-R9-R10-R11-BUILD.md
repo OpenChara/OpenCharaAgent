@@ -62,4 +62,27 @@ are absent. Layering clean (visuals imports only stdlib; rembg lazy). Tests: 13 
 unit cases (registry/paths/precedence/install/download streaming+mismatch+async/delete/
 status/cut-without-deps) + 1 hub case (status/use/guards). Full suite 820 green, ruff
 clean. Audited: integrity verified, no fabrication, no poll/thread leak.
-## R9 — bring the visuals pipeline into the app (UX decisions made pragmatically)  [TODO]
+## R9 — bring the visuals pipeline into the app  [BACKEND DONE · UI pending owner UX]
+Backend shipped: src/lunamoth/visuals/pipeline.py — card → visual brief (LLM) →
+Seedream image → optional matte → preview bytes. Ports the prompt craft of
+visuals/cardbrief.py + visuals/genviz.py (BRIEF_SYSTEM, STYLE_REAL/CHIBI/WHITE_BG,
+per-kind prompts for avatar/sprite/background) but closes both gaps the OPEN-WORK
+entry calls out: (a) the brief is NO LONGER hard-coded to gemini + a separate
+openrouter_key — it runs through an INJECTED llm_call so the module never imports
+server/, and the hub passes a closure over _complete(load_defaults()) = the GLOBAL
+default text model + key (same seam as card drafting); (b) the image key/model come
+from R10 (_image_gen) and the matte from R11 (visuals.matte). generate() is honest:
+no image key / empty result / non-image body all raise; a requested-but-unavailable
+matte returns the image un-matted with matted=False + a note (never a fake cut).
+Hub RPC card.visual_generate {path, kind, matte} returns the preview (base64 +
+brief + matted + note) — UNOPINIONATED about placement (saving via avatar_upload or
+a future sprite path), so the UI decision stays open. Maps RuntimeError/ValueError →
+visible -32050; unknown kind → -32602 before any spend; only ever called explicitly
+(no auto-trigger on load/wake → no surprise cost). Tests: 13 pipeline cases + 1 hub
+case. Layering clean (architecture test green; pipeline imports work without the
+visuals extra). Audited: no hard-coded model/key, no fabrication, no implicit spend.
+
+UI DEFERRED TO OWNER: the OPEN-WORK R9 entry explicitly says "ASK THE DEVELOPER"
+about UX (where the entry point lives, one-click vs step-by-step, cost/opt-in guards,
+which assets). Asking that before building the frontend — the backend RPC is ready
+for whatever placement the owner picks.
