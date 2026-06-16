@@ -5,6 +5,7 @@ Everything runs against a temp LUNAMOTH_HOME; no network (provider and iLink
 HTTP calls are monkeypatched)."""
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -173,51 +174,6 @@ def _make_user_card(name="Tester"):
     out = result("card.save", {"data": {"spec": "chara_card_v3", "spec_version": "3.0",
                                          "data": {"name": name, "description": "d"}}})
     return out["path"]
-
-
-def test_avatar_generate_uses_the_default_model_single_svg(monkeypatch):
-    set_defaults()
-    seen = {}
-
-    def fake_complete(defaults, system, user, **kw):
-        seen["model"] = kw.get("model", "")
-        seen["defaults_model"] = defaults.get("model")
-        seen["rf"] = kw.get("response_format")
-        return "```svg\n" + GOOD_SVG + "\n```"  # fence-tolerant
-
-    monkeypatch.setattr(H, "_complete", fake_complete)
-    out = result("card.avatar_generate", {"description": "a quiet blue moth"})
-    assert out["avatar_svg"].startswith("<svg")
-    assert "candidates" not in out          # single result, no picker
-    assert seen["model"] == ""              # uses the GLOBAL DEFAULT model, not an aux model
-    assert seen["defaults_model"] == "test/model"
-    assert seen["rf"] is None               # plain SVG, not json_object
-
-
-def test_avatar_generate_unusable_is_a_visible_error(monkeypatch):
-    set_defaults()
-    monkeypatch.setattr(H, "_complete", lambda *a, **k: "<div>not an svg</div>")
-    err = rpc_error("card.avatar_generate", {"description": "x"})
-    assert err["code"] == -32050           # no fabricated fallback image
-
-
-def test_avatar_generate_needs_input():
-    set_defaults()
-    assert rpc_error("card.avatar_generate", {})["code"] == -32602
-
-
-def test_avatar_generate_reads_card_summary(monkeypatch):
-    set_defaults()
-    seen = {}
-
-    def fake_complete(defaults, system, user, **kw):
-        seen["user"] = user
-        return GOOD_SVG
-
-    monkeypatch.setattr(H, "_complete", fake_complete)
-    card = str(H.bundled_cards_dir() / "Quinn" / "card.json")
-    result("card.avatar_generate", {"card_path": card, "description": "rounder"})
-    assert "Character:" in seen["user"]
 
 
 def test_avatar_upload_svg_writes_sidecar_and_points_card():
@@ -403,6 +359,145 @@ def test_keys_roundtrip_never_echoes_secrets():
     result("defaults.set", {"model": "other/model"})
     raw = json.loads(H.desktop_config_path().read_text(encoding="utf-8"))
     assert raw["keys"]["work"]["api_key"] == "sk-work-1"
+
+
+def test_image_key_and_model_global_defaults_never_echo_secret():
+    # R10: the image key + model live in the SAME global defaults store as the
+    # text key, set via defaults.set, and the secret is reduced to has_image_key.
+    set_defaults()
+    pub = result("defaults.set", {"image_api_key": "ark-secret-1",
+                                   "image_model": "doubao-seedream-x"})
+    assert pub["has_image_key"] is True
+    assert "image_api_key" not in pub  # secret never travels back
+    assert pub["image_model"] == "doubao-seedream-x"
+    # persisted to desktop.json (where _image_gen.py reads it)
+    raw = json.loads(H.desktop_config_path().read_text(encoding="utf-8"))
+    assert raw["image_api_key"] == "ark-secret-1"
+    assert raw["image_model"] == "doubao-seedream-x"
+    # defaults.get also hides the secret but reports presence + the model
+    got = result("defaults.get")
+    assert got["has_image_key"] is True and "image_api_key" not in got
+    assert got["image_model"] == "doubao-seedream-x"
+    # setting the text key/model must not disturb the stored image secret
+    result("defaults.set", {"model": "other/model"})
+    raw = json.loads(H.desktop_config_path().read_text(encoding="utf-8"))
+    assert raw["image_api_key"] == "ark-secret-1"
+
+
+def test_card_visual_generate_preview(monkeypatch):
+    # R9: brief (via the global default model — _complete) → image → preview.
+    set_defaults()
+    monkeypatch.setenv("ARK_API_KEY", "sk-img-test")
+    card = str(H.bundled_cards_dir() / "Quinn" / "card.json")
+    monkeypatch.setattr(H, "_complete",
+                        lambda *a, **k: '{"appearance":"a","palette":"p","world":"w","theme":"#1a2"}')
+    from lunamoth.tools.builtin import _image_gen
+    seen = {}
+
+    def fake_ark(prompt, size, refs=None):
+        seen["refs"] = refs
+        return ["http://x/a.png"]
+
+    monkeypatch.setattr(_image_gen, "ark_generate", fake_ark)
+    monkeypatch.setattr(_image_gen, "download_bytes", lambda url: b"\x89PNG\r\n\x1a\nFAKE")
+    out = result("card.visual_generate", {"path": card, "kind": "avatar",
+                                          "refs": ["data:image/png;base64,AAAA"]})
+    assert out["kind"] == "avatar" and out["mime"] == "image/png"
+    assert out["matted"] is False
+    assert seen["refs"] == ["data:image/png;base64,AAAA"]  # user refs reach the client
+    # base64 of the fake PNG round-trips
+    import base64 as _b64
+    assert _b64.b64decode(out["data_b64"]) == b"\x89PNG\r\n\x1a\nFAKE"
+    # a reused brief skips the LLM entirely (generate-all pays for one brief)
+    monkeypatch.setattr(H, "_complete", lambda *a, **k: (_ for _ in ()).throw(AssertionError("re-briefed")))
+    out2 = result("card.visual_generate", {"path": card, "kind": "avatar",
+                                           "brief": {"appearance": "x", "palette": "y", "world": "z", "theme": "#1a2"}})
+    assert out2["kind"] == "avatar"
+    # unknown kind is a clean param error
+    assert rpc_error("card.visual_generate", {"path": card, "kind": "nope"})["code"] == -32602
+    # no image key → a visible -32050 (not a crash, not a fake image)
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+    monkeypatch.setenv("LUNAMOTH_HOME", str(os.path.join(os.environ["LUNAMOTH_HOME"], "no-img")))
+    assert rpc_error("card.visual_generate", {"path": card, "kind": "avatar",
+                                              "brief": {"appearance": "x"}})["code"] == -32050
+
+
+_PNG_1PX = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+            b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01"
+            b"\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82")
+
+
+def _user_card_copy(monkeypatch):
+    """A writable user-deck JSON card (asset_save refuses bundled/builtin cards)."""
+    import base64 as _b64
+    set_defaults()
+    src = H.bundled_cards_dir() / "Quinn" / "card.json"
+    dst_dir = H.user_cards_dir() / "TestOC"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    dst = dst_dir / "card.json"
+    dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+    return str(dst), _b64
+
+
+def test_card_asset_save_and_delete_sprite():
+    card, _b64 = _user_card_copy(None)
+    b64 = _b64.b64encode(_PNG_1PX).decode("ascii")
+    out = result("card.asset_save", {"path": card, "kind": "sprite", "data_b64": b64, "ext": "png"})
+    assert out["kind"] == "sprite" and out["file"].endswith(".sprite.png")
+    assert out["url"].startswith("/asset?")
+    # the card now points at it
+    raw = json.loads(open(card, encoding="utf-8").read())
+    assert raw["data"]["extensions"]["lunamoth"]["assets"]["sprite"] == out["file"]
+    assert (Path(card).with_name(out["file"])).is_file()
+    # bad kind / bad ext / non-image body are clean param errors
+    assert rpc_error("card.asset_save", {"path": card, "kind": "nope", "data_b64": b64, "ext": "png"})["code"] == -32602
+    assert rpc_error("card.asset_save", {"path": card, "kind": "sprite", "data_b64": b64, "ext": "gif"})["code"] == -32602
+    bad = _b64.b64encode(b"<html>nope</html>").decode("ascii")
+    assert rpc_error("card.asset_save", {"path": card, "kind": "sprite", "data_b64": bad, "ext": "png"})["code"] == -32602
+    # delete removes the file + the pointer (idempotent)
+    out = result("card.asset_delete", {"path": card, "kind": "sprite"})
+    assert out["removed"] is True
+    raw = json.loads(open(card, encoding="utf-8").read())
+    assert "sprite" not in raw["data"]["extensions"]["lunamoth"].get("assets", {})
+    assert result("card.asset_delete", {"path": card, "kind": "sprite"})["removed"] is False
+
+
+def test_card_asset_save_refuses_builtin_card():
+    import base64 as _b64
+    set_defaults()
+    card = str(H.bundled_cards_dir() / "Quinn" / "card.json")
+    b64 = _b64.b64encode(_PNG_1PX).decode("ascii")
+    # bundled cards are read-only — only the user deck is writable (SEC).
+    assert rpc_error("card.asset_save", {"path": card, "kind": "sprite", "data_b64": b64, "ext": "png"})["code"] in (-32031, -32035)
+
+
+def test_card_visual_brief(monkeypatch):
+    set_defaults()
+    card = str(H.bundled_cards_dir() / "Quinn" / "card.json")
+    monkeypatch.setattr(H, "_complete",
+                        lambda *a, **k: '{"appearance":"a","palette":"p","world":"w","theme":"#222"}')
+    out = result("card.visual_brief", {"path": card})
+    assert out["brief"]["appearance"] == "a" and out["brief"]["world"] == "w"
+
+
+def test_matte_status_use_and_guards(monkeypatch):
+    # R11: matte.status reports models + deps; matte.use persists the active id to
+    # desktop.json (read by visuals.matte.selected_model); guards reject bad input.
+    monkeypatch.setenv("U2NET_HOME", str(os.path.join(os.environ["LUNAMOTH_HOME"], "u2net")))
+    st = result("matte.status")
+    assert "models" in st and st["deps"] in (True, False)
+    # an unknown model id is a clear param error
+    assert rpc_error("matte.download", {"model": "ghost"})["code"] == -32602
+    assert rpc_error("matte.use", {"model": "ghost"})["code"] == -32602
+    # picking a valid model persists matte_model into the global defaults store
+    st = result("matte.use", {"model": "isnet-general-use"})
+    assert st["active"] == "isnet-general-use"
+    raw = json.loads(H.desktop_config_path().read_text(encoding="utf-8"))
+    assert raw["matte_model"] == "isnet-general-use"
+    # without the optional visuals stack installed, download is a visible error
+    from lunamoth.visuals import matte as M
+    if not M.deps_available():
+        assert rpc_error("matte.download", {"model": "u2net"})["code"] == -32050
 
 
 def test_use_key_activates_and_delete_removes():

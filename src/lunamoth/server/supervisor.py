@@ -1143,7 +1143,13 @@ class WebHandler(http.server.SimpleHTTPRequestHandler):
         On a valid ``?token=`` handshake we mint the SameSite cookie so later
         ``<img src>``/``/asset`` requests (which can't send the query) pass on
         the cookie alone. The actual Set-Cookie is emitted by send_auth_cookie,
-        called from the response path once a 200 is going out."""
+        called from the response path once a 200 is going out.
+
+        No token configured (an explicit token-less ``start_http(token="")`` —
+        never the desktop, which always auto-generates one) means auth is
+        DISABLED: the route is open, as it was before the gate existed."""
+        if not self.token:
+            return True
         cookie = self.headers.get("Cookie", "")
         if N.request_authed(url.query, cookie, self.token):
             # Mint/refresh the cookie when the token arrived via the query.
@@ -1773,7 +1779,8 @@ class Supervisor:
             return
         # Dual-read like the HTTP gate: ?token= (Electron/SSH/token-URL) OR the
         # lm_auth cookie (password-login users, whose bookmark has no token).
-        if not N.request_authed(urlsplit(path).query, self._ws_cookie(ws), self.token):
+        # No token configured ⇒ auth disabled (open), same as the HTTP gate.
+        if self.token and not N.request_authed(urlsplit(path).query, self._ws_cookie(ws), self.token):
             await _close_ws(ws, 4401, "authentication required")
             return
         route = urlsplit(path).path

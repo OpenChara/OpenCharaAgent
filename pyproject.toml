@@ -28,6 +28,13 @@ tools = ["pyyaml>=6"]
 # (installed via `lunamoth setup`, not pip); only browser_cdp/dialog need a
 # Python dep. The real weight is non-Python and per-host.
 browser = ["websockets>=12"]
+# Local matting (抠像) for the visuals pipeline (R9/R11). HEAVY ML stack — kept
+# out of the base install; the matte model itself is downloaded from Settings.
+visuals = [
+    "rembg[cpu]>=2.0.50",
+    "pillow>=10",
+    "numpy>=1.24",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
