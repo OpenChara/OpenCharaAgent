@@ -18,6 +18,7 @@ import { glyphOf, paletteClass } from "../../lib/format";
 import { sectionText, putSection, type NormalizedDraft } from "../../lib/cards";
 import { CardField, CardBlock, cardCtxString, type FieldHandle } from "./CardField";
 import { Avatar, avatarSrc, themeOf, themeStyle } from "./visual";
+import { VisualEditor } from "./VisualEditor";
 import { deckToast } from "../ui/deckToast";
 import { DeckModal } from "../ui/DeckModal";
 import type { DeckCard, FullCard, CardExtLunamoth, WorldBookEntry } from "./types";
@@ -300,7 +301,12 @@ export function CardEditor({
           {/* 视觉 */}
           {tab === "vis" && (
             <div className="cv-pane">
-              {hasAnyArt ? (
+              {/* R9 visual-set editor: generate / upload / replace / delete per kind,
+                  reference tray, one-click generate-all. Builtin/locked/PNG cards are
+                  read-only (the editor disables its controls; fall back to read tiles). */}
+              {isJson ? (
+                <VisualEditor cardPath={card.path} card={cardForVisual} disabled={!editable} onChanged={onChanged} />
+              ) : hasAnyArt ? (
                 <div className="cv-tiles">
                   <ArtTile labelKey="cv-art-sprite" url={cardForVisual.sprite_url} name={charName} />
                   <ArtTile labelKey="cv-art-keyvisual" url={cardForVisual.keyvisual_url} name={charName} />
