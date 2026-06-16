@@ -344,12 +344,14 @@ def _redact(text: str) -> str:
 
 
 def _enabled_tools(ctx) -> list[str]:
-    """The chara's currently-enabled tools (state tool_access)."""
+    """The chara's currently-callable tools — the SAME set the gateway gates on
+    (registry ∩ pack), so the sandboxed Python can call exactly what a model can."""
     try:
-        access = ctx.state.load().get("tool_access") or []
+        if ctx.enabled_tool_names is not None:
+            return sorted(ctx.enabled_tool_names())
     except Exception:  # noqa: BLE001
-        access = []
-    return list(access)
+        pass
+    return []
 
 
 # ---------------------------------------------------------------------------

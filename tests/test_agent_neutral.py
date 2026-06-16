@@ -53,4 +53,7 @@ def test_env_state_is_neutral(agent):
     state = a.state.load()
     for legacy in ("trust", "hostility", "containment_level", "memory_integrity"):
         assert legacy not in state
-    assert "terminal" in state["tool_access"] and "read_file" in state["tool_access"]
+    # tool_access was retired: gating is registry ∩ pack (no per-session list).
+    assert "tool_access" not in state
+    eff = a.tools._effective()
+    assert "terminal" in eff and "read_file" in eff

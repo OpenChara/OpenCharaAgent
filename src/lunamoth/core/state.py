@@ -12,28 +12,12 @@ DEFAULT_STATUS = {
     "writable_paths": [],            # extra dirs the terminal tool may write to
     "user_present": False,           # is an operator attached right now? (set by TUI/daemon)
     "rest_until": 0.0,               # epoch until which the chara chose to rest (rest tool)
-    "tool_access": None,  # filled below with FULL_TOOL_ACCESS (one source of truth)
 }
-
-# The full hermes-ported tool surface (core + general + browser) plus LunaMoth's
-# kept chara-life/env tools. The default per-session allowlist; a pack still
-# narrows what's actually callable, and browser_* self-hide when the driver is
-# absent (check_fn-gated in the registry).
-FULL_TOOL_ACCESS = [
-    # core file/shell/search
-    "read_file", "write_file", "patch", "search_files", "terminal", "process",
-    # general agentic
-    "web_search", "web_extract", "memory", "todo", "session_search",
-    "skills_list", "skill_view", "skill_manage", "execute_code", "delegate_task", "clarify",
-    # browser (self-hidden when the agent-browser driver is not installed)
-    "browser_navigate", "browser_snapshot", "browser_click", "browser_type",
-    "browser_scroll", "browser_back", "browser_press", "browser_get_images",
-    "browser_vision", "browser_console", "browser_cdp", "browser_dialog",
-    # chara-life (LunaMoth's own)
-    "speak", "send_file", "rest", "add_wish", "set_wish_status",
-]
-
-DEFAULT_STATUS["tool_access"] = list(FULL_TOOL_ACCESS)
+# NOTE: there is deliberately NO per-session `tool_access` list here. Which tools
+# a chara can call is `registry ∩ pack` (the toolpack is the allowlist), gated in
+# tools/gateway.py. A separate hand-kept list was a redundant 4th owner that
+# silently deleted newly-registered tools; it was retired 2026-06-16. Runtime
+# capability toggles (e.g. `/net off`) gate at call time via `network_access`.
 
 # Legacy keys to drop from any persisted state written by old builds.
 _LEGACY_KEYS = (
@@ -64,22 +48,10 @@ class EnvState:
             if key in data:
                 data.pop(key, None)
                 changed = True
-        access = data.get("tool_access")
-        if isinstance(access, list) and "run_python" in access:
-            data["tool_access"] = [t for t in access if t != "run_python"]
-            if "terminal" not in data["tool_access"]:
-                data["tool_access"].append("terminal")
-            changed = True
-        if isinstance(access, list) and "inspect_cell" in data.get("tool_access", []):
-            data["tool_access"] = ["inspect_env" if t == "inspect_cell" else t for t in data["tool_access"]]
-            changed = True
-        # The hermes-tool migration: any tools-enabled chara (had `terminal`)
-        # is granted the full new surface. The old names (list_files, read_skill/
-        # create_skill, add_goal/set_goal_status) are gone — replaced wholesale,
-        # so a stale subset can't shadow the new set.
-        access = data.get("tool_access")
-        if isinstance(access, list) and "terminal" in access and set(access) != set(FULL_TOOL_ACCESS):
-            data["tool_access"] = list(FULL_TOOL_ACCESS)
+        # tool_access was retired (gating is registry ∩ pack now) — drop any
+        # leftover from old state files so it can't mislead a reader.
+        if "tool_access" in data:
+            data.pop("tool_access", None)
             changed = True
         data.setdefault("isolation", "sandbox")
         data.setdefault("user_present", False)

@@ -5,7 +5,8 @@ The tool BODIES live in ``tools/builtin/*.py`` (each self-registers into
 the registry has no equivalent for:
   - the SECURITY audit trail (every call audited),
   - the #24 loop guardrails (warn@2 / refuse@5 / streak-block@8),
-  - the three-way gate: implemented(registry) ∩ state.tool_access ∩ pack.tools,
+  - the gate: implemented(registry) ∩ pack.tools (the pack is the allowlist;
+    runtime flags like network gate at call time, not by removing tools),
   - MCP dispatch (mcp__server__tool), and the {ok,data} result the agent loop
     consumes (`core/agent.py:_execute_tool`).
 
@@ -93,6 +94,7 @@ class ToolGateway:
                 mcp=self.mcp, llm=self.llm, transcript=self.transcript,
                 permission_hook=self.permission_hook, clarify_hook=self.clarify_hook,
                 dispatch=self._code_dispatch,
+                enabled_tool_names=self._effective,  # single source: execute_code asks the gate
             )
         # permission/clarify hooks are set after construction — keep them live.
         self._ctx_obj.permission_hook = self.permission_hook
@@ -132,12 +134,16 @@ class ToolGateway:
         self.mcp_allowed = self.mcp.allowed_servers(mcp_servers) if self.mcp else []
 
     def _effective(self) -> set[str]:
-        """Callable builtin tools = registered ∩ env allowlist ∩ active pack."""
+        """Callable builtin tools = registered ∩ active pack.
+
+        The pack (set_enabled) is the per-chara allowlist; the registry is the
+        source of truth for what exists. There is no third hand-kept list — a
+        newly-registered tool in the pack is callable with nothing to edit.
+        Runtime toggles like `/net off` gate at CALL time (network_access), they
+        do not remove tools here."""
         if self.enabled_tools is None:
             return set()
-        implemented = set(registry.get_all_tool_names())
-        allowlist = set(self.state.load().get("tool_access", []))
-        return implemented & allowlist & self.enabled_tools
+        return set(registry.get_all_tool_names()) & self.enabled_tools
 
     def has_tools(self) -> bool:
         return bool(self._effective()) or bool(self.mcp_allowed)

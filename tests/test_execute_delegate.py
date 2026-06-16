@@ -85,6 +85,9 @@ def make_ctx(tmp_path, *, dispatch=None, llm=None, tool_access=None,
         dispatch=dispatch,
     )
     ctx.run_terminal = _run_terminal  # type: ignore[method-assign]
+    # execute_code now mirrors the gateway's effective set; in tests the fake
+    # state's tool_access expresses that set.
+    ctx.enabled_tool_names = lambda: set(ctx.state.load().get("tool_access") or [])
     return ctx
 
 

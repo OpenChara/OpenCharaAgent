@@ -394,3 +394,52 @@ product backlog behind it.
     backend — fix the path (check `~/.local/bin/lunamoth` too).
   - Icon assets already exist (`apps/desktop/assets/icon.png` + the menu-bar
     `trayTemplate*`). The menu-bar-resident idea (above) composes with this.
+
+---
+
+# Part 3 — Active loop backlog (owner requests, 2026-06-16)
+
+Managed by the `/loop` dev cycle: each iteration picks the top OPEN item, writes
+its plan + acceptance here, implements (parallel subagents where independent),
+runs tests, has an **audit subagent** verify against the acceptance bar (and
+parity with `reference/hermes-agent` for commodity surfaces), confirms
+**functionality with a live Quinn** (wake → self-check tools → read its jsonl →
+delete), then **removes the item from this list**. Anyone (incl. subagents) may
+add a diagnosed problem here with a priority. Independent items run in parallel.
+
+## R2 (P1) — Multimodal: chara sees on-disk images (the last hermes-parity gap)
+Parity audit (2026-06-16) CONFIRMED full name-parity with hermes' commodity core
+(17 non-browser + 12 browser = 29 tools) + the 5 chara-life tools; nothing stray.
+Inbound USER-ATTACHED images already work (`core/attachments.py` injects an image_url
+content part when the model is vision-capable; oversized/no-vision → saved-to-workspace
+note). THE ONE REAL GAP: a chara cannot see an image already ON DISK (downloaded, in
+`assets/`, browser-captured) — `read_file` on an image returns a "can't read pixels"
+note and there is NO `vision_analyze` tool (hermes has one:
+`reference/hermes-agent/tools/vision_tools.py`).
+Plan: add a vision path — port hermes `vision_analyze`, OR teach `read_file` to inject
+the image as an image_url follow-up user message when the model has vision (reuse
+`core/attachments.py` build path; >limit/non-vision → honest note, no fabrication).
+This unblocks R7 (the chara must SEE its own setting art to illustrate with it).
+Acceptance: a vision-model chara can describe an image in its workspace/`assets/`;
+no-vision degrades to the honest note; full suite green; live-Quinn (vision model)
+describes `assets/keyvisual.webp`; audit subagent confirms parity with hermes vision.
+
+## R3 (P2) — Compress multi-turn tool calls in the chat UI
+Collapse a run of tool calls into one line ("Read 1 file · ran 2 commands"),
+expandable to the per-call detail. Frontend only (chat.js/style.css).
+
+## R4 (P2) — Agent self-image-generation
+Add an IMAGE provider key (default Volcano Seedream 5) beside the text key; an
+image-gen tool the chara can call. Reference hermes' media handling. Design needed.
+
+## R5 (P2) — Better card preview (multi-page, ideally editable)
+Game-style multi-page card view: 设定 / 视觉(立绘+主视觉) / 表情 / world. Editable.
+
+## R6 (P3) — Blank card → auto-generate a visual set via the image key (opt-in)
+Well-designed interaction; depends on R4.
+
+## R7 (P1, owner: "actually higher priority") — Sandbox state + env prompt for
+in-world self-illustration. Let the chara illustrate its own in-world adventures
+using its setting art, read-only, WITHOUT OOC leakage (don't auto-send to the user
+or post to a site). Needs a clearer sandbox-file state model + env-description
+prompt. Design openly first, then implement.

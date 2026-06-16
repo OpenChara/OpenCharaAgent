@@ -39,6 +39,9 @@ class ToolContext:
     clarify_hook: Optional[Callable[[str, list], str]] = None
     # The dispatcher, so execute_code can expose tools to the sandboxed Python.
     dispatch: Optional[Callable[[str, dict], str]] = None
+    # The gateway's effective tool set (registry ∩ pack) — the ONE source of
+    # which tools are callable; execute_code mirrors it to its sandbox.
+    enabled_tool_names: Optional[Callable[[], "set[str]"]] = None
 
     # ---- ephemeral per-session stores (lazily created, persist across calls) ----
     todo: list = field(default_factory=list)          # todo tool's task list
