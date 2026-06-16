@@ -556,7 +556,7 @@ class LunaMothAgent:
         if self.character and self.character.character_book:
             world_blocks += self.character.character_book.constant_blocks(char, user)
         if world_blocks:
-            msgs.append("[World Info / 世界书]\n" + "\n\n".join(world_blocks))
+            msgs.append("[World Info]\n" + "\n\n".join(world_blocks))
 
         self._stable_prefix_cache = msgs
         return msgs
@@ -614,7 +614,7 @@ class LunaMothAgent:
 
         world_blocks = self._keyword_world_info_blocks(scan_text, session)
         if world_blocks:
-            msgs.append("[World Info / 世界书]\n" + "\n\n".join(world_blocks))
+            msgs.append("[World Info]\n" + "\n\n".join(world_blocks))
 
         wishes_block = self.wishes.render_block()
         if wishes_block:
@@ -805,8 +805,15 @@ class LunaMothAgent:
         if not mime or not mime.startswith("image/"):
             return None
         b64 = base64.b64encode(data).decode("ascii")
-        note = (f"Image {relp} is attached for you to see in the next message — "
-                "describe or use what is actually in it, not a guess.")
+        # This note is the DURABLE tool result (it persists in the transcript); the
+        # pixels ride a turn-local follow-up that is NOT recorded (see llm.py). So the
+        # wording must read correctly on later turns too — a text handle that you
+        # looked at the image, not a dangling "see the next message" pointing at bytes
+        # that are already gone. (Same shape as hermes: keep a text stub, drop the
+        # bytes — context_compressor._strip_historical_media.)
+        note = (f"Image {relp} is attached for you to view this turn — describe or use "
+                "what is actually in it, not a guess. (The pixels are shown only this "
+                "turn; they are not re-attached on later turns.)")
         follow = {"role": "user", "content": [
             {"type": "text", "text": f"[image: {relp}]"},
             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
