@@ -9,6 +9,7 @@
  * working state and surface errors. */
 
 import { useEffect, useRef, useState } from "react";
+import { assetUrl } from "../../rpc";
 import { useT, type TKey } from "../../i18n";
 import { useHub } from "../../state/hub";
 import { rpcErrText } from "../../lib/status";
@@ -333,7 +334,7 @@ export function CardEditor({
                 <div className="cv-emos">
                   {card.stickers_urls.filter(Boolean).map((url, i) => (
                     <div className="cv-emo" key={i}>
-                      <div className="cv-emo-pic" style={{ backgroundImage: `url("${String(url).replace(/"/g, "%22")}")` }} />
+                      <div className="cv-emo-pic" style={{ backgroundImage: `url("${assetUrl(String(url)).replace(/"/g, "%22")}")` }} />
                     </div>
                   ))}
                 </div>
@@ -390,7 +391,7 @@ function ArtTile({ labelKey, url, name, sq }: { labelKey: TKey; url?: string; na
     <div className={"cv-tile" + (sq ? " sq" : "")}>
       <div
         className={"cv-art" + (url ? "" : " empty " + paletteClass(name))}
-        style={url ? { backgroundImage: `url("${String(url).replace(/"/g, "%22")}")` } : undefined}
+        style={url ? { backgroundImage: `url("${assetUrl(String(url)).replace(/"/g, "%22")}")` } : undefined}
       >
         {!url && <div className="cv-art-glyph">{glyphOf(name)}</div>}
       </div>

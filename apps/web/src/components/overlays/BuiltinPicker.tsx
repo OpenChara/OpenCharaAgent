@@ -8,6 +8,7 @@
  * tile's copy and the second selects (builtins.js isTouch logic). */
 
 import { useRef, useState } from "react";
+import { assetUrl } from "../../rpc";
 import { useT, useLang } from "../../i18n";
 import { useHub } from "../../state/hub";
 import { useOverlay } from "../../state/overlay";
@@ -55,7 +56,7 @@ function BuiltinTile({ name, card, onSelect }: { name: string; card: DeckCard; o
         {avSrc ? <img src={avSrc} alt="" /> : glyphOf(card.name)}
       </div>
       <div className={"bp-tile" + (bgSrc ? "" : " bp-flat")}>
-        {bgSrc && <div className="bp-bg" style={{ backgroundImage: `url("${bgSrc}")` }} />}
+        {bgSrc && <div className="bp-bg" style={{ backgroundImage: `url("${assetUrl(bgSrc)}")` }} />}
         <div className="bp-scrim" />
         <div className="bp-name">{card.name}</div>
         <div className="bp-reveal">

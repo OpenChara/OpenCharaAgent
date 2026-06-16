@@ -4,6 +4,7 @@
  * the lib/* DOM-free helpers stay untouched.) */
 
 import type { CSSProperties } from "react";
+import { assetUrl } from "../../rpc";
 import { glyphOf, paletteClass } from "../../lib/format";
 import type { DeckCard } from "./types";
 
@@ -88,7 +89,7 @@ export function CardFace({
 }) {
   const style = themeStyle(card);
   const src = avatarSrc(card);
-  const spriteUrl = card.sprite_url || card.keyvisual_url;
+  const spriteUrl = assetUrl(card.sprite_url || card.keyvisual_url || "");
   return (
     <div className={cls} style={style}>
       {spriteUrl && (
