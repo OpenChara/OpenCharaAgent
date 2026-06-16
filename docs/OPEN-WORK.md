@@ -407,10 +407,6 @@ parity with `reference/hermes-agent` for commodity surfaces), confirms
 delete), then **removes the item from this list**. Anyone (incl. subagents) may
 add a diagnosed problem here with a priority. Independent items run in parallel.
 
-## R3 (P2) — Compress multi-turn tool calls in the chat UI
-Collapse a run of tool calls into one line ("Read 1 file · ran 2 commands"),
-expandable to the per-call detail. Frontend only (chat.js/style.css).
-
 ## R4 (P2) — Agent self-image-generation
 Add an IMAGE provider key (default Volcano Seedream 5) beside the text key; an
 image-gen tool the chara can call. Reference hermes' media handling. Design needed.
@@ -421,8 +417,36 @@ Game-style multi-page card view: 设定 / 视觉(立绘+主视觉) / 表情 / wo
 ## R6 (P3) — Blank card → auto-generate a visual set via the image key (opt-in)
 Well-designed interaction; depends on R4.
 
-## R7 (P1, owner: "actually higher priority") — Sandbox state + env prompt for
-in-world self-illustration. Let the chara illustrate its own in-world adventures
-using its setting art, read-only, WITHOUT OOC leakage (don't auto-send to the user
-or post to a site). Needs a clearer sandbox-file state model + env-description
-prompt. Design openly first, then implement.
+
+## R7 (P0, owner's highest) — Sandbox geography: assets (read-only ref, SIBLING) + workspace (private) + works/ (shelf)
+Owner-confirmed layout (2026-06-16):
+```
+sandbox/
+  assets/     read-only REFERENCE — the card's art PLUS user-uploaded material
+              (D&D rulebooks, lore, more art); the chara reads & uses it for
+              roleplay but does NOT own/create it. A SIBLING of workspace (moved
+              OUT of workspace/assets), model-READABLE, never writable.
+  workspace/  the chara's own private working area (read-write).
+    works/    the shareable shelf — what the 作品 (Works) tab shows.
+```
+Confinement (SECURITY-CRITICAL — careful + well-tested):
+- read_file / list_files / search / send_file resolve under {workspace, assets}; assets read-only.
+- write_file / patch / terminal-writes resolve under workspace ONLY (+ operator writable_paths);
+  a write into assets/ is refused with a clear note. Keep resolve_inside's ../symlink guards;
+  add a readable-roots variant (don't loosen the write path).
+Pieces: tools/sandbox.py (readable-roots model); tools/builtin/file_tools.py (reads allow
+assets/, writes refuse — generalize _assets_readonly_error to the sibling path);
+core/agent.py _stage_art_assets → sandbox/assets (sibling) not workspace/assets;
+server/hub.py wake _copy_card_assets → sandbox/assets; server/hub.py list_works → scan
+workspace/works/ ONLY (drop assets from skip-set; it's no longer under workspace);
+read_work preview allow workspace+assets; /asset serving still under the session dir (verify);
+prompt geography in rules._RULES (neutral 3-tier) + agent volatile env-facts.
+Later sub-item: an operator "add reference to assets/" upload route (deck/works UI).
+Acceptance: (a) chara reads an assets/ file (incl a user-dropped one) via read_file; (b)
+write/patch/terminal into assets/ refused; (c) Works tab = workspace/works/ only (private
+workspace files NOT listed); (d) card art staged into sandbox/assets on wake; (e) /asset
+still serves card art; (f) confinement audited — no read/write escape of the sandbox,
+assets truly read-only — dedicated security tests + audit subagent; (g) full suite green;
+(h) live Quinn (deepseek/deepseek-v4-flash): reads an assets/ file, is refused writing to
+assets/, puts a shareable thing in works/ and a private note in workspace/.
+NOTE: all Quinn test runs use deepseek/deepseek-v4-flash.

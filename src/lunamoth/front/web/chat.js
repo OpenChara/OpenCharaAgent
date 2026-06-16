@@ -61,37 +61,35 @@ function humanSize(n) {
 }
 
 /* Compact, hermes-style summary for a run of tool calls: {read_file:1, terminal:2}
-   → "read 1 file · ran 2 commands". Unknown tools fall back to "name ×N". */
-const _TOOL_SUMMARY = {
-  read_file:    { verb: "read",         noun: "file" },
-  write_file:   { verb: "wrote",        noun: "file" },
-  patch:        { verb: "edited",       noun: "file" },
-  search_files: { verb: "searched",     noun: "" },
-  terminal:     { verb: "ran",          noun: "command" },
-  execute_code: { verb: "ran",          noun: "script" },
-  process:      { verb: "managed",      noun: "process", plural: "processes" },
-  web_search:   { verb: "web-searched", noun: "" },
-  web_extract:  { verb: "fetched",      noun: "page" },
-  send_file:    { verb: "sent",         noun: "file" },
-  memory:       { verb: "noted",        noun: "memory", plural: "memories" },
-  todo:         { verb: "updated",      noun: "todo" },
-};
+   → "read 1 file · ran 2 commands" (zh: "读取 1 个文件 · 运行 2 条命令"). Each tool
+   name maps to ONE bucketed verb (read/ran/searched/edited/web/browsed), and the
+   bucket is the i18n key (so zh/en + plural/measure words live in i18n.js, not here).
+   web_/browser_ prefixes bucket by family; unknown tools fall back to "used X N×". */
+function _toolBucket(name) {
+  if (name === "read_file" || name === "list_files") return "tools-read";
+  if (name === "write_file" || name === "patch" || name === "edit_file" || name === "send_file") return "tools-edited";
+  if (name === "search_files" || name === "search" || name === "grep") return "tools-searched";
+  if (name === "terminal" || name === "execute_code" || name === "process") return "tools-ran";
+  if (name.startsWith("browser") || name === "browse") return "tools-browsed";
+  if (name.startsWith("web") || name === "fetch") return "tools-web";
+  return null;   // → "used <name> N×"
+}
 function summarizeToolTally(tally, fails) {
-  const parts = [];
+  // Sum counts per bucket so e.g. read_file + list_files collapse into one phrase.
+  const byKey = {};   // i18n key -> n
+  const byName = {};   // unbucketed tool name -> n
   for (const name of Object.keys(tally)) {
     const n = tally[name];
-    const m = _TOOL_SUMMARY[name];
-    if (m) {
-      let noun = m.noun;
-      if (noun && n !== 1) noun = m.plural || noun + "s";
-      parts.push(noun ? `${m.verb} ${n} ${noun}` : `${m.verb} ${n}×`);
-    } else {
-      parts.push(`${name} ×${n}`);
-    }
+    const key = _toolBucket(name);
+    if (key) byKey[key] = (byKey[key] || 0) + n;
+    else byName[name] = (byName[name] || 0) + n;
   }
+  const parts = [];
+  for (const key of Object.keys(byKey)) parts.push(t(key, { n: byKey[key] }));
+  for (const name of Object.keys(byName)) parts.push(t("tools-used", { name, n: byName[name] }));
   let s = parts.join(" · ");
-  if (fails) s += ` · ${fails} failed`;
-  return s || "working…";
+  if (fails) s += ` · ${t("tools-failed", { n: fails })}`;
+  return s || t("st-creating");
 }
 
 /* ============================ GATEWAY（右侧面板「网关」页） ============================ */

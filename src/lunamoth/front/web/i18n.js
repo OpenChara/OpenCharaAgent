@@ -84,6 +84,16 @@ const I18N = {
   "work-tool": ["⚙ 正在使用 {name}…", "⚙ using {name}…"],
   "work-generating": ["生成中…", "generating…"],
   "tool-no-summary": ["（无结果摘要）", "(no result summary)"],
+  // Folded tool-run summary — one bucketed verb per tool family, {n}-interpolated.
+  // EN handles plural in-string; ZH uses measure words (no plural form).
+  "tools-read":     ["读取 {n} 个文件", "read {n} file(s)"],
+  "tools-ran":      ["运行 {n} 条命令", "ran {n} command(s)"],
+  "tools-searched": ["搜索 {n} 次", "searched {n}×"],
+  "tools-edited":   ["编辑 {n} 个文件", "edited {n} file(s)"],
+  "tools-web":      ["联网 {n} 次", "web {n}×"],
+  "tools-browsed":  ["浏览 {n} 次", "browsed {n}×"],
+  "tools-used":     ["使用 {name} {n} 次", "used {name} {n}×"],
+  "tools-failed":   ["{n} 个失败", "{n} failed"],
   "superchat-tip": ["它想引起你的注意，希望你回复", "a bid for your attention — it hopes you'll reply"],
   "channel-say": ["say", "say"],
   "att-open": ["打开", "Open"],
