@@ -63,7 +63,7 @@ uv sync --extra dev --extra server --extra messaging   # Python backend + deps
 cd apps/desktop && npm install && npm run dev          # launch the desktop app
 ```
 
-First run opens a **welcome screen**: pick a provider preset (**OpenRouter / OpenAI / Ollama / Mock**) and either **create your own character** — the AI drafts the card from your description of the world, the character you want to live alongside, and who you are to each other (use at least DeepSeek V4 Flash; migrating from SillyTavern? paste the card JSON) — or **try the bundled default**. Type `/settings` anytime to hot-swap any of it.
+First run opens a **welcome screen**: pick a provider preset (**OpenRouter / OpenAI / Ollama / Mock**) and either **create your own character** — the AI drafts the card from your description of the world, the character you want to live alongside, and who you are to each other (use at least DeepSeek V4 Flash; migrating from SillyTavern? paste the card JSON) — or **pick a recommended character** from a built-in carousel of the eight bundled cards (also reachable later from the card deck). Type `/settings` anytime to hot-swap any of it.
 
 > A packaged **DMG / AppImage** (drag-to-Applications, no clone) is on the roadmap — not yet; for now run from the clone above.
 

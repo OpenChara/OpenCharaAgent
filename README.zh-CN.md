@@ -63,7 +63,7 @@ uv sync --extra dev --extra server --extra messaging   # Python 后端 + 依赖
 cd apps/desktop && npm install && npm run dev          # 启动桌面 app
 ```
 
-首次运行进入**欢迎页**：选一个 provider 预设（**OpenRouter / OpenAI / Ollama / Mock**），然后要么**创建你自己的角色**——AI 会根据你对世界观、你想与之相处的角色、以及你们关系的描述自动生成角色卡（默认模型建议至少 DeepSeek V4 Flash；从 SillyTavern/酒馆迁移就直接把卡的 JSON 粘进来），要么**试试自带的默认角色**。随时 `/settings` 热切换。
+首次运行进入**欢迎页**：选一个 provider 预设（**OpenRouter / OpenAI / Ollama / Mock**），然后要么**创建你自己的角色**——AI 会根据你对世界观、你想与之相处的角色、以及你们关系的描述自动生成角色卡（默认模型建议至少 DeepSeek V4 Flash；从 SillyTavern/酒馆迁移就直接把卡的 JSON 粘进来），要么从八张自带卡的**推荐角色转盘**里挑一个（之后也能从卡册重新打开）。随时 `/settings` 热切换。
 
 > 打包成 **DMG / AppImage**（拖进 Applications、不用克隆）在路线图上——还没做；现在请按上面从源码跑。
 

@@ -13,7 +13,6 @@ path (absolute, ``..`` traversal, symlink) escapes the sandbox.
 from __future__ import annotations
 
 import json
-import types
 from pathlib import Path
 
 import pytest

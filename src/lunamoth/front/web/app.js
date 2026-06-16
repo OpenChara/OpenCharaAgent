@@ -1049,15 +1049,33 @@ async function regenerateDraftCard(c) {
   toast(t("regen-started"));
 }
 
+// Deck filter (R8b): "unwoken" = your own wakeable+editable OCs (drafts +
+// non-builtin templates); "woken" = living charas' cards, all read-only (locked).
+// Built-in recommended cards aren't in either list — they live behind the
+// ✨默认 button (the carousel). This naturally splits read-only from editable.
+let deckFilter = "unwoken";
+function deckMatchesFilter(c) {
+  if (deckFilter === "woken") return !!c.locked;       // a living chara's read-only card
+  return !c.locked && !c.builtin;                       // your own editable OCs / drafts
+}
 function renderDeck() {
   if (!state.hub) return;
   const q = ($("deck-search").value || "").toLowerCase();
-  const cards = state.hub.cards.filter((c) => !q || c.name.toLowerCase().includes(q));
-  $("deck-count").textContent = cards.length ? `· ${cards.length}` : "";
+  const cards = state.hub.cards.filter(
+    (c) => deckMatchesFilter(c) && (!q || c.name.toLowerCase().includes(q)));
+  // pending generations belong to the "unwoken" (your own) view only
+  const pending = deckFilter === "unwoken" ? state.pendingDrafts : [];
+  const total = cards.length + pending.length;
+  $("deck-count").textContent = total ? `· ${total}` : "";
   const grid = $("deck-grid");
   grid.innerHTML = "";
+  if (!total) {
+    grid.appendChild(el("div", { class: "deck-empty" },
+      t(deckFilter === "woken" ? "deck-empty-woken" : "deck-empty-unwoken")));
+    return;
+  }
   // pending generations render first — they are NOT real cards yet
-  for (const pd of state.pendingDrafts) grid.appendChild(pendingSpine(pd));
+  for (const pd of pending) grid.appendChild(pendingSpine(pd));
   for (const c of cards) {
     const copyBtn = el("button", { onclick: async (ev) => {
       ev.stopPropagation();
@@ -1091,6 +1109,14 @@ function renderDeck() {
   }
 }
 $("deck-search").addEventListener("input", renderDeck);
+$("deck-filterseg").addEventListener("click", (ev) => {
+  const s = ev.target.closest("span[data-mode]");
+  if (!s || s.classList.contains("on")) return;
+  deckFilter = s.dataset.mode;
+  // optimistic: flip the segmented control immediately, then re-render
+  for (const sp of $("deck-filterseg").querySelectorAll("span")) sp.classList.toggle("on", sp === s);
+  renderDeck();
+});
 $("deck-new").addEventListener("click", () => ensureModel(openCreateFlow));
 $("deck-import").addEventListener("click", () => $("file-input").click());
 
@@ -1529,6 +1555,8 @@ function closeFirstRun() { $("overlay-firstrun").classList.remove("open"); }
 function frShowWelcome() {
   $("fr-welcome").style.display = "flex";
   $("fr-setup").style.display = "none";
+  const pk = $("fr-picker");
+  if (pk) pk.style.display = "none";
   $("fr-dots").innerHTML = "<i class='on'></i><i></i>";
   decorateDefaultCard();
 }
@@ -1537,13 +1565,12 @@ function frShowWelcome() {
 // "try the default character" labels (first-run + board empty-state).
 function decorateDefaultCard() {
   const card = defaultLunaCard();
+  // The "try" button now opens the recommended-character carousel (not a single
+  // default), so it keeps its generic label — no per-card name/tagline append.
   const trySpan = document.querySelector("#fr-try span[data-i18n='btn-try']");
   const trySub = document.querySelector("#fr-try small[data-i18n='btn-try-sub']");
-  if (trySpan) {
-    const base = t("btn-try");
-    trySpan.textContent = card ? `${base} · ${card.name}` : base;
-  }
-  if (trySub) trySub.textContent = card ? (card.tagline || "") : "";
+  if (trySpan) trySpan.textContent = t("btn-try");
+  if (trySub) trySub.textContent = "";
   const meet = $("empty-meet");
   if (meet) {
     const base = t("meet-luna");
@@ -1552,6 +1579,8 @@ function decorateDefaultCard() {
 }
 function frShowSetup() {
   $("fr-welcome").style.display = "none";
+  const pk = $("fr-picker");
+  if (pk) pk.style.display = "none";
   const setup = $("fr-setup");
   setup.style.display = "block";
   setup.innerHTML = "";
@@ -1602,9 +1631,40 @@ $("fr-langseg").addEventListener("click", (ev) => {
   const s = ev.target.closest("span");
   if (s) setLang(s.dataset.lang, false);
 });
-$("fr-try").addEventListener("click", () => { frPendingAction = wakeDefaultLuna; frShowSetup(); });
+// "Pick a recommended character" → the character-select carousel (R8). It
+// replaces the old single "try the default" button: the carousel renders all
+// eight built-ins; tapping a tile routes through ensureModel → openWakeSheet
+// (so model setup still happens when there's no key — see selectBuiltin).
+$("fr-try").addEventListener("click", () => frShowPicker());
 $("fr-create").addEventListener("click", () => { frPendingAction = () => { closeFirstRun(); openCreateFlow(); }; frShowSetup(); });
 $("fr-import").addEventListener("click", () => $("file-input").click());
+
+// Show the carousel inside the first-run overlay (replacing the welcome column).
+function frShowPicker() {
+  $("fr-welcome").style.display = "none";
+  $("fr-setup").style.display = "none";
+  const host = $("fr-picker");
+  host.style.display = "block";
+  host.innerHTML = "";
+  host.appendChild(buildBuiltinPicker());
+  applyI18n(host);
+  $("fr-dots").innerHTML = "<i class='done'></i><i class='on'></i>";
+}
+
+// The standalone picker overlay (reopened from the card deck).
+function openBuiltinPicker() {
+  const host = $("picker-host");
+  host.innerHTML = "";
+  host.appendChild(buildBuiltinPicker());
+  applyI18n(host);
+  $("overlay-picker").classList.add("open");
+}
+function closeBuiltinPicker() { $("overlay-picker").classList.remove("open"); }
+$("picker-close").addEventListener("click", closeBuiltinPicker);
+$("overlay-picker").addEventListener("click", (ev) => {
+  if (ev.target === $("overlay-picker")) closeBuiltinPicker();
+});
+$("deck-picker").addEventListener("click", openBuiltinPicker);
 
 /* ============================ WAKE SHEET ============================ */
 async function modelsCached() {

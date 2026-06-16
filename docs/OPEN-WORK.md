@@ -418,17 +418,6 @@ Game-style multi-page card view: 设定 / 视觉(立绘+主视觉) / 表情 / wo
 Well-designed interaction; depends on R4.
 
 
-## R8 (P1, owner request 2026-06-16) — New-user character-select carousel
-Replace the "wake Quinn" first-run step with a mobile-game-style character picker
-over the 8 built-in cards. Each card = a vertical rectangle: sprite as background,
-theme-color bottom→top gradient, avatar at the top; hover → a bilingual (zh/en)
-description + TAGs (authored by hand, baked into the repo/code, not model-gen).
-8 cards over 2 swipeable pages; the FIRST page's 4 are different functions/leanings
-— recommend Quinn (general coding/work), Vale (TTRPG KP), Mars (music), Yan (literature).
-Header line: 【LunaMoth 内置的推荐角色，他们来自不同的背景和世界观，掌握和热爱不同的
-技能，自主运行的时候，他们都会着手构筑自己的个人网站】(+ EN). Don't drastically change
-the front-end; must not lag. Plan + acceptance to be written next iteration.
-
 ## R7-followup (LOW, from the R7 security audit) — V4A Move header polish
 `file_tools._V4A_HEADER_RE` matches Update|Add|Delete but not Move, so a V4A
 `Move File: src -> dst` skips both the friendly assets read-only message and the
@@ -438,4 +427,8 @@ helpful error. Add Move to the regex (and check its destination) for consistency
 
 DONE this loop: R1 tool-access single-source (4435d77), R2 on-disk image vision
 (f34a55e), R3 tool-call fold i18n (e4dcce4), R7 sandbox geography (assets read-only
-sibling / workspace / works/ — full suite green, security-audited, live-Quinn verified).
+sibling / workspace / works/ — full suite green, security-audited, live-Quinn verified),
+R8 new-user character-select carousel + R8b deck filter (未唤醒/已唤醒 toggle + colorful
+✨默认 carousel entry; 8 built-ins, 2 swipeable pages, authored bilingual copy/tags in
+front/web/builtins.js; selecting routes to the existing wake flow; deck splits editable
+OCs from read-only living charas).

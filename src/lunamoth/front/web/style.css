@@ -833,6 +833,19 @@ body.dark .att-missing{background:rgba(255,255,255,.05)}
 /* ---------- 卡册 ---------- */
 .deck{flex:1; overflow:auto; padding:8px 28px 28px}
 .deck-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(184px,1fr)); gap:18px}
+/* R8b: the colorful ✨默认 button (front door to the recommended-character carousel) */
+.btn.pick-default{
+  color:#fff; border:none;
+  background:linear-gradient(120deg,#7A5CFF 0%,#5B9FD4 52%,#FF6Fae 120%);
+  box-shadow:0 1px 2px rgba(10,30,50,.14), 0 0 0 1px rgba(122,92,255,.10) inset;
+}
+.btn.pick-default:hover{filter:brightness(1.06); box-shadow:0 2px 10px rgba(122,92,255,.28)}
+/* R8b: deck empty-state hint (e.g. the "unwoken" view before you create any OC) */
+.deck-empty{
+  grid-column:1/-1; padding:40px 24px; text-align:center; max-width:520px; margin:24px auto;
+  color:var(--text-2); font-size:13.5px; line-height:1.7;
+}
+body.dark .btn.pick-default{box-shadow:0 1px 2px rgba(0,0,0,.3), 0 0 0 1px rgba(122,92,255,.18) inset}
 .spine{
   background:var(--panel); border-radius:13px; overflow:hidden; cursor:pointer; position:relative;
   box-shadow:0 0 0 1px var(--hairline-2),0 1px 3px rgba(10,30,50,.05);
@@ -1246,6 +1259,91 @@ details.cv-raw pre{
 .fr-second{margin-top:12px}
 .fr-tert{margin-top:22px; font-size:12px; color:var(--text-3); cursor:pointer; border:none; background:none}
 .fr-tert:hover{color:var(--text-2)}
+
+/* ---------- 推荐角色转盘（character select, R8） ---------- */
+.bp-host{width:min(960px,94vw); display:flex; flex-direction:column; align-items:center}
+.bp-close{
+  position:absolute; top:22px; right:26px; z-index:2; width:34px; height:34px; border:none;
+  border-radius:50%; background:rgba(20,40,60,.06); color:var(--text-2); font-size:16px;
+  cursor:pointer; display:flex; align-items:center; justify-content:center; transition:background .15s,color .15s;
+}
+.bp-close:hover{background:rgba(20,40,60,.12); color:var(--text)}
+body.dark .bp-close{background:rgba(255,255,255,.08); color:var(--text-2)}
+.bp-root{width:100%; display:flex; flex-direction:column; align-items:center}
+.bp-head{
+  font-size:13.5px; line-height:1.85; color:var(--text-2); text-align:center;
+  max-width:680px; margin-bottom:24px;
+}
+.bp-viewport{position:relative; width:100%; overflow:hidden}
+.bp-track{display:flex; transition:transform .42s cubic-bezier(.22,.61,.36,1); will-change:transform}
+.bp-grid{
+  flex:0 0 100%; display:grid; grid-template-columns:repeat(4,1fr); gap:16px; padding:4px;
+}
+@media (max-width:720px){.bp-grid{grid-template-columns:repeat(2,1fr)}}
+.bp-tile{
+  position:relative; aspect-ratio:3/4; border-radius:15px; overflow:hidden; cursor:pointer;
+  background:var(--panel); box-shadow:0 1px 0 1px var(--hairline-2), 0 8px 26px rgba(10,20,30,.10);
+  transition:transform .22s cubic-bezier(.22,.61,.36,1), box-shadow .22s; outline:none;
+  --card-theme:#5B9FD4;
+}
+.bp-tile:hover,.bp-tile:focus-visible{transform:translateY(-4px); box-shadow:0 2px 0 1px var(--hairline), 0 16px 40px rgba(10,20,30,.20)}
+.bp-tile.bp-flat{background:linear-gradient(165deg, rgba(8,23,39,.55), var(--card-theme))}
+.bp-bg{
+  position:absolute; inset:0; background-size:cover; background-position:center top;
+  background-repeat:no-repeat;
+}
+/* bottom→top theme-color gradient, fading to transparent up top, for legibility */
+.bp-scrim{
+  position:absolute; inset:0; pointer-events:none;
+  background:linear-gradient(to top,
+    color-mix(in srgb, var(--card-theme) 92%, #000 8%) 0%,
+    color-mix(in srgb, var(--card-theme) 55%, transparent) 34%,
+    transparent 68%);
+}
+.bp-avatar{
+  position:absolute; top:13px; left:50%; transform:translateX(-50%); z-index:2;
+  width:54px; height:54px; border-radius:50%; overflow:hidden; flex:none;
+  border:2px solid rgba(255,255,255,.85); box-shadow:0 3px 10px rgba(10,20,30,.30);
+  display:flex; align-items:center; justify-content:center; color:#fff; font-size:20px; font-weight:600;
+  background:linear-gradient(160deg, rgba(8,23,39,.55), var(--card-theme));
+}
+.bp-avatar img{width:100%; height:100%; object-fit:cover}
+.bp-name{
+  position:absolute; left:0; right:0; bottom:14px; z-index:2; text-align:center;
+  color:#fff; font-size:16px; font-weight:650; letter-spacing:.3px; padding:0 8px;
+  text-shadow:0 1px 6px rgba(0,0,0,.4); transition:transform .22s, opacity .22s;
+}
+/* reveal: description + tag chips, slides up on hover/focus (transform/opacity) */
+.bp-reveal{
+  position:absolute; left:0; right:0; bottom:0; z-index:3; padding:14px 14px 16px;
+  display:flex; flex-direction:column; gap:9px;
+  background:linear-gradient(to top, color-mix(in srgb, var(--card-theme) 94%, #000 6%) 60%, transparent);
+  transform:translateY(101%); opacity:0; transition:transform .26s cubic-bezier(.22,.61,.36,1), opacity .2s;
+  will-change:transform;
+}
+.bp-tile:hover .bp-reveal,.bp-tile:focus-visible .bp-reveal,.bp-tile.bp-open .bp-reveal{transform:translateY(0); opacity:1}
+.bp-tile:hover .bp-name,.bp-tile:focus-visible .bp-name,.bp-tile.bp-open .bp-name{opacity:0; transform:translateY(8px)}
+.bp-desc{color:rgba(255,255,255,.94); font-size:12px; line-height:1.6; text-shadow:0 1px 4px rgba(0,0,0,.3)}
+.bp-tags{display:flex; flex-wrap:wrap; gap:5px}
+.bp-chip{
+  font-size:10.5px; padding:2px 8px; border-radius:20px; color:#fff; font-weight:500;
+  background:rgba(255,255,255,.20); border:1px solid rgba(255,255,255,.28);
+}
+.bp-arrow{
+  position:absolute; top:50%; transform:translateY(-50%); z-index:4; width:36px; height:36px;
+  border:none; border-radius:50%; background:var(--panel); color:var(--text); font-size:20px; line-height:1;
+  cursor:pointer; box-shadow:0 3px 12px rgba(10,20,30,.20); display:flex; align-items:center; justify-content:center;
+  transition:opacity .2s, transform .2s;
+}
+.bp-arrow.prev{left:-6px} .bp-arrow.next{right:-6px}
+.bp-arrow:hover{transform:translateY(-50%) scale(1.08)}
+.bp-arrow.hidden{opacity:0; pointer-events:none}
+body.dark .bp-arrow{background:#222A31; color:#D8E2EA}
+.bp-dots{display:flex; gap:8px; margin-top:22px}
+.bp-dots i{width:8px; height:8px; border-radius:50%; background:rgba(20,40,60,.18); cursor:pointer; transition:background .2s, transform .2s}
+.bp-dots i.on{background:var(--accent); transform:scale(1.2)}
+body.dark .bp-dots i{background:rgba(255,255,255,.18)}
+body.dark .bp-dots i.on{background:var(--accent)}
 .setup-col{width:470px; max-width:92%}
 .setup-col h1{font-size:22px; font-weight:650; margin-bottom:6px}
 .setup-col .sub{font-size:12.5px; color:var(--text-2); margin-bottom:20px}

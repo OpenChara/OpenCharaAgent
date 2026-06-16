@@ -62,6 +62,11 @@
         <h1><span data-i18n="nav-deck">卡册</span><span class="count" id="deck-count"></span></h1>
         <div class="grow"></div>
         <input class="searchfield" id="deck-search" data-i18n-ph="search">
+        <div class="seg deck-filterseg" id="deck-filterseg">
+          <span data-mode="unwoken" class="on" data-i18n="deck-unwoken">未唤醒</span>
+          <span data-mode="woken" data-i18n="deck-woken">已唤醒</span>
+        </div>
+        <button class="btn pick-default" id="deck-picker" data-i18n="deck-pick">✨ 默认</button>
         <button class="btn soft" id="deck-import" data-i18n="import">导入</button>
         <button class="btn primary" id="deck-new" data-i18n="new-card">＋ 新角色卡</button>
       </div>
@@ -236,12 +241,19 @@
       <small data-i18n="fr-create-sub">描述你想象的世界与角色，AI 自动生成角色卡</small>
     </button>
     <button class="btn soft stacked fr-second" id="fr-try">
-      <span data-i18n="btn-try">或者试试我们的默认角色</span>
+      <span data-i18n="btn-try">或者从推荐角色中挑一个</span>
       <small data-i18n="btn-try-sub"></small>
     </button>
     <button class="fr-tert" id="fr-import" data-i18n="btn-import">导入角色卡</button>
   </div>
+  <div id="fr-picker" class="bp-host" style="display:none"></div>
   <div id="fr-setup" class="setup-col" style="display:none"></div>
+</div>
+
+<!-- 角色选择转盘（推荐内置）——也可从卡册重新打开 -->
+<div class="overlay" id="overlay-picker">
+  <button class="bp-close" id="picker-close" aria-label="close">✕</button>
+  <div id="picker-host" class="bp-host"></div>
 </div>
 
 <!-- 新角色工坊（虚化模态层） -->
@@ -260,6 +272,7 @@
 <script src="vendor/qrcode-gen.js"></script>
 <script src="i18n.js"></script>
 <script src="rpc.js"></script>
+<script src="builtins.js"></script>
 <script src="app.js"></script>
 <script src="chat.js"></script>
 </body>
