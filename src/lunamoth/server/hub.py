@@ -1133,8 +1133,7 @@ def save_card(data: dict[str, Any], path: str = "") -> dict[str, Any]:
         while target.exists():
             target = base / f"{stem}-{n}.json"
             n += 1
-    data.setdefault("spec", "chara_card_v3")
-    data.setdefault("spec_version", "3.0")
+    data.setdefault("version", "1.0")  # our own card format; we no longer emit the ST spec markers
     data["name"] = name
     _sanitize_card_extensions(data)
     target.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1764,8 +1763,7 @@ def wake(card_path: str, name: str = "", isolation: str = "sandbox",
         if not isinstance(card_data, dict) or not isinstance(card_data.get("data"), dict):
             raise RpcError(-32602, "card_data must be a {data:{...}} card object")
         edited = dict(card_data)
-        edited.setdefault("spec", "chara_card_v3")
-        edited.setdefault("spec_version", "3.0")
+        edited.setdefault("version", "1.0")  # our own card format (no ST spec markers)
         _sanitize_card_extensions(edited)
         frozen.write_text(json.dumps(edited, ensure_ascii=False, indent=2), encoding="utf-8")
     elif src.suffix.lower() == ".png":
@@ -2240,7 +2238,7 @@ def draft_to_card(draft: dict[str, Any], origin_text: str = "", as_draft: bool =
         data["character_book"] = {"name": f"{data['name']} world", "entries": world_entries}
     if detect_language(text=description + " " + data["first_mes"]) == "zh" and "中文" not in data["tags"]:
         data["tags"].append("中文")
-    return {"spec": "chara_card_v3", "spec_version": "3.0", "name": data["name"], "data": data}
+    return {"version": "1.0", "name": data["name"], "data": data}
 
 
 # ---- the dispatcher ----------------------------------------------------------------

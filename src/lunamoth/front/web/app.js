@@ -1907,7 +1907,7 @@ async function openWakeSheet(card) {
   // editable fields as the card editor, each with a per-field ✦ AI rewrite. ----
   let fullCard = null;
   try { fullCard = await hub.call("card.read", { path: card.path }, 20000); } catch (e) { fullCard = null; }
-  const rawCard = (fullCard && fullCard.raw) || { spec: "chara_card_v3", spec_version: "3.0", data: {} };
+  const rawCard = (fullCard && fullCard.raw) || { version: "1.0", data: {} };
   if (!rawCard.data) rawCard.data = {};
   const ext0 = (rawCard.data.extensions && rawCard.data.extensions.lunamoth) || {};
   const charName = (fullCard && fullCard.name) || card.name;
