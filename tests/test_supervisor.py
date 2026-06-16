@@ -690,7 +690,7 @@ def test_asset_route_serves_image_confines_and_rejects_nonimage():
     srv = SV.start_http("127.0.0.1", port, token="t", supervisor=None)
 
     def code(abspath):
-        url = f"http://127.0.0.1:{port}/asset?p=" + urllib.parse.quote(abspath)
+        url = f"http://127.0.0.1:{port}/asset?token=t&p=" + urllib.parse.quote(abspath)
         try:
             return urllib.request.urlopen(url, timeout=5).status
         except urllib.error.HTTPError as e:
@@ -734,7 +734,7 @@ def test_asset_route_never_leaks_session_secrets(tmp_path, monkeypatch):
     srv = SV.start_http("127.0.0.1", port, token="t", supervisor=None)
 
     def get(abspath):
-        url = f"http://127.0.0.1:{port}/asset?p=" + urllib.parse.quote(str(abspath))
+        url = f"http://127.0.0.1:{port}/asset?token=t&p=" + urllib.parse.quote(str(abspath))
         try:
             r = urllib.request.urlopen(url, timeout=5)
             return r.status, r.read()

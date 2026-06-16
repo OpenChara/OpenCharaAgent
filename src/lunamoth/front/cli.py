@@ -9,7 +9,7 @@
     lunamoth rm NAME         delete an agent
     lunamoth setup [NAME]    (re)run the setup wizard
     lunamoth setup browser   install the optional agent-browser tool driver
-    lunamoth update          update the installed checkout (git pull + uv sync)
+    lunamoth update          update to the latest release (wheel; dev checkout = git pull + uv sync)
     lunamoth doctor          check environment & sandbox backends
 
 Each agent is a persistent being: it lives in the background on its own and
@@ -481,19 +481,61 @@ def cmd_gateway(args: argparse.Namespace) -> int:
 
 def cmd_desktop(args: argparse.Namespace) -> int:
     """The desktop app: resident supervisor + web renderer."""
+    from ..server import netsec as N
     from ..server.desktop import daemonize_desktop, free_port, serve_desktop
+    from ..server.supervisor import daemon_alive, read_daemon_json
 
     if getattr(args, "debug", False):
         os.environ["LUNAMOTH_DEBUG"] = "1"
-    host = "127.0.0.1"
-    http_port = args.port or free_port(host)
-    ws_port = args.ws_port or free_port(host)
+    host = getattr(args, "host", None) or "127.0.0.1"
     token = args.token or secrets.token_urlsafe(24)
+    allow = [h.strip() for h in (getattr(args, "allow_host", None) or "").split(",") if h.strip()]
+
+    # A non-loopback bind exposes a shell + tools to the network; the token is
+    # the gate. A wildcard bind without an explicit token is refused outright —
+    # the random per-run token would be unknown to a remote client. (Login is a
+    # later iteration; the shared token is the gate today — plan §2, Track D.)
+    if N.is_wildcard_host(host) and not args.token:
+        print(
+            "error: refusing to bind 0.0.0.0 without a token. Pass --token <secret> "
+            "so remote clients can authenticate (the token is the access gate).",
+            file=sys.stderr,
+        )
+        return 2
+
+    # WS port → bind 0 (OS-assigned, collision-free); the supervisor bakes the
+    # chosen port into the printed URL + daemon.json. --ws-port honored if given.
+    ws_port = args.ws_port or 0
+
+    # HTTP port handling (D2): if the requested port is taken, attach to OUR live
+    # daemon (don't double-spawn); fail with attribution if it's a foreign holder.
+    http_port = args.port
+    if http_port not in (0, None):
+        data = read_daemon_json()
+        if int(data.get("http_port") or 0) == int(http_port) and daemon_alive(data):
+            print(
+                f"lunamothd already running · http:{data.get('http_port')} ws:{data.get('ws_port')}"
+                f" · {data.get('path') or ''}".rstrip(),
+            )
+            return 0
+        if N.port_in_use(host, http_port):
+            holder = N.describe_port_holder(http_port)
+            print(
+                f"error: HTTP port {http_port} held by {holder}\n"
+                "       stop it, or pass --port <other> (or --port 0 for any free port).",
+                file=sys.stderr,
+            )
+            return 1
+    elif http_port is None:
+        http_port = free_port(host)
+
     if getattr(args, "daemon", False) and not os.getenv("LUNAMOTH_DAEMON_CHILD"):
-        info = daemonize_desktop(host, http_port, ws_port, token, debug=bool(getattr(args, "debug", False)))
+        info = daemonize_desktop(host, http_port, ws_port, token,
+                                 debug=bool(getattr(args, "debug", False)), allow_hosts=allow)
         print(f"lunamothd pid {info['pid']} · http:{info['http_port']} ws:{info['ws_port']} · {info.get('path', '')}")
         return 0
-    return serve_desktop(host, http_port, ws_port, token, open_browser=(not args.no_open and not os.getenv("LUNAMOTH_DAEMON_CHILD")))
+    return serve_desktop(host, http_port, ws_port, token, allow_hosts=allow,
+                         open_browser=(not args.no_open and not os.getenv("LUNAMOTH_DAEMON_CHILD")))
 
 
 def cmd_daemon(args: argparse.Namespace) -> int:
@@ -586,10 +628,20 @@ def cmd_setup_browser(args: argparse.Namespace) -> int:
     return 1
 
 
+def _uv_path() -> str:
+    return shutil.which("uv") or str(S.lunamoth_home() / "bin" / "uv")
+
+
 def cmd_update(args: argparse.Namespace) -> int:
-    if not (APP_DIR / ".git").exists():
-        print(f"error: {APP_DIR} is not a git checkout; reinstall via install.sh", file=sys.stderr)
-        return 1
+    # Two channels (mirrors install.sh): a git checkout is the DEV/edge channel
+    # (git pull + uv sync); anything else is a wheel install from a GitHub
+    # Release, upgraded in place via `uv tool upgrade`.
+    if (APP_DIR / ".git").exists():
+        return _update_dev_checkout(args)
+    return _update_wheel(args)
+
+
+def _update_dev_checkout(args: argparse.Namespace) -> int:
     git = shutil.which("git")
     if not git:
         print("error: git not found", file=sys.stderr)
@@ -601,9 +653,9 @@ def cmd_update(args: argparse.Namespace) -> int:
             return 1
         print("up to date" if behind == 0 else f"{behind} commit(s) behind — run `lunamoth update`")
         return 0
-    print(f"updating {APP_DIR} ...")
+    print(f"updating dev checkout {APP_DIR} ...")
     steps = [[git, "-C", str(APP_DIR), "pull", "--ff-only", "origin", "main"]]
-    uv = shutil.which("uv") or str(S.lunamoth_home() / "bin" / "uv")
+    uv = _uv_path()
     if Path(uv).exists() or shutil.which("uv"):
         steps.append([uv, "sync", "--project", str(APP_DIR)])
     for cmd in steps:
@@ -611,7 +663,33 @@ def cmd_update(args: argparse.Namespace) -> int:
         if proc.returncode != 0:
             print(f"error: {' '.join(map(str, cmd))} failed", file=sys.stderr)
             return proc.returncode
+    print("note: dev checkout — rebuild the served UI after frontend edits:")
+    print(f"  cd {APP_DIR / 'apps' / 'web'} && npm ci && npm run build")
     _write_update_stamp(behind=0)
+    print("updated.")
+    return 0
+
+
+def _update_wheel(args: argparse.Namespace) -> int:
+    # Wheel install (the user channel): `uv tool upgrade` pulls the newest
+    # version uv can resolve for this package. The wheel carries the built
+    # frontend (front/webui/), so there's no node/build step here.
+    uv = _uv_path()
+    if not (Path(uv).exists() or shutil.which("uv")):
+        print("error: uv not found; reinstall via install.sh", file=sys.stderr)
+        return 1
+    if args.check:
+        print("wheel install — run `lunamoth update` to fetch the latest release")
+        return 0
+    print("updating lunamoth (wheel) ...")
+    proc = subprocess.run([uv, "tool", "upgrade", "lunamoth"])
+    if proc.returncode != 0:
+        print(
+            "error: `uv tool upgrade lunamoth` failed; reinstall the latest "
+            "release via install.sh (private repo: set GITHUB_TOKEN)",
+            file=sys.stderr,
+        )
+        return proc.returncode
     print("updated.")
     return 0
 
@@ -623,7 +701,8 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     print(f"lunamoth {__version__} @ {APP_DIR}")
     line("python >= 3.11", sys.version_info >= (3, 11), sys.version.split()[0])
     line("uv", bool(shutil.which("uv")), shutil.which("uv") or "missing (install.sh provides one)")
-    line("git checkout", (APP_DIR / ".git").exists(), "needed for `lunamoth update`")
+    _is_git = (APP_DIR / ".git").exists()
+    line("install channel", True, "dev (git checkout)" if _is_git else "wheel (GitHub Release)")
     if sys.platform == "darwin":
         line("sandbox-exec (simple sandbox)", bool(shutil.which("sandbox-exec")))
     else:
@@ -787,6 +866,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_gateway)
 
     sp = sub.add_parser("desktop", help="open the desktop app (web renderer + hub gateway)")
+    sp.add_argument("--host", default="127.0.0.1",
+                    help="address to bind (default: 127.0.0.1; a non-loopback host exposes the chara to the network and needs --token; 0.0.0.0 is refused without one)")
+    sp.add_argument("--allow-host", default="",
+                    help="comma-separated extra Host/Origin names to allow (for a reverse proxy in front of a public bind)")
     sp.add_argument("--port", type=int, default=0, help="HTTP port for the renderer (default: auto)")
     sp.add_argument("--ws-port", type=int, default=0, help="WebSocket port for the gateway (default: auto)")
     sp.add_argument("--token", default="", help="gateway token (auto-generated if omitted)")

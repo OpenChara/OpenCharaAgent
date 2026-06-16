@@ -32,6 +32,15 @@ browser = ["websockets>=12"]
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Bundle the built frontend SPA into the wheel (hermes-agent's model:
+# reference/hermes-agent/pyproject.toml:303-304). `apps/web/` builds to
+# src/lunamoth/front/webui/ (gitignored), which `packages.find` above picks up
+# as part of the `lunamoth` package; this glob attaches that built dir as
+# package-data so `python -m build` packs it into the wheel. No node and no
+# committed dist required at install — the wheel carries the prebuilt UI.
+[tool.setuptools.package-data]
+lunamoth = ["front/webui/**/*"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]

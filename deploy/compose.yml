@@ -1,0 +1,33 @@
+# LunaMoth — one-click server deploy (plan Track E).
+#
+#   cd deploy && docker compose up -d
+#
+# Builds the image from deploy/Dockerfile (which installs the wheel emitted by
+# scripts/build-wheel.sh — run that FIRST so dist/*.whl exists). Once a release
+# image is published you can swap `build:` for `image: ghcr.io/lunamos/lunamoth:latest`.
+#
+# Bound to 0.0.0.0 inside the container. Put a TLS reverse proxy (Caddy /
+# cloudflared, WS upgrade enabled) in front for any non-loopback access — see
+# the "Run on a server" section of the README. Mirrors reference/AstrBot/compose.yml.
+services:
+  lunamoth:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: lunamoth:latest
+    container_name: lunamoth
+    restart: always
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "6180:6180" # LunaMoth desktop UI + WS gateway
+    environment:
+      - TZ=Asia/Shanghai
+    # The supervisor auto-generates an access token on first boot — read it from
+    # the logs (`docker compose logs lunamoth`) to build your bookmark URL. To pin
+    # a stable token (and a fixed bookmark URL), override the command:
+    # command: ["lunamoth", "desktop", "--host", "0.0.0.0", "--port", "6180", "--no-open", "--token", "your-long-random-token"]
+    volumes:
+      # Sessions, cards and config — the one thing that must survive a re-deploy.
+      - ./data:/root/.lunamoth
+      - /etc/localtime:/etc/localtime:ro

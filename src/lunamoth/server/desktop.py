@@ -16,9 +16,9 @@ def free_port(host: str = "127.0.0.1") -> int:
 
 
 def serve_desktop(host: str, http_port: int, ws_port: int, token: str,
-                  open_browser: bool = True) -> int:
+                  open_browser: bool = True, allow_hosts: list[str] | None = None) -> int:
     """Run the supervisor in the foreground; Ctrl-C/SIGTERM tears down children."""
-    sup = SUP.Supervisor(host, http_port, ws_port, token)
+    sup = SUP.Supervisor(host, http_port, ws_port, token, allow_hosts=allow_hosts)
 
     def _term(signum: int, frame: Any) -> None:  # noqa: ARG001 - signal handler signature
         sup.request_shutdown()
@@ -40,7 +40,8 @@ def serve_desktop(host: str, http_port: int, ws_port: int, token: str,
                 signal.signal(signal.SIGTERM, old_term)
 
 
-def daemonize_desktop(host: str, http_port: int, ws_port: int, token: str, *, debug: bool = False) -> dict[str, Any]:
+def daemonize_desktop(host: str, http_port: int, ws_port: int, token: str, *,
+                      debug: bool = False, allow_hosts: list[str] | None = None) -> dict[str, Any]:
     """Start a detached supervisor process and write ~/.lunamoth/daemon.json."""
     existing = SUP.read_daemon_json()
     if SUP.daemon_alive(existing):
@@ -56,6 +57,8 @@ def daemonize_desktop(host: str, http_port: int, ws_port: int, token: str, *, de
         "-m",
         "lunamoth.front.cli",
         "desktop",
+        "--host",
+        str(host),
         "--port",
         str(http_port),
         "--ws-port",
@@ -63,6 +66,8 @@ def daemonize_desktop(host: str, http_port: int, ws_port: int, token: str, *, de
         f"--token={token}",
         "--no-open",
     ]
+    if allow_hosts:
+        cmd += ["--allow-host", ",".join(allow_hosts)]
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.DEVNULL,
@@ -81,11 +86,12 @@ def daemonize_desktop(host: str, http_port: int, ws_port: int, token: str, *, de
     import urllib.parse
     import urllib.request
 
+    probe_host = "127.0.0.1" if SUP.N.is_wildcard_host(host) or SUP.N.is_loopback_host(host) else host
     deadline = _time.time() + 5.0
     while _time.time() < deadline:
         try:
             req = urllib.request.Request(
-                f"http://127.0.0.1:{http_port}/rpc?token={urllib.parse.quote(str(token))}",
+                f"http://{probe_host}:{http_port}/rpc?token={urllib.parse.quote(str(token))}",
                 data=_json.dumps({"jsonrpc": "2.0", "id": 1, "method": "sessions.list", "params": {}}).encode("utf-8"),
                 headers={"Content-Type": "application/json"},
                 method="POST",
@@ -94,6 +100,14 @@ def daemonize_desktop(host: str, http_port: int, ws_port: int, token: str, *, de
                 break
         except Exception:
             _time.sleep(0.05)
-    return {"pid": proc.pid, "http_port": http_port, "ws_port": ws_port, "token": token, "path": str(path)}
+    # The child rewrites daemon.json with the OS-assigned ws_port once bound.
+    final = SUP.read_daemon_json()
+    return {
+        "pid": proc.pid,
+        "http_port": int(final.get("http_port") or http_port),
+        "ws_port": int(final.get("ws_port") or ws_port),
+        "token": token,
+        "path": str(path),
+    }
 
 

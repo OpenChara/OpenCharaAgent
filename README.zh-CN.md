@@ -75,9 +75,54 @@ curl -fsSL https://raw.githubusercontent.com/Lunamos/LunaMoth/main/install.sh | 
 lunamoth        # 名册 / TUI
 ```
 
-一行安装器：把代码 checkout 到 `~/.lunamoth/app`、托管一份 uv 在 `~/.lunamoth/bin`、把 `lunamoth` 命令装到 PATH（`lunamoth update` / `lunamoth doctor`）。`lunamoth desktop` 会在浏览器里打开同一套网页 UI。
+一行安装器，两个通道：
+
+- **用户（默认）** —— 通过 `uv tool install` 从最新 GitHub Release 安装预构建的 **wheel**。wheel 已打包好网页 UI，所以无需 Node 构建、也无需源码 checkout。日后用 `lunamoth update`（`uv tool upgrade`）升级。
+- **开发 / edge** —— `… | bash -s -- --dev` 沿用 git checkout：代码落在 `~/.lunamoth/app` + `uv sync`（开发者用 `cd apps/web && npm run build` 重建伺服的 UI）。此时 `lunamoth update` 走 git pull + uv sync。
+
+`lunamoth doctor` 会显示你处于哪个通道；`lunamoth desktop` 在浏览器里打开同一套 UI。*（从私有仓库安装？设置 `GITHUB_TOKEN` 为带 `repo:read` 权限的 PAT，才能下载 release 资产。）*
 
 </details>
+
+## 在服务器上运行（Docker / 远程）
+
+LunaMoth 可以跑在一台机器上、从任意浏览器访问。整个前端是一套 SPA，由同一个 Python 监督进程伺服——本地走回环，远程则绑定到主机并置于 TLS 之后。
+
+**Docker 一键部署。** 先构建 wheel，再 `docker compose up -d`：
+
+```bash
+scripts/build-wheel.sh                 # 构建 SPA 并打成 wheel 放进 dist/（已含网页 UI）
+cd deploy && docker compose up -d      # python:3.12-slim，安装 wheel，监听 :6180
+docker compose logs lunamoth           # 读取自动生成的访问 token 以拼出你的 URL
+```
+
+镜像把构建好的 UI 装在 wheel 里——**容器内无需 Node、无源码**。会话、卡片与配置持久化在 `./data`（挂载到 `/root/.lunamoth`）。容器内绑定 `0.0.0.0`，切勿把该端口直接暴露到公网。
+
+**前置 TLS（超出回环必须）。** 监督进程同时提供 HTTP 与 WebSocket，你的反向代理必须支持 WS 升级。用 [Caddy](https://caddyserver.com)（自动 HTTPS）：
+
+```caddyfile
+your-host.example.com {
+    reverse_proxy 127.0.0.1:6180   # Caddy 会自动代理 WebSocket 升级
+}
+```
+
+或用 [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) 实现零开放入站端口（`cloudflared tunnel --url http://127.0.0.1:6180`，默认支持 WS 升级）。两种方式访问 `https://your-host/`，客户端会自动改用 `wss://`。
+
+**完全不暴露 —— SSH 隧道。** 服务器上绑定回环，再转发端口：
+
+```bash
+# 服务器上：
+lunamoth desktop --host 127.0.0.1 --no-open
+# 笔记本上：
+ssh -L 6180:127.0.0.1:6180 user@server   # 然后打开打印出的 http://127.0.0.1:6180/#… URL
+```
+
+**前端开发循环**（两个终端）：先跑后端，再起 Vite 开发服务器，它会把 `/rpc` 与 WS 代理到后端。
+
+```bash
+uv run lunamoth desktop --no-open      # 终端 1：后端，打印 token/端口
+cd apps/web && npm run dev             # 终端 2：SPA 开发服务器（HMR），代理到后端
+```
 
 ## Chara —— 持续存在的智能体，而非用完即弃的会话
 

@@ -75,9 +75,54 @@ curl -fsSL https://raw.githubusercontent.com/Lunamos/LunaMoth/main/install.sh | 
 lunamoth        # the roster / TUI
 ```
 
-A one-line installer that puts a checkout in `~/.lunamoth/app`, a managed uv in `~/.lunamoth/bin`, and the `lunamoth` command on your PATH (`lunamoth update` / `lunamoth doctor`). `lunamoth desktop` opens the same web UI in a browser.
+A one-line installer with two channels:
+
+- **User (default)** — installs the prebuilt **wheel** from the latest GitHub Release via `uv tool install`. The wheel bundles the built web UI, so there's no Node build and no source checkout. Update later with `lunamoth update` (`uv tool upgrade`).
+- **Dev / edge** — `… | bash -s -- --dev` keeps a git checkout in `~/.lunamoth/app` + `uv sync` (developers rebuild the served UI with `cd apps/web && npm run build`). `lunamoth update` then does git pull + uv sync.
+
+`lunamoth doctor` reports which channel you're on; `lunamoth desktop` opens the same web UI in a browser. *(Installing from a private repo? Set `GITHUB_TOKEN` to a `repo:read` PAT so the release asset can be downloaded.)*
 
 </details>
+
+## Run on a server (Docker / remote)
+
+LunaMoth can run on a box and be reached from any browser. The build is one SPA served by the same Python supervisor — locally over loopback, remotely over a bound host behind TLS.
+
+**One-click with Docker.** Build the wheel, then `docker compose up -d`:
+
+```bash
+scripts/build-wheel.sh                 # builds the SPA + a wheel into dist/ (carries the web UI)
+cd deploy && docker compose up -d      # python:3.12-slim, installs the wheel, serves on :6180
+docker compose logs lunamoth           # read the auto-generated access token for your URL
+```
+
+The image carries the built UI inside the wheel — **no Node, no source in the container**. Sessions, cards and config persist in `./data` (mounted at `/root/.lunamoth`). The container binds `0.0.0.0` inside; never expose that port directly.
+
+**Put TLS in front (required past loopback).** The supervisor serves HTTP + a WebSocket; your proxy must upgrade WS. With [Caddy](https://caddyserver.com) (auto-HTTPS):
+
+```caddyfile
+your-host.example.com {
+    reverse_proxy 127.0.0.1:6180   # Caddy proxies WebSocket upgrades automatically
+}
+```
+
+Or [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) for no open inbound port (`cloudflared tunnel --url http://127.0.0.1:6180`, WS upgrade on by default). Either way you reach `https://your-host/` and the client speaks `wss://` automatically.
+
+**No exposure at all — SSH tunnel.** Bind to loopback on the server and forward a port:
+
+```bash
+# on the server:
+lunamoth desktop --host 127.0.0.1 --no-open
+# from your laptop:
+ssh -L 6180:127.0.0.1:6180 user@server   # then open the printed http://127.0.0.1:6180/#… URL
+```
+
+**Frontend dev loop** (two terminals): run the backend, then the Vite dev server which proxies `/rpc` + the WS to it.
+
+```bash
+uv run lunamoth desktop --no-open      # terminal 1: backend, prints token/ports
+cd apps/web && npm run dev             # terminal 2: SPA dev server (HMR), proxied to the backend
+```
 
 ## Charas — persistent agents, not throwaway sessions
 

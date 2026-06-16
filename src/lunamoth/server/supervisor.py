@@ -11,7 +11,6 @@ import contextlib
 import dataclasses
 import functools
 import gc
-import hmac
 import http.server
 import json
 import logging
@@ -34,14 +33,28 @@ from ..obs.audit import AuditLog
 from ..session import isolation as I
 from ..session import sessions as S
 from . import hub as H
+from . import netsec as N
 from .pty import PtyBridge
 from .ws import _WSSink, _close_ws, _path_from_ws, _recv_text, query_auth_ok
 
 _log = logging.getLogger("lunamoth.server.supervisor")
 
 APP_DIR = Path(__file__).resolve().parents[3]
-WEB_DIR = Path(__file__).resolve().parents[1] / "front" / "web"
+# The built React SPA (apps/web → `npm run build`). Gitignored, bundled into the
+# wheel via package-data; `cd apps/web && npm run build` regenerates it in dev.
+WEB_DIR = Path(__file__).resolve().parents[1] / "front" / "webui"
 UPLOAD_MAX = 8 * 1024 * 1024
+
+# Static files that may be served BEFORE auth — the SPA shell + its hashed JS/CSS
+# bundle. They carry no secrets (the token arrives in the URL hash, never baked
+# into the bundle) and must load so the page can run the `?token=` handshake.
+# Everything else (/asset, /rpc, /upload, the data the app fetches) is gated.
+_PREAUTH_EXACT = frozenset({"/", "/index.html", "/favicon.ico"})
+_PREAUTH_PREFIXES = ("/assets/",)
+
+
+def _is_preauth_path(path: str) -> bool:
+    return path in _PREAUTH_EXACT or any(path.startswith(p) for p in _PREAUTH_PREFIXES)
 ISOLATION_TO_BACKEND = {"dir": "local", "sandbox": "sandbox", "docker": "docker"}
 
 # Whole-frame resize escape consumed server-side by the PTY endpoint
@@ -1089,12 +1102,48 @@ class GatewayChild:
 class WebHandler(http.server.SimpleHTTPRequestHandler):
     token = ""
     supervisor: Supervisor | None = None
+    # Set per-server by start_http (see the `type(...)` subclass there).
+    allow_hosts: frozenset[str] = frozenset({"localhost", "127.0.0.1", "::1"})
+    wildcard_bind: bool = False
+    secure_cookie: bool = False  # add Secure to the auth cookie (https / proxy)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(WEB_DIR), **kwargs)
 
     def log_message(self, fmt: str, *args: Any) -> None:
         _log.debug("http: " + fmt, *args)
+
+    # ---- request gating (Host allowlist + token cookie/query) ---------------
+
+    def _host_ok(self) -> bool:
+        """Reject Host headers outside the allowlist (anti DNS-rebinding)."""
+        return N.host_allowed(
+            self.headers.get("Host", ""), self.allow_hosts, wildcard_bind=self.wildcard_bind
+        )
+
+    def _is_secure_request(self) -> bool:
+        """True when the cookie should carry Secure: a TLS reverse proxy in
+        front (X-Forwarded-Proto: https) or a direct https connection."""
+        if self.secure_cookie:
+            return True
+        return self.headers.get("X-Forwarded-Proto", "").strip().lower() == "https"
+
+    def _auth_ok(self, url) -> bool:
+        """Dual-read auth: a valid ``?token=`` query OR the auth cookie.
+
+        On a valid ``?token=`` handshake we mint the SameSite cookie so later
+        ``<img src>``/``/asset`` requests (which can't send the query) pass on
+        the cookie alone. The actual Set-Cookie is emitted by send_auth_cookie,
+        called from the response path once a 200 is going out."""
+        cookie = self.headers.get("Cookie", "")
+        if N.request_authed(url.query, cookie, self.token):
+            # Mint/refresh the cookie when the token arrived via the query.
+            if N.token_from_query(url.query):
+                self._pending_set_cookie = N.auth_cookie_header(
+                    self.token, secure=self._is_secure_request()
+                )
+            return True
+        return False
 
     # Raster only: no svg/html — an attacker-controlled SVG served same-origin
     # with image/svg+xml would be a stored-XSS vector. Card avatars use inline
@@ -1105,6 +1154,10 @@ class WebHandler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self) -> None:
         if not getattr(self, "_skip_no_store", False):
             self.send_header("Cache-Control", "no-store")
+        pending = getattr(self, "_pending_set_cookie", "")
+        if pending:
+            self.send_header("Set-Cookie", pending)
+            self._pending_set_cookie = ""
         super().end_headers()
 
     def _card_roots(self) -> list[Path]:
@@ -1201,7 +1254,17 @@ class WebHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 - http.server API
         self._skip_no_store = False
+        self._pending_set_cookie = ""
+        if not self._host_ok():
+            self.send_error(403, "host not allowed")
+            return
         url = urlsplit(self.path)
+        # The SPA shell + its hashed bundle load pre-auth (they carry no secrets
+        # and must run to perform the ?token= handshake). Everything else —
+        # /asset and any other path — requires the token (query) or auth cookie.
+        if not _is_preauth_path(url.path) and not self._auth_ok(url):
+            self.send_error(401, "authentication required")
+            return
         if url.path == "/asset":
             self._serve_asset(url)
             return
@@ -1209,10 +1272,12 @@ class WebHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802 - http.server API
         self._skip_no_store = False  # never inherit an asset GET's cache flag (keep-alive safety)
+        self._pending_set_cookie = ""
+        if not self._host_ok():
+            self.send_error(403, "host not allowed")
+            return
         url = urlsplit(self.path)
-        qs = parse_qs(url.query)
-        token = (qs.get("token") or [""])[0]
-        if not self.token or not hmac.compare_digest(token, self.token):
+        if not self._auth_ok(url):
             self.send_error(403)
             return
         if url.path == "/rpc":
@@ -1251,8 +1316,23 @@ class WebHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(payload)
 
 
-def start_http(host: str, port: int, token: str, supervisor: Supervisor | None = None) -> http.server.ThreadingHTTPServer:
-    handler = type("Handler", (WebHandler,), {"token": token, "supervisor": supervisor})
+def start_http(
+    host: str,
+    port: int,
+    token: str,
+    supervisor: Supervisor | None = None,
+    *,
+    allow_hosts: frozenset[str] | None = None,
+    secure_cookie: bool = False,
+) -> http.server.ThreadingHTTPServer:
+    attrs = {
+        "token": token,
+        "supervisor": supervisor,
+        "allow_hosts": allow_hosts if allow_hosts is not None else N.allowed_hosts(host),
+        "wildcard_bind": N.is_wildcard_host(host),
+        "secure_cookie": bool(secure_cookie),
+    }
+    handler = type("Handler", (WebHandler,), attrs)
     server = http.server.ThreadingHTTPServer((host, port), handler)
     thread = threading.Thread(target=server.serve_forever, name="desktop-http", daemon=True)
     thread.start()
@@ -1265,14 +1345,44 @@ def free_port(host: str = "127.0.0.1") -> int:
         return int(s.getsockname()[1])
 
 
+def _reachable_ips(host: str) -> list[str]:
+    """Best-effort list of addresses a remote browser could use to reach a
+    non-loopback bind. For a wildcard bind, enumerate the host's own IPs; for a
+    specific host, just that host."""
+    if not N.is_wildcard_host(host):
+        return [host]
+    ips: list[str] = []
+    with contextlib.suppress(Exception):
+        hostname = socket.gethostname()
+        for info in socket.getaddrinfo(hostname, None):
+            ip = info[4][0]
+            if ip not in ips and not ip.startswith("127.") and ip != "::1":
+                ips.append(ip)
+    return ips or [host]
+
+
 # ---- supervisor -------------------------------------------------------------
 
 class Supervisor:
-    def __init__(self, host: str, http_port: int, ws_port: int, token: str) -> None:
+    def __init__(
+        self,
+        host: str,
+        http_port: int,
+        ws_port: int,
+        token: str,
+        *,
+        allow_hosts: list[str] | None = None,
+        secure_cookie: bool = False,
+    ) -> None:
         self.host = host
         self.http_port = int(http_port)
-        self.ws_port = int(ws_port)
+        self.ws_port = int(ws_port)  # 0 ⇒ OS-assigned; resolved in serve()
         self.token = token
+        # Host/Origin allow set (anti DNS-rebinding / CSWSH). Loopback + bound
+        # host always; `allow_hosts` names extra reachable hosts for a proxy.
+        self.allow_hosts = N.allowed_hosts(host, allow_hosts)
+        self.wildcard_bind = N.is_wildcard_host(host)
+        self.secure_cookie = bool(secure_cookie)
         self.charas: dict[str, CharaChild] = {}
         self.gateways: dict[str, GatewayChild] = {}
         self._pty_bridges: set[PtyBridge] = set()
@@ -1410,24 +1520,88 @@ class Supervisor:
                 await gw.start(persist=False)
 
     async def serve(self, *, open_browser: bool = True) -> int:
-        if not WEB_DIR.is_dir():
-            print(f"error: renderer assets missing at {WEB_DIR}", file=sys.stderr)
+        if not WEB_DIR.is_dir() or not any(WEB_DIR.iterdir()):
+            print(
+                f"error: the web UI is not built at {WEB_DIR}\n"
+                "       run: cd apps/web && npm install && npm run build",
+                file=sys.stderr,
+            )
             return 1
         self.loop = asyncio.get_running_loop()
         self._install_signal_handlers()
         self._canary.start()
-        self._httpd = start_http(self.host, self.http_port, self.token, self)
+        # Bind the WS first so a `--ws-port 0` (OS-assigned) port is known before
+        # we bake it into the URL/daemon.json. The HTTP port is started here too
+        # so a conflict surfaces with attribution rather than a raw traceback.
+        try:
+            ws_server = await self._start_ws()
+        except OSError as exc:
+            print(f"error: could not bind the WebSocket port: {exc}", file=sys.stderr)
+            return 1
+        try:
+            self.ws_port = ws_server.sockets[0].getsockname()[1]
+        except (IndexError, AttributeError):
+            pass
+        try:
+            self._httpd = start_http(
+                self.host, self.http_port, self.token, self,
+                allow_hosts=self.allow_hosts, secure_cookie=self.secure_cookie,
+            )
+            self.http_port = self._httpd.server_address[1]
+        except OSError:
+            holder = N.describe_port_holder(self.http_port)
+            print(
+                f"error: HTTP port {self.http_port} held by {holder}\n"
+                "       stop it, or pass --port <other> (or --port 0 for any free port).",
+                file=sys.stderr,
+            )
+            ws_server.close()
+            with contextlib.suppress(Exception):
+                await ws_server.wait_closed()
+            return 1
+        self._warn_on_public_bind()
         url = f"http://{self.host}:{self.http_port}/#token={self.token}&ws={self.ws_port}"
+        # The resident daemon child owns daemon.json: rewrite it with the
+        # resolved ports (the WS port was OS-assigned) so `lunamoth start NAME`
+        # and `--connect` read the live values. A foreground (ephemeral) run
+        # must NOT clobber a running daemon's metadata.
+        if os.getenv("LUNAMOTH_DAEMON_CHILD"):
+            write_daemon_json(os.getpid(), self.http_port, self.ws_port, self.token)
         print(f"LunaMoth desktop: {url}", file=sys.stderr, flush=True)
         print("life.state: supervisor emits life.state frames on client connect and transitions", file=sys.stderr, flush=True)
         if open_browser:
             self._open_later(url)
         await self.bootstrap_gateways()
         try:
-            await self._serve_ws()
+            await self._shutdown.wait()
         finally:
+            ws_server.close()
+            with contextlib.suppress(Exception):
+                await ws_server.wait_closed()
             await self.shutdown()
         return 0
+
+    def _warn_on_public_bind(self) -> None:
+        """A non-loopback bind exposes the chara's shell + tools to the network.
+        Warn prominently and print the reachable URLs (AstrBot server.py:642-677).
+        The token is the gate — serve() refuses a wildcard bind without one
+        (enforced in cmd_desktop), so a reachable instance is always authed."""
+        if N.is_loopback_host(self.host):
+            return
+        bar = "=" * 60
+        lines = [
+            bar,
+            "  SECURITY: LunaMoth is bound to a NON-LOOPBACK address.",
+            f"  Anyone who can reach {self.host}:{self.http_port} and holds the",
+            "  token can drive this chara's shell, files, and tools.",
+            "  Put a TLS reverse proxy in front; never expose it raw on the",
+            "  public internet. The URL below carries the access token.",
+            bar,
+        ]
+        for line in lines:
+            print(line, file=sys.stderr, flush=True)
+        for ip in _reachable_ips(self.host):
+            print(f"  reachable: http://{ip}:{self.http_port}/", file=sys.stderr, flush=True)
 
     def _open_later(self, url: str) -> None:
         def work() -> None:
@@ -1441,17 +1615,36 @@ class Supervisor:
 
         threading.Thread(target=work, name="desktop-open", daemon=True).start()
 
-    async def _serve_ws(self) -> None:
+    async def _start_ws(self) -> Any:
+        """Bind the WebSocket server (port 0 ⇒ OS-assigned) and return it so the
+        caller can read the chosen port and own the lifecycle."""
         try:
             import websockets
         except ImportError as exc:  # pragma: no cover - optional extra
             raise RuntimeError("the desktop needs websockets. Install with: uv sync --extra server") from exc
         handler = functools.partial(self._ws_entry)
-        async with websockets.serve(handler, self.host, self.ws_port, max_size=16 * 1024 * 1024):
-            await self._shutdown.wait()
+        return await websockets.serve(
+            handler, self.host, self.ws_port, max_size=16 * 1024 * 1024
+        )
+
+    def _origin_ok(self, ws: Any) -> bool:
+        """Reject a cross-origin WS even with a valid token (anti-CSWSH). A
+        missing Origin (native clients / Electron / CLI tunnels) is allowed —
+        the token gates those; a PRESENT foreign Origin is the browser attack."""
+        origin = ""
+        request = getattr(ws, "request", None)
+        if request is not None:
+            headers = getattr(request, "headers", None)
+            if headers is not None:
+                with contextlib.suppress(Exception):
+                    origin = headers.get("Origin", "") or headers.get("origin", "") or ""
+        return N.origin_allowed(origin, self.allow_hosts, wildcard_bind=self.wildcard_bind)
 
     async def _ws_entry(self, ws: Any, path: str = "") -> None:
         path = _path_from_ws(ws, path)
+        if not self._origin_ok(ws):
+            await _close_ws(ws, 4403, "origin not allowed")
+            return
         if not query_auth_ok(path, self.token):
             await _close_ws(ws, 4401, "authentication required")
             return
