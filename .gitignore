@@ -100,6 +100,7 @@ cards/**/.DS_Store
 sandbox/logs/*.jsonl
 sandbox/workspace/*
 !sandbox/workspace/.gitkeep
+sandbox/assets/
 
 # pre-rename config dir (still readable as fallback)
 .lunamoss/
