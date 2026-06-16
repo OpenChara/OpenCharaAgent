@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { useHub } from "../../state/hub";
 import { rpcErrText } from "../../lib/status";
+import { fmtSize } from "../../lib/format";
 import { deckToast } from "../ui/deckToast";
 
 /* R11 — the local matte (抠像 / background-removal) model manager, ported from
@@ -11,15 +12,16 @@ import { deckToast } from "../ui/deckToast";
    `visuals` extra isn't installed, shows the install hint instead. */
 
 interface MatteProgress {
-  state?: string; // downloading | error | done | ...
-  pct?: number;
+  state?: string; // downloading | done | error
+  done?: number; // bytes fetched
+  total?: number; // total bytes (the model size)
   error?: string;
 }
 interface MatteModel {
   id: string;
   label: string;
   note: string;
-  size: string;
+  size: number; // exact byte size (matte.py MatteModel.size)
   installed: boolean;
   active: boolean;
   progress?: MatteProgress | null;
@@ -106,19 +108,23 @@ export function MattePane() {
         const downloading = prog.state === "downloading";
         const failed = prog.state === "error";
         const isBusy = busy.has(m.id);
+        // The backend reports {done,total} bytes, not a percent — derive it.
+        const pct = prog.total ? Math.floor(((prog.done || 0) / prog.total) * 100) : 0;
         return (
           <div className={"matte-row set-row" + (m.active ? " on" : "")} key={m.id}>
             <div className="lbl">
               <span>{m.label}</span>
               <small>
-                {m.note} · {m.size}
+                {m.note} · {fmtSize(m.size)}
               </small>
               {downloading && (
                 <div className="matte-prog">
                   <div className="matte-bar">
-                    <div className="matte-fill" style={{ width: `${Math.round(prog.pct || 0)}%` }} />
+                    <div className="matte-fill" style={{ width: `${pct}%` }} />
                   </div>
-                  <span className="muted small">{t("matte-downloading")}</span>
+                  <span className="muted small">
+                    {t("matte-downloading")} {pct}% · {fmtSize(prog.done || 0)} / {fmtSize(prog.total || 0)}
+                  </span>
                 </div>
               )}
               {failed && <div className="okline bad small">{prog.error || t("matte-dl-failed")}</div>}
