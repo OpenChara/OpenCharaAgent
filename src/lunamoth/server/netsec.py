@@ -20,6 +20,7 @@ from __future__ import annotations
 import hmac
 import http.cookies
 import ipaddress
+import re
 import socket
 import subprocess
 from urllib.parse import parse_qs, urlsplit
@@ -165,11 +166,21 @@ def request_authed(query: str, cookie_header: str, expected: str) -> bool:
     return bool(tok) and hmac.compare_digest(tok, expected)
 
 
+_SAFE_TOKEN = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
 def auth_cookie_header(token: str, *, secure: bool) -> str:
     """Build the ``Set-Cookie`` value for the post-handshake auth cookie.
 
     ``SameSite=Strict; HttpOnly`` always; ``Secure`` added when the connection
-    is https / behind a TLS proxy (§7) so the cookie never rides plain http."""
+    is https / behind a TLS proxy (§7) so the cookie never rides plain http.
+
+    Returns "" for a token with any character outside the cookie-safe set
+    (``[A-Za-z0-9._-]``) — our tokens are ``secrets.token_urlsafe`` so this only
+    bites a hand-crafted ``--token``; refusing to emit the cookie closes a
+    Set-Cookie header-injection vector (CR/LF/`;`) at no cost to real tokens."""
+    if not _SAFE_TOKEN.match(token or ""):
+        return ""
     parts = [
         f"{AUTH_COOKIE}={token}",
         "Path=/",
