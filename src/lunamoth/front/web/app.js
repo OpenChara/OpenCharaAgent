@@ -1160,7 +1160,7 @@ async function viewCard(c) {
   const avatar = avatarNode(full.name, card, "avatar-s");
   avatar.style.cursor = "pointer";
   avatar.title = t("av-title");
-  avatar.addEventListener("click", () => { closeModal(); openAvatarEditor(c); });
+  avatar.addEventListener("click", () => { closeModal(); openVisualsEditor(c); });
   const badges = el("div", { class: "cv-badges" },
     el("span", { class: "chip" }, full.language || c.lang),
     c.builtin ? el("span", { class: "chip" }, t("deck-builtin")) : null,
@@ -1324,7 +1324,7 @@ async function viewCard(c) {
       artTile("cv-art-sprite", c.sprite_url, false, null),
       artTile("cv-art-keyvisual", c.keyvisual_url, false, null),
       artTile("cv-art-bg", c.bg_url, true, null),
-      artTile("cv-art-avatar", avatarSrc(card), true, () => { closeModal(); openAvatarEditor(c); })));
+      artTile("cv-art-avatar", avatarSrc(card), true, () => { closeModal(); openVisualsEditor(c); })));
     if (themebar) visPane.appendChild(themebar);
   } else {
     // No art at all: one friendly themed placeholder + a neutral note.
@@ -2366,21 +2366,41 @@ function safeSvgForPreview(svg) {
     !/\b(?:href|xlink:href)\s*=\s*["']\s*(?!#)[^"']+["']|url\(\s*["']?\s*(?!#)[^)]+/i.test(s);
 }
 
-/* ---------- shared avatar controls (presentation editor) ----------
-   ONE builder for both the create flow and the deck editor. `work` is the
-   live model: { name, avatar_uri, avatar_svg, pending_avatar, theme }.
-   pending_avatar = a chosen raster file not yet on disk: {data_b64, ext, mime}.
-   No raw-SVG textarea — just preview, Upload, AI 生成 (loading → confirm/cancel),
-   and two theme-color pickers. opts.cardPath (optional) gives the generator the
-   character's persona for context; opts.disabled greys the editor (builtin). */
 const AVATAR_UPLOAD_MAX = 1024 * 1024;
 const AVATAR_EXTS = ["png", "jpg", "jpeg", "svg"];
+const ART_EXTS = ["png", "jpg", "jpeg", "webp"];
+const ART_UPLOAD_MAX = 16 * 1024 * 1024;
+const VIS_KINDS = ["avatar", "sprite", "background"];
+const REF_MAX = 3;  // user reference images per generation
 
-function buildAvatarControls(work, opts) {
+function loadImg(src) {
+  return new Promise((res, rej) => {
+    const i = new Image();
+    i.onload = () => res(i);
+    i.onerror = () => rej(new Error("image load failed"));
+    i.src = src;
+  });
+}
+
+/* Downscale a (possibly large) image to fit the avatar's tiny budget, as PNG
+   base64 — the generated avatar is ~1920² but the avatar sidecar is inlined into
+   every hub.state, so it must stay small. */
+async function downscalePngB64(dataUrl, maxDim) {
+  const img = await loadImg(dataUrl);
+  const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+  const w = Math.max(1, Math.round(img.width * scale));
+  const h = Math.max(1, Math.round(img.height * scale));
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  c.getContext("2d").drawImage(img, 0, 0, w, h);
+  return (c.toDataURL("image/png").split(",")[1]) || "";
+}
+
+/* Minimal avatar uploader for the CREATE FLOW: the card isn't on disk yet, so
+   generation (which reads the saved card) isn't available — only staging an
+   uploaded file. `work`: { name, avatar_uri, avatar_svg, pending_avatar }. */
+function buildAvatarUpload(work, opts) {
   opts = opts || {};
-  const disabled = !!opts.disabled;
-  work.theme = work.theme || { primary: "", secondary: "" };
-
   const preview = el("div", { class: "av-preview" });
   function previewSrc() {
     if (work.pending_avatar) return `data:${work.pending_avatar.mime};base64,${work.pending_avatar.data_b64}`;
@@ -2390,193 +2410,270 @@ function buildAvatarControls(work, opts) {
   }
   function refresh() {
     preview.innerHTML = "";
-    preview.style.cssText = themeStyle(work) || "";
     const src = previewSrc();
     if (src) preview.appendChild(el("img", { src, alt: "" }));
     else preview.appendChild(document.createTextNode(glyphOf(work.name)));
   }
   refresh();
-
-  // ---- Upload (png/jpg/jpeg/svg) ----
-  const fileInput = el("input", { type: "file", accept: ".png,.jpg,.jpeg,.svg,image/png,image/jpeg,image/svg+xml",
-    style: "display:none" });
+  const fileInput = el("input", { type: "file", accept: ".png,.jpg,.jpeg,.svg,image/png,image/jpeg,image/svg+xml", style: "display:none" });
   const uploadBtn = el("button", { class: "btn soft" }, t("av-upload"));
-  const upNote = el("div", { class: "av-note", style: "margin-top:6px" });
-  uploadBtn.disabled = disabled;
-  uploadBtn.addEventListener("click", () => { if (!disabled) fileInput.click(); });
+  const note = el("div", { class: "av-note", style: "margin-top:6px" });
+  uploadBtn.addEventListener("click", () => fileInput.click());
   fileInput.addEventListener("change", () => {
-    upNote.className = "av-note"; upNote.textContent = "";
+    note.className = "av-note"; note.textContent = "";
     const f = fileInput.files && fileInput.files[0];
     fileInput.value = "";
     if (!f) return;
     const ext = (f.name.split(".").pop() || "").toLowerCase();
-    if (!AVATAR_EXTS.includes(ext)) {
-      upNote.className = "av-note err"; upNote.textContent = t("av-up-type"); return;
-    }
-    if (f.size > AVATAR_UPLOAD_MAX) {
-      upNote.className = "av-note err"; upNote.textContent = t("av-up-size"); return;
-    }
+    if (!AVATAR_EXTS.includes(ext)) { note.className = "av-note err"; note.textContent = t("av-up-type"); return; }
+    if (f.size > AVATAR_UPLOAD_MAX) { note.className = "av-note err"; note.textContent = t("av-up-size"); return; }
     const reader = new FileReader();
     reader.onload = () => {
       const b64 = String(reader.result || "").split(",")[1] || "";
       const mime = ext === "svg" ? "image/svg+xml" : (ext === "png" ? "image/png" : "image/jpeg");
-      // SVG safety is verified server-side on save; raster goes through as-is.
       work.pending_avatar = { data_b64: b64, ext, mime };
       work.avatar_uri = ""; work.avatar_svg = "";
       refresh();
     };
-    reader.onerror = () => { upNote.className = "av-note err"; upNote.textContent = t("av-up-read"); };
+    reader.onerror = () => { note.className = "av-note err"; note.textContent = t("av-up-read"); };
     reader.readAsDataURL(f);
   });
-
-  // ---- AI 生成 → loading (思考 Ns) → confirm/cancel ----
-  const aiDesc = el("input", { placeholder: t("av-ai-desc-ph") });
-  const aiBtn = el("button", { class: "btn soft" }, t("av-ai-go"));
-  const aiNote = el("div", { class: "av-note", style: "margin-top:6px" });
-  const aiActs = el("div", { class: "av-ai-confirm" });
-  aiBtn.disabled = disabled; aiDesc.disabled = disabled;
-  let thinkTimer = null;
-  function stopThinking() { if (thinkTimer) { clearInterval(thinkTimer); thinkTimer = null; } }
-  aiBtn.addEventListener("click", async () => {
-    if (disabled) return;
-    aiBtn.disabled = true; aiDesc.disabled = true;
-    aiActs.innerHTML = "";
-    aiNote.className = "av-note thinking";
-    const startedAt = Date.now();
-    const tick = () => { aiNote.textContent = t("av-ai-thinking", { n: Math.max(1, Math.round((Date.now() - startedAt) / 1000)) }); };
-    tick(); stopThinking(); thinkTimer = setInterval(tick, 1000);
-    let r;
-    try {
-      r = await hub.call("card.avatar_generate",
-        { card_path: opts.cardPath || "", description: aiDesc.value.trim() }, 180000);
-    } catch (e) {
-      stopThinking();
-      aiNote.className = "av-note err"; aiNote.textContent = rpcErrText(e);
-      aiBtn.disabled = false; aiDesc.disabled = false;
-      return;
-    }
-    stopThinking();
-    aiBtn.disabled = false; aiDesc.disabled = false;
-    const svg = String((r && r.avatar_svg) || "");
-    if (!safeSvgForPreview(svg)) {
-      aiNote.className = "av-note err"; aiNote.textContent = t("av-ai-bad"); return;
-    }
-    // Stage the result for confirm/cancel (do NOT touch work yet).
-    aiNote.className = "av-note"; aiNote.textContent = t("av-ai-confirm-q");
-    const thumb = el("div", { class: "av-cand", style: themeStyle(work) }, el("img", { src: dataUriSvg(svg), alt: "" }));
-    const confirmBtn = el("button", { class: "btn primary" }, t("av-ai-confirm-yes"));
-    const cancelBtn = el("button", { class: "btn text" }, t("av-ai-confirm-no"));
-    confirmBtn.addEventListener("click", () => {
-      // Confirmed: an SVG result is stored inline; the card editor will save it
-      // as the sidecar (uploads svg → sidecar) on save.
-      work.avatar_svg = svg; work.avatar_uri = ""; work.pending_avatar = null;
-      aiActs.innerHTML = ""; aiNote.textContent = ""; refresh();
-    });
-    cancelBtn.addEventListener("click", () => { aiActs.innerHTML = ""; aiNote.textContent = ""; });
-    aiActs.innerHTML = "";
-    aiActs.appendChild(thumb);
-    aiActs.appendChild(el("div", { class: "av-ai-confirm-acts" }, confirmBtn, cancelBtn));
-  });
-
-  // ---- two theme color pickers (applied LIVE) ----
-  function picker(slot, fallback) {
-    const cur = /^#[0-9a-fA-F]{6}$/.test(String(work.theme[slot] || ""))
-      ? String(work.theme[slot]).toUpperCase() : fallback;
-    const input = el("input", { type: "color", value: cur });
-    input.disabled = disabled;
-    if (!work.theme[slot] && slot === "primary") work.theme.primary = fallback;
-    input.addEventListener("input", () => { work.theme[slot] = input.value.toUpperCase(); refresh(); });
-    return input;
-  }
-  const primaryPick = picker("primary", "#5B9FD4");
-  const secondaryPick = picker("secondary", "#FFFFFF");
-  // Secondary starts blank unless the card already declares one.
-  if (!work.theme.secondary) secondaryPick.classList.add("av-color-unset");
-  const clearSecondary = el("button", { class: "btn text tiny", title: t("av-color-clear") }, "×");
-  clearSecondary.disabled = disabled;
-  clearSecondary.addEventListener("click", () => {
-    work.theme.secondary = ""; secondaryPick.classList.add("av-color-unset"); refresh();
-  });
-  secondaryPick.addEventListener("input", () => secondaryPick.classList.remove("av-color-unset"));
-
   const node = el("div", { class: "av-controls" },
     el("div", { class: "av-top" }, preview,
       el("div", { class: "av-side" },
         el("div", { class: "av-sec" }, el("h4", null, t("av-image")),
-          el("div", { class: "av-row" }, uploadBtn), upNote, fileInput),
-        el("div", { class: "av-sec" }, el("h4", null, t("av-ai")),
-          el("div", { class: "av-ai-row" }, aiDesc, aiBtn), aiNote, aiActs))),
-    el("div", { class: "av-sec" }, el("h4", null, t("av-colors")),
-      el("div", { class: "av-color-row" },
-        el("label", { class: "av-color" }, el("span", null, t("av-color-primary")), primaryPick),
-        el("label", { class: "av-color" }, el("span", null, t("av-color-secondary")), secondaryPick, clearSecondary))));
+          el("div", { class: "av-row" }, uploadBtn), note, fileInput),
+        el("div", { class: "av-note", style: "margin-top:8px" }, t("visual-after-wake")))));
   return { node, refresh };
 }
 
-/* The new avatar/theme editor for a deck card. Soul untouched: only the avatar
-   (sidecar) and the dual theme. Upload → sidecar; AI 生成 → confirm → sidecar.
-   Builtin cards are read-only (copy first). */
-async function openAvatarEditor(deckCard) {
+/* The full visual-set editor for an EXISTING card (deck editor): per-asset
+   generate / upload / replace / delete, a reference-image tray, and one-click
+   "generate all". Each action writes to the card immediately (avatar_upload /
+   asset_save / asset_delete) — instant feedback, no separate Save button.
+   Brief is built once and reused across the set. Builtin cards are read-only. */
+function buildVisualsControls(cardPath, deckCard, opts) {
+  opts = opts || {};
+  const disabled = !!opts.disabled;
+  const refs = [];          // [{data_b64, mime}] user reference images
+  let cachedBrief = null;   // reused across generate / generate-all
+
+  function refData() { return refs.map((r) => `data:${r.mime};base64,${r.data_b64}`); }
+  async function getBrief() {
+    if (!cachedBrief) {
+      const r = await hub.call("card.visual_brief", { path: cardPath }, 180000);
+      cachedBrief = (r && r.brief) || {};
+    }
+    return cachedBrief;
+  }
+
+  // ---- reference-image tray ----
+  const refTray = el("div", { class: "vis-ref-tray" });
+  function renderRefs() {
+    refTray.innerHTML = "";
+    refs.forEach((r, i) => {
+      const thumb = el("div", { class: "vis-ref" }, el("img", { src: `data:${r.mime};base64,${r.data_b64}`, alt: "" }));
+      const x = el("button", { class: "vis-ref-x", title: t("del-word") }, "×");
+      x.addEventListener("click", () => { refs.splice(i, 1); renderRefs(); });
+      thumb.appendChild(x);
+      refTray.appendChild(thumb);
+    });
+    if (refs.length < REF_MAX) {
+      const add = el("button", { class: "vis-ref-add", title: t("vis-ref-add") }, "+");
+      add.disabled = disabled;
+      add.addEventListener("click", () => refInput.click());
+      refTray.appendChild(add);
+    }
+  }
+  const refInput = el("input", { type: "file", accept: ".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp", style: "display:none" });
+  refInput.addEventListener("change", () => {
+    const f = refInput.files && refInput.files[0];
+    refInput.value = "";
+    if (!f || refs.length >= REF_MAX) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const b64 = String(reader.result || "").split(",")[1] || "";
+      refs.push({ data_b64: b64, mime: f.type || "image/png" });
+      renderRefs();
+    };
+    reader.readAsDataURL(f);
+  });
+  renderRefs();
+
+  // ---- one slot per asset kind ----
+  const slots = VIS_KINDS.map((kind) => makeSlot(kind));
+
+  function makeSlot(kind) {
+    const initUrl = kind === "avatar" ? (deckCard.avatar_uri || "")
+      : kind === "sprite" ? (deckCard.sprite_url || "") : (deckCard.bg_url || "");
+    const preview = el("div", { class: "vis-slot-preview" });
+    let curSrc = initUrl;
+    let staged = null;  // {data_b64, mime} a generated-but-unsaved result
+    function paint() {
+      preview.innerHTML = "";
+      const src = staged ? `data:${staged.mime};base64,${staged.data_b64}` : curSrc;
+      if (src) preview.appendChild(el("img", { src, alt: "" }));
+      else preview.appendChild(el("span", { class: "vis-slot-empty" }, t("vis-empty")));
+    }
+    paint();
+
+    const note = el("div", { class: "av-note" });
+    const acts = el("div", { class: "vis-slot-acts" });
+    const stage = el("div", { class: "vis-stage" });
+
+    const genBtn = el("button", { class: "btn soft sm" }, t("vis-generate"));
+    const upBtn = el("button", { class: "btn soft sm" }, t("av-upload"));
+    const delBtn = el("button", { class: "btn text sm" }, t("del-word"));
+    const fileInput = el("input", { type: "file", style: "display:none",
+      accept: ".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" });
+    [genBtn, upBtn, delBtn].forEach((b) => { b.disabled = disabled; });
+
+    function setBusy(on, msg) {
+      genBtn.disabled = upBtn.disabled = delBtn.disabled = on || disabled;
+      note.className = on ? "av-note thinking" : "av-note";
+      note.textContent = msg || "";
+    }
+
+    async function saveBytes(data_b64, mime) {
+      if (kind === "avatar") {
+        const small = await downscalePngB64(`data:${mime};base64,${data_b64}`, 512);
+        const r = await hub.call("card.avatar_upload", { path: cardPath, data_b64: small, ext: "png" }, 30000);
+        curSrc = r.data_uri || curSrc;
+      } else {
+        const r = await hub.call("card.asset_save", { path: cardPath, kind, data_b64, ext: "png" }, 30000);
+        curSrc = r.url || curSrc;
+      }
+      staged = null; paint();
+    }
+
+    // generate → stage a preview with 保存 / 重新生成 / 取消
+    async function generate() {
+      setBusy(true, t("vis-generating"));
+      stage.innerHTML = "";
+      let out;
+      try {
+        out = await hub.call("card.visual_generate",
+          { path: cardPath, kind, brief: await getBrief(), refs: refData() }, 240000);
+      } catch (e) { setBusy(false); note.className = "av-note err"; note.textContent = rpcErrText(e); return; }
+      setBusy(false);
+      staged = { data_b64: out.data_b64, mime: out.mime || "image/png" };
+      paint();
+      const saveBtn = el("button", { class: "btn primary sm" }, t("save"));
+      const regenBtn = el("button", { class: "btn soft sm" }, t("vis-regen"));
+      const cancelBtn = el("button", { class: "btn text sm" }, t("cancel"));
+      saveBtn.addEventListener("click", async () => {
+        setBusy(true, t("saving"));
+        try { await saveBytes(staged.data_b64, staged.mime); stage.innerHTML = ""; setBusy(false); toast(t("saved")); await refreshHub(); }
+        catch (e) { setBusy(false); note.className = "av-note err"; note.textContent = rpcErrText(e); }
+      });
+      regenBtn.addEventListener("click", generate);
+      cancelBtn.addEventListener("click", () => { staged = null; stage.innerHTML = ""; paint(); });
+      stage.innerHTML = "";
+      if (out.note) stage.appendChild(el("div", { class: "av-note", style: "margin-bottom:6px" }, out.note));
+      stage.appendChild(el("div", { class: "vis-stage-acts" }, saveBtn, regenBtn, cancelBtn));
+    }
+    genBtn.addEventListener("click", generate);
+
+    upBtn.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => {
+      const f = fileInput.files && fileInput.files[0];
+      fileInput.value = "";
+      if (!f) return;
+      const ext = (f.name.split(".").pop() || "").toLowerCase();
+      const exts = kind === "avatar" ? AVATAR_EXTS : ART_EXTS;
+      const cap = kind === "avatar" ? AVATAR_UPLOAD_MAX : ART_UPLOAD_MAX;
+      if (!exts.includes(ext)) { note.className = "av-note err"; note.textContent = t("av-up-type"); return; }
+      if (f.size > cap) { note.className = "av-note err"; note.textContent = t("av-up-size"); return; }
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const b64 = String(reader.result || "").split(",")[1] || "";
+        setBusy(true, t("saving"));
+        try {
+          if (kind === "avatar") {
+            const r = await hub.call("card.avatar_upload", { path: cardPath, data_b64: b64, ext }, 30000);
+            curSrc = r.data_uri || curSrc;
+          } else {
+            const r = await hub.call("card.asset_save", { path: cardPath, kind, data_b64: b64, ext: ext === "jpg" ? "jpg" : ext }, 30000);
+            curSrc = r.url || curSrc;
+          }
+          staged = null; paint(); setBusy(false); toast(t("saved")); await refreshHub();
+        } catch (e) { setBusy(false); note.className = "av-note err"; note.textContent = rpcErrText(e); }
+      };
+      reader.readAsDataURL(f);
+    });
+
+    delBtn.addEventListener("click", async () => {
+      setBusy(true, "");
+      try { await hub.call("card.asset_delete", { path: cardPath, kind }, 20000); curSrc = ""; staged = null; paint(); setBusy(false); await refreshHub(); }
+      catch (e) { setBusy(false); note.className = "av-note err"; note.textContent = rpcErrText(e); }
+    });
+
+    acts.appendChild(genBtn);
+    acts.appendChild(upBtn);
+    acts.appendChild(delBtn);
+    acts.appendChild(fileInput);
+    const node = el("div", { class: "vis-slot" },
+      el("div", { class: "vis-slot-head" }, el("b", null, t("vis-kind-" + kind))),
+      preview, acts, note, stage);
+    // generateAndSave: used by "generate all" (auto-save, no per-asset confirm)
+    async function generateAndSave() {
+      setBusy(true, t("vis-generating"));
+      try {
+        const out = await hub.call("card.visual_generate",
+          { path: cardPath, kind, brief: await getBrief(), refs: refData() }, 240000);
+        await saveBytes(out.data_b64, out.mime || "image/png");
+        setBusy(false);
+      } catch (e) { setBusy(false); note.className = "av-note err"; note.textContent = rpcErrText(e); throw e; }
+    }
+    return { kind, node, generateAndSave };
+  }
+
+  // ---- generate all (one brief, one image per kind; states the cost) ----
+  const allBtn = el("button", { class: "btn primary" }, t("vis-gen-all", { n: VIS_KINDS.length }));
+  allBtn.disabled = disabled;
+  const allNote = el("div", { class: "av-note", style: "margin-top:6px" }, t("vis-gen-all-cost", { n: VIS_KINDS.length }));
+  allBtn.addEventListener("click", async () => {
+    if (!confirm(t("vis-gen-all-confirm", { n: VIS_KINDS.length }))) return;
+    allBtn.disabled = true;
+    cachedBrief = null;  // a fresh set → a fresh brief
+    try {
+      for (const s of slots) { try { await s.generateAndSave(); } catch (e) { /* slot shows its own error */ } }
+      toast(t("saved"));
+      await refreshHub();
+    } finally { allBtn.disabled = disabled; }
+  });
+
+  const node = el("div", { class: "vis-editor" },
+    el("div", { class: "vis-ref-sec" },
+      el("h4", null, t("vis-ref-title")),
+      el("div", { class: "av-note" }, t("vis-ref-sub")),
+      refTray, refInput),
+    el("div", { class: "vis-slots" }, ...slots.map((s) => s.node)),
+    el("div", { class: "vis-all" }, allBtn, allNote));
+  return { node };
+}
+
+/* The visual-set editor for a deck card (R9): avatar / sprite / background, each
+   generate (via the in-app pipeline) / upload / replace / delete, a reference
+   tray, and one-click generate-all. Each action saves immediately. Builtin cards
+   are read-only (copy first). */
+async function openVisualsEditor(deckCard) {
   let full;
   try {
     full = await hub.call("card.read", { path: deckCard.path }, 20000);
   } catch (e) { toast(rpcErrText(e), true); return; }
   if (!full.raw || !full.raw.data) { toast(t("av-png-note"), true); return; }
-  const data = full.raw.data;
-  const ext0 = (data.extensions && data.extensions.lunamoth) || {};
-  const theme0 = themeOf({ theme: ext0.theme, theme_color: ext0.theme_color });
-  const work = {
-    name: full.name,
-    avatar_uri: String(deckCard.avatar_uri || ""),
-    avatar_svg: "",            // sidecar/inline is authoritative; staged only on change
-    pending_avatar: null,
-    theme: { primary: theme0.primary || "", secondary: theme0.secondary || "" },
-  };
   const builtin = !!deckCard.builtin;
-  const { node } = buildAvatarControls(work, { cardPath: deckCard.path, disabled: builtin });
-
-  const saveBtn = el("button", { class: "btn primary" }, t("save"));
-  saveBtn.disabled = builtin;
-  saveBtn.addEventListener("click", async () => {
-    saveBtn.disabled = true;
-    try {
-      // 1) avatar: a new file (upload or confirmed SVG) goes to the sidecar.
-      if (work.pending_avatar) {
-        await hub.call("card.avatar_upload",
-          { path: deckCard.path, data_b64: work.pending_avatar.data_b64, ext: work.pending_avatar.ext }, 30000);
-      } else if (work.avatar_svg) {
-        const b64 = btoa(unescape(encodeURIComponent(work.avatar_svg)));
-        await hub.call("card.avatar_upload", { path: deckCard.path, data_b64: b64, ext: "svg" }, 30000);
-      }
-      // 2) theme: write the dual theme back into the card (re-read to avoid
-      //    clobbering the avatar_file the upload just set).
-      const fresh = await hub.call("card.read", { path: deckCard.path }, 20000);
-      const fdata = (fresh.raw && fresh.raw.data) || data;
-      const lm = (fdata.extensions = fdata.extensions || {}).lunamoth = (fdata.extensions.lunamoth || {});
-      const th = { primary: work.theme.primary || "", secondary: work.theme.secondary || "" };
-      if (th.primary || th.secondary) lm.theme = th; else delete lm.theme;
-      delete lm.theme_color;
-      await hub.call("card.save", { data: fresh.raw, path: deckCard.path }, 20000);
-      toast(t("saved"));
-      closeModal();
-      await refreshHub();
-      if (state.chat) state.chat.refreshIdentity();
-    } catch (e) {
-      saveBtn.disabled = false;
-      toast(rpcErrText(e), true);
-    }
-  });
-
-  openModal(el("div", null,
-    el("h2", null, `${full.name} · ${t("av-title")}`),
+  const { node } = buildVisualsControls(deckCard.path, deckCard, { disabled: builtin });
+  openModal(el("div", { class: "vis-modal" },
+    el("h2", null, `${full.name} · ${t("vis-title")}`),
     builtin ? el("div", { class: "av-note amber", style: "margin-bottom:12px" }, t("av-builtin-note")) : null,
     (!builtin && deckCard.frozen) ? el("div", { class: "av-note", style: "margin-bottom:12px" },
-      t("av-frozen-note", { names: (deckCard.used_by || []).join("、") })) : null,
+      t("av-frozen-note", { names: (deckCard.used_by || []).join("\u3001") })) : null,
     node,
     el("div", { class: "acts", style: "margin-top:14px" },
-      el("button", { class: "btn text", onclick: closeModal }, t("cancel")),
       el("div", { class: "grow" }),
-      saveBtn)), true);
+      el("button", { class: "btn primary", onclick: () => { closeModal(); if (state.chat) state.chat.refreshIdentity(); } }, t("vis-done")))), true);
 }
 
 /* user_name / user_persona ride extensions.lunamoth (engine support: 需求单 #9) */
@@ -2740,7 +2837,7 @@ function renderShapeStep(root, flow) {
     pending_avatar: flow.draft.pending_avatar || null,
     theme: flow.draft.theme || { primary: "#5B9FD4", secondary: "" },
   };
-  const { node: avNode } = buildAvatarControls(avWork, {});
+  const { node: avNode } = buildAvatarUpload(avWork, {});
   // Mirror the live edits back onto the draft so collect()/save sees them.
   flow._syncAvatar = () => {
     flow.draft.avatar_svg = avWork.avatar_svg || "";

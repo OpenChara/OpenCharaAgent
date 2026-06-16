@@ -82,7 +82,25 @@ visible -32050; unknown kind → -32602 before any spend; only ever called expli
 case. Layering clean (architecture test green; pipeline imports work without the
 visuals extra). Audited: no hard-coded model/key, no fabrication, no implicit spend.
 
-UI DEFERRED TO OWNER: the OPEN-WORK R9 entry explicitly says "ASK THE DEVELOPER"
-about UX (where the entry point lives, one-click vs step-by-step, cost/opt-in guards,
-which assets). Asking that before building the frontend — the backend RPC is ready
-for whatever placement the owner picks.
+UI — DONE (owner UX answered 2026-06-16): entry = the card editor's 视觉 section
+(openVisualsEditor, replacing the old avatar editor); flow = step-by-step + confirm;
+assets = avatar + 立绘(sprite) + 背景(background), each with generate / upload /
+replace / delete; a one-click "生成全部 (N)" that states the image-credit cost and
+asks confirm(); user-supplied reference images (≤3) guide generation (threaded as
+refs → Seedream `image`). Per owner: the OLD avatar pipeline (card.avatar_generate
+SVG + the dual theme-color pickers) was DELETED — hub RPC + avatar_generate()/
+_persona_summary_for_avatar()/_AVATAR_GENERATE_SYSTEM/_strip_svg_fence removed, and
+buildAvatarControls/openAvatarEditor replaced. New backend: card.visual_brief (build
+the brief once, reused across the set so "generate all" pays for ONE brief),
+card.asset_save / card.asset_delete (generic sprite/background/keyvisual sidecars,
+16MB cap, magic-byte checked, user-deck only), card.visual_generate now takes
+brief+refs, ark_generate/pipeline.generate gained refs. Avatars are downscaled to
+512² client-side before avatar_upload (it's inlined into hub.state, must stay tiny);
+sprite/background save full-size via asset_save (cacheable /asset URLs). Create flow
+keeps an upload-only avatar (buildAvatarUpload) since generation needs a saved card.
+Tests: asset_save/delete (+ builtin refusal), visual_brief, visual_generate refs/
+brief-reuse, refs passthrough. Full suite 833 green, ruff clean, node --check clean.
+Audited (subagent, in-worktree): caught + fixed a dangling chat.js openAvatarEditor
+call; security on asset_save confirmed (no traversal/builtin/oversize); no fabrication;
+generate-all cost-gated. NOTE: manual theme-color editing was removed with the old
+pipeline per owner; theme now rides the card / the brief's theme color.

@@ -163,6 +163,7 @@ def generate(
     llm_call: Callable[[str, str], str],
     brief: dict | None = None,
     matte: bool | None = None,
+    refs: list[str] | None = None,
     ark_generate=None,
     download_bytes=None,
 ) -> dict:
@@ -170,9 +171,11 @@ def generate(
     ``{data: bytes, mime, brief, kind, matted}``.
 
     Stages: (build) brief via the injected LLM → (gen) Seedream image → (download)
-    → (matte) optional transparent cutout. Image/download fns are injectable for
-    tests; they default to the R10 Ark client. Raises on a generation/download
-    failure (no fake image); the matte is best-effort and reported via ``matted``.
+    → (matte) optional transparent cutout. ``refs`` are optional user-provided
+    reference images (http(s)/data URIs) that guide generation. Image/download fns
+    are injectable for tests; they default to the R10 Ark client. Raises on a
+    generation/download failure (no fake image); the matte is best-effort and
+    reported via ``matted``.
     """
     if kind not in KINDS:
         raise ValueError(f"unknown visual kind: {kind}")
@@ -185,7 +188,7 @@ def generate(
     gen = ark_generate or _image_gen.ark_generate
     dl = download_bytes or _image_gen.download_bytes
 
-    urls = gen(prompt, KINDS[kind]["size"])
+    urls = gen(prompt, KINDS[kind]["size"], refs=refs)
     if not urls:
         raise RuntimeError("image generation returned no result")
     data = dl(urls[0])

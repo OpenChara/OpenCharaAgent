@@ -10,8 +10,8 @@ const ICON_FILE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
 const ICON_CLIP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>';
 const ATTACH_ACCEPT_ALL = "image/*,.pdf,.txt,.md,.json,.csv,.docx,.doc,.xlsx,.zip,.log";
 
-/* The avatar/theme editor (openAvatarEditor) now lives in app.js — it edits
-   the presentation only (sidecar avatar + dual theme), soul untouched. */
+/* The visual-set editor (openVisualsEditor) lives in app.js — it edits the
+   presentation only (avatar / sprite / background sidecars), soul untouched. */
 /* Encode text into a QR image data-URL locally (vendored qrcode-generator).
    Returns "" if the encoder is unavailable or the text won't fit. */
 function qrDataUrl(text) {
@@ -2183,7 +2183,7 @@ class ChatController {
     this.bindDrop();
     $("chat-back").onclick = () => navTo("#/");
     $("chat-avatar").onclick = () => {
-      if (this.deckCard) openAvatarEditor(this.deckCard);
+      if (this.deckCard) openVisualsEditor(this.deckCard);
     };
     $("chat-tabs").onclick = (ev) => {
       const s2 = ev.target.closest("span[data-page]");

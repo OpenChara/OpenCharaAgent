@@ -703,30 +703,6 @@ def _strip_text_fence(raw: str) -> str:
 
 # ---- cards ---------------------------------------------------------------------
 
-_AVATAR_GENERATE_SYSTEM = """You design one small decorative SVG avatar for a character card.
-Reply with the raw SVG markup ONLY — no markdown fences, no commentary, no JSON.
-
-Requirements:
-- a SMALL decorative SVG, viewBox "0 0 64 64", <=1500 characters.
-- flat geometric shapes only; NO text elements, NO scripts, NO event attributes (on*=), NO external references.
-- start the output with "<svg" and end with "</svg>"."""
-
-
-def _strip_svg_fence(raw: str) -> str:
-    """Pull the <svg>…</svg> out of a model reply (markdown fence tolerant)."""
-    s = (raw or "").strip()
-    if s.startswith("```"):
-        s = re.sub(r"^```[a-zA-Z]*\s*", "", s)
-        s = re.sub(r"\s*```$", "", s).strip()
-    start = s.lower().find("<svg")
-    if start == -1:
-        return s
-    end = s.lower().rfind("</svg>")
-    if end == -1:
-        return s[start:]
-    return s[start:end + len("</svg>")]
-
-
 # ---- avatar sidecar storage --------------------------------------------------
 # The avatar is a SEPARATE file beside the card (the card stays the soul; the
 # avatar is presentation). Supported uploads: png/jpg/jpeg/svg.
@@ -862,40 +838,119 @@ def avatar_upload(path: str, data_b64: str, ext: str) -> dict[str, Any]:
             "data_uri": f"data:{_AVATAR_MIME[ext]};base64,{base64.b64encode(payload).decode('ascii')}"}
 
 
-def _persona_summary_for_avatar(card_path: str) -> str:
+# ---- art-asset sidecars (sprite / background / keyvisual) --------------------
+# The heavy art (R9 visual set + user uploads). Unlike the tiny avatar (inlined as
+# a data-URI in every hub.state), these ride cacheable /asset URLs, so the cap is
+# generous and they're never base64-inlined into list_cards.
+_ART_ASSET_KINDS = ("sprite", "background", "keyvisual")
+_ART_EXTS = ("png", "jpg", "jpeg", "webp")
+_ART_MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}
+_ART_MAGIC = {"png": b"\x89PNG\r\n\x1a\n", "jpg": b"\xff\xd8\xff", "jpeg": b"\xff\xd8\xff"}
+_ART_MAX_BYTES = 16 * 1024 * 1024  # generated art is a few MB; cap well above that
+
+
+def _art_sidecar_path(card_path: Path, kind: str, ext: str) -> Path:
+    return card_path.with_name(f"{card_path.stem}.{kind}.{ext}")
+
+
+def _looks_like(raw: bytes, ext: str) -> bool:
+    if ext == "webp":
+        return len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP"
+    magic = _ART_MAGIC.get(ext)
+    return not magic or raw.startswith(magic)
+
+
+def asset_save(path: str, kind: str, data_b64: str, ext: str) -> dict[str, Any]:
+    """Write a sprite/background/keyvisual sidecar (upload OR a saved generation)
+    and point the card's ``extensions.lunamoth.assets[kind]`` at it. png/jpg/webp,
+    capped at 16MB. One sidecar per kind (stale extensions are removed)."""
+    target = _writable_card_path(path)
+    kind = str(kind or "").strip().lower()
+    if kind not in _ART_ASSET_KINDS:
+        raise RpcError(-32602, f"unknown art asset kind: {kind} (one of {', '.join(_ART_ASSET_KINDS)})")
+    ext = str(ext or "").strip().lower().lstrip(".")
+    if ext not in _ART_EXTS:
+        raise RpcError(-32602, f"unsupported art type: .{ext} (allowed: {', '.join(_ART_EXTS)})")
     try:
-        card = CharacterCard.load(Path(card_path))
-    except Exception as exc:  # noqa: BLE001
-        raise RpcError(-32035, f"unreadable card: {exc}") from exc
-    bits = [f"Name: {card.name}"]
-    if card.tags:
-        bits.append("Tags: " + ", ".join(str(t) for t in card.tags[:6]))
-    if card.description:
-        bits.append(card.description[:600])
-    return "\n".join(bits)
+        raw = base64.b64decode(str(data_b64 or ""), validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise RpcError(-32602, f"asset data is not valid base64: {exc}") from exc
+    if not raw:
+        raise RpcError(-32602, "asset data is empty")
+    if len(raw) > _ART_MAX_BYTES:
+        raise HubRpcError(-32602, "asset is too large (max 16MB)",
+                          {"kind": "asset_size", "detail": f"{len(raw)} bytes"})
+    if not _looks_like(raw, ext):
+        raise HubRpcError(-32602, f"the file does not look like a .{ext} image",
+                          {"kind": "asset_type", "detail": "magic-byte mismatch"})
+    keep = _art_sidecar_path(target, kind, ext).name
+    for old in _ART_EXTS:
+        sc = _art_sidecar_path(target, kind, old)
+        if sc.name != keep and sc.exists():
+            try:
+                sc.unlink()
+            except OSError:
+                pass
+    sidecar = _art_sidecar_path(target, kind, ext)
+    sidecar.write_bytes(raw)
+    raw_card = json.loads(target.read_text(encoding="utf-8"))
+    if not isinstance(raw_card, dict):
+        raise RpcError(-32602, "card is not a JSON object")
+    data = raw_card.get("data")
+    if not isinstance(data, dict):
+        data = raw_card["data"] = {}
+    ext_root = data.get("extensions")
+    if not isinstance(ext_root, dict):
+        ext_root = data["extensions"] = {}
+    lm = ext_root.get("lunamoth")
+    if not isinstance(lm, dict):
+        lm = ext_root["lunamoth"] = {}
+    assets = lm.get("assets")
+    if not isinstance(assets, dict):
+        assets = lm["assets"] = {}
+    assets[kind] = sidecar.name
+    target.write_text(json.dumps(raw_card, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"path": str(target), "kind": kind, "file": sidecar.name, "url": _asset_url(sidecar)}
 
 
-def avatar_generate(defaults: dict[str, str], description: str = "", card_path: str = "",
-                    model: str = "") -> dict[str, Any]:
-    """Generate exactly ONE sanitized avatar SVG with the GLOBAL DEFAULT model.
-
-    No candidate picker, no fallback image: an unusable result is a visible
-    error. The caller confirms (uploads it as the sidecar) or cancels."""
-    description = (description or "").strip()
-    if not description and not card_path:
-        raise RpcError(-32602, "card.avatar_generate needs a description or card_path")
-    parts: list[str] = []
-    if card_path:
-        parts.append("Character:\n" + _persona_summary_for_avatar(card_path))
-    if description:
-        parts.append("Requested direction:\n" + description)
-    raw = _complete(defaults, _AVATAR_GENERATE_SYSTEM, "\n\n".join(parts), model=model,
-                    max_tokens=2048, temperature=0.9)
-    svg, note = _sanitize_avatar_svg(_strip_svg_fence(raw))
-    if not svg:
-        raise HubRpcError(-32050, "the model returned no usable avatar",
-                          {"kind": "avatar_svg", "detail": note or "empty"})
-    return {"avatar_svg": svg}
+def asset_delete(path: str, kind: str) -> dict[str, Any]:
+    """Remove an art asset (avatar / sprite / background / keyvisual): delete its
+    sidecar file(s) and drop the card's pointer. Idempotent."""
+    target = _writable_card_path(path)
+    kind = str(kind or "").strip().lower()
+    raw_card = json.loads(target.read_text(encoding="utf-8"))
+    if not isinstance(raw_card, dict):
+        raise RpcError(-32602, "card is not a JSON object")
+    data = raw_card.get("data") if isinstance(raw_card.get("data"), dict) else {}
+    ext_root = data.get("extensions") if isinstance(data.get("extensions"), dict) else {}
+    lm = ext_root.get("lunamoth") if isinstance(ext_root.get("lunamoth"), dict) else {}
+    removed = False
+    if kind == "avatar":
+        for e in _AVATAR_EXTS:
+            sc = _avatar_sidecar_path(target, e)
+            if sc.exists():
+                try:
+                    sc.unlink(); removed = True
+                except OSError:
+                    pass
+        if isinstance(lm, dict):
+            lm.pop("avatar_file", None)
+            lm.pop("avatar_svg", None)
+    elif kind in _ART_ASSET_KINDS:
+        for e in _ART_EXTS:
+            sc = _art_sidecar_path(target, kind, e)
+            if sc.exists():
+                try:
+                    sc.unlink(); removed = True
+                except OSError:
+                    pass
+        assets = lm.get("assets") if isinstance(lm, dict) else None
+        if isinstance(assets, dict):
+            assets.pop(kind, None)
+    else:
+        raise RpcError(-32602, f"unknown asset kind: {kind}")
+    target.write_text(json.dumps(raw_card, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"path": str(target), "kind": kind, "removed": removed}
 
 
 def _card_sources() -> dict[str, list[str]]:
@@ -2386,18 +2441,29 @@ class HubDispatcher:
             return weixin_qr(self._meta(p))
         if method == "weixin.qr_status":
             return weixin_qr_status(self._meta(p), str(p.get("qrcode") or ""))
-        if method == "card.avatar_generate":
-            # Uses the GLOBAL DEFAULT model (not the aux 'avatar' model).
-            return avatar_generate(load_defaults(), description=str(p.get("description") or ""),
-                                   card_path=str(p.get("card_path") or p.get("path") or ""),
-                                   model=str(p.get("model") or ""))
         if method == "card.avatar_upload":
             return avatar_upload(str(p.get("path") or ""), str(p.get("data_b64") or ""),
                                  str(p.get("ext") or ""))
+        if method == "card.visual_brief":
+            # R9: build (only) the visual brief for a card via the GLOBAL default
+            # text model — the UI shows/edits it, then reuses it across the set so
+            # "generate all" pays for ONE brief, not one per asset.
+            from ..visuals import pipeline
+            try:
+                card = json.loads(Path(str(p.get("path") or "")).read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RpcError(-32035, f"unreadable card: {exc}") from exc
+            defaults = load_defaults()
+            try:
+                return {"brief": pipeline.build_brief(
+                    card, lambda s, u: _complete(defaults, s, u, temperature=0.7, max_tokens=3000))}
+            except (RuntimeError, ValueError) as exc:
+                raise HubRpcError(-32050, str(exc), {"kind": "visual_brief"}) from exc
         if method == "card.visual_generate":
-            # R9: card → brief (GLOBAL default text model) → Seedream image →
-            # optional matte → preview bytes. Unopinionated about placement: it
-            # returns the image for the UI to show/save (avatars via avatar_upload).
+            # R9: card → brief (GLOBAL default text model, or a reused one) →
+            # Seedream image (optionally guided by user refs) → optional matte →
+            # preview bytes. Unopinionated about placement: it returns the image for
+            # the UI to show/save (avatars via avatar_upload, art via asset_save).
             from ..visuals import pipeline
             path = str(p.get("path") or p.get("card_path") or "")
             kind = str(p.get("kind") or "avatar")
@@ -2410,10 +2476,14 @@ class HubDispatcher:
                 raise RpcError(-32035, f"unreadable card: {exc}") from exc
             defaults = load_defaults()
             matte_opt = p.get("matte")
+            brief_in = p.get("brief") if isinstance(p.get("brief"), dict) else None
+            refs_in = [str(r) for r in p.get("refs")] if isinstance(p.get("refs"), list) else None
             try:
                 out = pipeline.generate(
                     card, kind,
                     llm_call=lambda s, u: _complete(defaults, s, u, temperature=0.7, max_tokens=3000),
+                    brief=brief_in,
+                    refs=refs_in,
                     matte=(None if matte_opt is None else bool(matte_opt)),
                 )
             except (RuntimeError, ValueError) as exc:
@@ -2423,6 +2493,11 @@ class HubDispatcher:
                 "mime": out["mime"], "kind": out["kind"],
                 "matted": out["matted"], "note": out["note"], "brief": out["brief"],
             }
+        if method == "card.asset_save":
+            return asset_save(str(p.get("path") or ""), str(p.get("kind") or ""),
+                              str(p.get("data_b64") or ""), str(p.get("ext") or ""))
+        if method == "card.asset_delete":
+            return asset_delete(str(p.get("path") or ""), str(p.get("kind") or ""))
         if method == "card.avatar_read":
             return avatar_read(str(p.get("path") or ""))
         if method == "cards.list":

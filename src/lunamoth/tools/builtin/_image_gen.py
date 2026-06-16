@@ -94,12 +94,16 @@ def image_model() -> str:
     return DEFAULT_MODEL
 
 
-def ark_generate(prompt: str, size: str, *, timeout: int = 240, tries: int = 5) -> list[str]:
+def ark_generate(prompt: str, size: str, *, refs: list[str] | None = None,
+                 timeout: int = 240, tries: int = 5) -> list[str]:
     """POST a generation request to Ark; return the list of result image URLs.
 
-    Retries transient failures (HTTP 429/5xx, connect timeouts/URLErrors) up to
-    ``tries`` times with a 5 s pause between. On final failure raises
-    ``RuntimeError`` carrying the last server message. Never fabricates a result.
+    ``refs`` (optional) are reference images — http(s) URLs or ``data:`` URIs —
+    passed as Seedream's ``image`` input so generation is guided by user-provided
+    art (a key visual / pose reference). Retries transient failures (HTTP 429/5xx,
+    connect timeouts/URLErrors) up to ``tries`` times with a 5 s pause between. On
+    final failure raises ``RuntimeError`` carrying the last server message. Never
+    fabricates a result.
     """
     body = {
         "model": image_model(),
@@ -108,6 +112,8 @@ def ark_generate(prompt: str, size: str, *, timeout: int = 240, tries: int = 5) 
         "response_format": "url",
         "watermark": False,
     }
+    if refs:
+        body["image"] = list(refs)
     data = json.dumps(body).encode("utf-8")
     last = ""
     for attempt in range(1, tries + 1):

@@ -91,7 +91,7 @@ def test_generate_avatar_no_matte_by_default():
         CARD, "avatar",
         llm_call=lambda s, u: "{}",
         brief=_fixed_brief(),
-        ark_generate=lambda prompt, size: ["http://x/a.png"],
+        ark_generate=lambda prompt, size, refs=None: ["http://x/a.png"],
         download_bytes=lambda url: _FAKE_PNG,
     )
     assert out["data"] == _FAKE_PNG
@@ -108,7 +108,7 @@ def test_generate_sprite_matte_skipped_when_no_model(monkeypatch):
         CARD, "sprite",
         llm_call=lambda s, u: "{}",
         brief=_fixed_brief(),
-        ark_generate=lambda prompt, size: ["http://x/s.png"],
+        ark_generate=lambda prompt, size, refs=None: ["http://x/s.png"],
         download_bytes=lambda url: _FAKE_PNG,
     )
     assert out["data"] == _FAKE_PNG
@@ -125,7 +125,7 @@ def test_generate_sprite_mattes_when_available(monkeypatch):
         CARD, "sprite",
         llm_call=lambda s, u: "{}",
         brief=_fixed_brief(),
-        ark_generate=lambda prompt, size: ["http://x/s.png"],
+        ark_generate=lambda prompt, size, refs=None: ["http://x/s.png"],
         download_bytes=lambda url: _FAKE_PNG,
     )
     assert out["data"] == b"CUT-RGBA"
@@ -143,7 +143,7 @@ def test_generate_empty_result_is_error():
     with pytest.raises(RuntimeError, match="no result"):
         pipeline.generate(
             CARD, "avatar", llm_call=lambda s, u: "{}", brief=_fixed_brief(),
-            ark_generate=lambda prompt, size: [],
+            ark_generate=lambda prompt, size, refs=None: [],
         )
 
 
@@ -151,7 +151,7 @@ def test_generate_non_image_body_is_error():
     with pytest.raises(RuntimeError, match="image"):
         pipeline.generate(
             CARD, "avatar", llm_call=lambda s, u: "{}", brief=_fixed_brief(),
-            ark_generate=lambda prompt, size: ["http://x/err.html"],
+            ark_generate=lambda prompt, size, refs=None: ["http://x/err.html"],
             download_bytes=lambda url: b"<html>error</html>",
         )
 
@@ -159,3 +159,18 @@ def test_generate_non_image_body_is_error():
 def test_generate_unknown_kind_is_error():
     with pytest.raises(ValueError):
         pipeline.generate(CARD, "nope", llm_call=lambda s, u: "{}")
+
+
+def test_generate_passes_refs_to_image_client():
+    seen = {}
+
+    def fake_ark(prompt, size, refs=None):
+        seen["refs"] = refs
+        return ["http://x/a.png"]
+
+    pipeline.generate(
+        CARD, "avatar", llm_call=lambda s, u: "{}", brief=_fixed_brief(),
+        refs=["data:image/png;base64,AAAA"],
+        ark_generate=fake_ark, download_bytes=lambda url: _FAKE_PNG,
+    )
+    assert seen["refs"] == ["data:image/png;base64,AAAA"]
