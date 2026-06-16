@@ -81,7 +81,15 @@ def user_worlds_dir() -> Path:
 
 # ---- global model defaults -----------------------------------------------------
 
-_DEFAULT_FIELDS = ("provider", "base_url", "api_key", "model", "ui_lang", "ui_theme")
+# image_api_key/image_model: the GLOBAL image-generation credential + model, set in
+# Settings·生图 and read by tools/builtin/_image_gen.py (which reads desktop.json
+# directly — tools/ must not import server/). The secret never echoes back (see
+# _public_defaults → has_image_key), parallel to the text api_key/has_key.
+_DEFAULT_FIELDS = ("provider", "base_url", "api_key", "model", "ui_lang", "ui_theme",
+                   "image_api_key", "image_model")
+# Default fields whose value is a secret: stripped from every public payload,
+# surfaced only as a has_<field> presence flag.
+_SECRET_FIELDS = ("api_key", "image_api_key")
 
 
 def _read_desktop_raw() -> dict[str, Any]:
@@ -202,9 +210,10 @@ def _key_overrides(label: str) -> dict[str, str]:
 
 
 def _public_defaults(data: dict[str, str]) -> dict[str, Any]:
-    """Defaults with the key reduced to its presence (never echo secrets)."""
-    out: dict[str, Any] = {k: v for k, v in data.items() if k != "api_key"}
+    """Defaults with every secret reduced to its presence (never echo secrets)."""
+    out: dict[str, Any] = {k: v for k, v in data.items() if k not in _SECRET_FIELDS}
     out["has_key"] = bool(data.get("api_key"))
+    out["has_image_key"] = bool(data.get("image_api_key"))
     return out
 
 

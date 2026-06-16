@@ -554,6 +554,7 @@ async function refreshHub() {
     renderBoard();
     renderDeck();
     renderModelPane();
+    renderImagePane();
     if (state.chat) state.chat.onHubState();
   } catch (e) { /* transient */ }
 }
@@ -1584,6 +1585,131 @@ function renderModelPane() {
   const pane = $("pane-model");
   pane.innerHTML = "";
   pane.appendChild(setupPane({ firstrun: false, onDone: null }));
+  pane.appendChild(keysPane());
+}
+
+/* A small labelled field row used by the key/image forms. */
+function fieldRow(label, input) {
+  return el("label", { class: "key-field" }, el("span", null, label), input);
+}
+
+/* Named multi-key store (Settings·模型): add / label / delete / activate.
+   The ACTIVE text key (provider/base_url/model + secret) is the default set
+   above; these are alternates you switch to with one "make default" click.
+   The hub never echoes a secret — list_keys returns only has_key + active. */
+function keysPane() {
+  const wrap = el("div", { class: "keys-block" });
+  wrap.appendChild(el("h2", null, t("keys-title")));
+  wrap.appendChild(el("div", { class: "sub" }, t("keys-sub")));
+  const list = el("div", { class: "keys-list" }, el("div", { class: "muted" }, t("keys-loading")));
+  wrap.appendChild(list);
+
+  async function reload() {
+    try {
+      const keys = await hub.call("keys.list", {}, 15000);
+      list.innerHTML = "";
+      if (!keys.length) { list.appendChild(el("div", { class: "muted" }, t("keys-empty"))); return; }
+      for (const k of keys) {
+        const meta = [k.provider, k.base_url, k.model].filter(Boolean).join(" · ");
+        const acts = el("div", { class: "key-acts" });
+        if (k.active) {
+          acts.appendChild(el("span", { class: "key-badge on" }, t("keys-active")));
+        } else {
+          acts.appendChild(el("button", { class: "btn soft sm", onclick: async (ev) => {
+            ev.target.disabled = true;
+            try { await hub.call("defaults.use_key", { label: k.label }, 15000); await refreshHub(); toast(t("saved")); }
+            catch (e) { ev.target.disabled = false; toast(rpcErrText(e), true); }
+          } }, t("keys-use")));
+        }
+        acts.appendChild(el("button", { class: "btn text sm", onclick: async (ev) => {
+          ev.target.disabled = true;
+          try { await hub.call("keys.delete", { label: k.label }, 15000); reload(); }
+          catch (e) { ev.target.disabled = false; toast(rpcErrText(e), true); }
+        } }, t("del-word")));
+        list.appendChild(el("div", { class: "key-row" },
+          el("div", null,
+            el("div", null, el("b", null, k.label),
+              k.has_key ? null : el("span", { class: "key-badge warn" }, " " + t("keys-nokey"))),
+            meta ? el("div", { class: "muted small" }, meta) : null),
+          acts));
+      }
+    } catch (e) {
+      list.innerHTML = "";
+      list.appendChild(el("div", { class: "okline bad" }, rpcErrText(e)));
+    }
+  }
+
+  const labelIn = el("input", { placeholder: t("keys-label-ph") });
+  const provIn = el("input", { placeholder: "openrouter" });
+  const baseIn = el("input", { placeholder: "https://openrouter.ai/api/v1" });
+  const keyIn = el("input", { type: "password", placeholder: t("key-ph") });
+  const modelIn = el("input", { placeholder: "deepseek/deepseek-v4-flash" });
+  const addBtn = el("button", { class: "btn primary" }, t("keys-add"));
+  addBtn.addEventListener("click", async () => {
+    const label = labelIn.value.trim();
+    if (!label) { toast(t("keys-need-label"), true); return; }
+    if (!keyIn.value.trim()) { toast(t("keys-need-key"), true); return; }
+    addBtn.disabled = true;
+    try {
+      await hub.call("keys.save", {
+        label, provider: provIn.value.trim(), base_url: baseIn.value.trim(),
+        api_key: keyIn.value.trim(), model: modelIn.value.trim(),
+      }, 15000);
+      labelIn.value = provIn.value = baseIn.value = keyIn.value = modelIn.value = "";
+      toast(t("saved"));
+      reload();
+    } catch (e) { toast(rpcErrText(e), true); }
+    finally { addBtn.disabled = false; }
+  });
+  wrap.appendChild(el("details", { class: "keys-add" },
+    el("summary", null, t("keys-add-new")),
+    el("div", { class: "keys-form" },
+      fieldRow(t("keys-label"), labelIn),
+      fieldRow(t("provider"), provIn),
+      fieldRow("Base URL", baseIn),
+      fieldRow(t("key-label"), keyIn),
+      fieldRow(t("default-model"), modelIn),
+      el("div", { class: "acts" }, addBtn))));
+
+  reload();
+  return wrap;
+}
+
+/* Settings·生图: the GLOBAL image-generation key + model. Mirrors the text-key
+   pattern (password field, presence-only placeholder, never echoes the secret).
+   _image_gen.py reads these from desktop.json; this is where they're set. */
+function renderImagePane() {
+  const pane = $("pane-image");
+  if (!pane) return;
+  pane.innerHTML = "";
+  const d = (state.hub && state.hub.defaults) || {};
+  pane.appendChild(el("h2", null, t("set-image")));
+  pane.appendChild(el("div", { class: "sub" }, t("image-sub")));
+
+  const keyIn = el("input", { type: "password",
+    placeholder: d.has_image_key ? "••••••••  (已保存 / saved)" : t("image-key-ph") });
+  const modelIn = el("input", { value: d.image_model || "", placeholder: "doubao-seedream-5-0-260128" });
+  const okline = el("div", { class: "okline" });
+  const saveBtn = el("button", { class: "btn primary" }, t("save"));
+  saveBtn.addEventListener("click", async () => {
+    const payload = { image_model: modelIn.value.trim() };
+    if (keyIn.value.trim()) payload.image_api_key = keyIn.value.trim();
+    saveBtn.disabled = true;
+    okline.className = "okline";
+    okline.textContent = "";
+    try {
+      await hub.call("defaults.set", payload, 15000);
+      await refreshHub();
+      keyIn.value = "";
+      okline.textContent = t("saved");
+    } catch (e) { okline.className = "okline bad"; okline.textContent = rpcErrText(e); }
+    finally { saveBtn.disabled = false; }
+  });
+
+  pane.appendChild(el("div", { class: "image-form" },
+    fieldRow(t("image-key-label"), keyIn),
+    fieldRow(t("image-model-label"), modelIn),
+    el("div", { class: "acts" }, saveBtn, okline)));
 }
 
 function promptKeyUpdate(candidates) {

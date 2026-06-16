@@ -405,6 +405,29 @@ def test_keys_roundtrip_never_echoes_secrets():
     assert raw["keys"]["work"]["api_key"] == "sk-work-1"
 
 
+def test_image_key_and_model_global_defaults_never_echo_secret():
+    # R10: the image key + model live in the SAME global defaults store as the
+    # text key, set via defaults.set, and the secret is reduced to has_image_key.
+    set_defaults()
+    pub = result("defaults.set", {"image_api_key": "ark-secret-1",
+                                   "image_model": "doubao-seedream-x"})
+    assert pub["has_image_key"] is True
+    assert "image_api_key" not in pub  # secret never travels back
+    assert pub["image_model"] == "doubao-seedream-x"
+    # persisted to desktop.json (where _image_gen.py reads it)
+    raw = json.loads(H.desktop_config_path().read_text(encoding="utf-8"))
+    assert raw["image_api_key"] == "ark-secret-1"
+    assert raw["image_model"] == "doubao-seedream-x"
+    # defaults.get also hides the secret but reports presence + the model
+    got = result("defaults.get")
+    assert got["has_image_key"] is True and "image_api_key" not in got
+    assert got["image_model"] == "doubao-seedream-x"
+    # setting the text key/model must not disturb the stored image secret
+    result("defaults.set", {"model": "other/model"})
+    raw = json.loads(H.desktop_config_path().read_text(encoding="utf-8"))
+    assert raw["image_api_key"] == "ark-secret-1"
+
+
 def test_use_key_activates_and_delete_removes():
     set_defaults()
     result("keys.save", {"label": "home", "provider": "openrouter",

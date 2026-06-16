@@ -91,6 +91,56 @@ def test_check_fn_false_with_no_key_and_empty_home(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# R10 — image key + model resolved from the GLOBAL keyring (desktop.json),
+# set in Settings·生图, not just env / the bare ark_api_key file.
+# ---------------------------------------------------------------------------
+def _write_desktop(home: Path, **fields):
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "desktop.json").write_text(json.dumps(fields), encoding="utf-8")
+
+
+def test_image_key_reads_global_desktop_json(monkeypatch, tmp_path):
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+    home = tmp_path / "home"
+    monkeypatch.setenv("LUNAMOTH_HOME", str(home))
+    _write_desktop(home, image_api_key="ark-from-settings")
+    assert _image_gen.image_key() == "ark-from-settings"
+    assert media._check_image_key() is True
+
+
+def test_image_model_reads_global_desktop_json(monkeypatch, tmp_path):
+    monkeypatch.delenv("ARK_IMAGE_MODEL", raising=False)
+    home = tmp_path / "home"
+    monkeypatch.setenv("LUNAMOTH_HOME", str(home))
+    _write_desktop(home, image_model="doubao-seedream-custom")
+    assert _image_gen.image_model() == "doubao-seedream-custom"
+
+
+def test_image_model_falls_back_to_default(monkeypatch, tmp_path):
+    monkeypatch.delenv("ARK_IMAGE_MODEL", raising=False)
+    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "empty"))
+    assert _image_gen.image_model() == _image_gen.DEFAULT_MODEL
+
+
+def test_image_key_precedence_env_over_desktop(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    monkeypatch.setenv("LUNAMOTH_HOME", str(home))
+    _write_desktop(home, image_api_key="from-settings")
+    monkeypatch.setenv("ARK_API_KEY", "from-env")
+    assert _image_gen.image_key() == "from-env"
+
+
+def test_image_key_desktop_over_bare_file(monkeypatch, tmp_path):
+    monkeypatch.delenv("ARK_API_KEY", raising=False)
+    home = tmp_path / "home"
+    home.mkdir(parents=True)
+    (home / "ark_api_key").write_text("from-bare-file", encoding="utf-8")
+    monkeypatch.setenv("LUNAMOTH_HOME", str(home))
+    _write_desktop(home, image_api_key="from-settings")
+    assert _image_gen.image_key() == "from-settings"
+
+
+# ---------------------------------------------------------------------------
 # handler — network gate (runtime, in the handler)
 # ---------------------------------------------------------------------------
 def test_handler_network_off_errors(monkeypatch, sandbox):

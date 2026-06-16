@@ -52,10 +52,25 @@ def _home() -> Path:
     return Path(os.getenv("LUNAMOTH_HOME", str(Path.home() / ".lunamoth")))
 
 
+def _desktop_json() -> dict:
+    """The global web keyring/defaults at ``~/.lunamoth/desktop.json`` (honoring
+    ``LUNAMOTH_HOME``). Read directly, stdlib-only — ``tools/`` must never import
+    ``server/`` (the hub owns the WRITE side; this is only the READ side)."""
+    try:
+        raw = json.loads((_home() / "desktop.json").read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
 def image_key() -> str:
-    """Resolve the Ark API key: env ``ARK_API_KEY`` first, else the
-    ``~/.lunamoth/ark_api_key`` file (honoring ``LUNAMOTH_HOME``). "" if none."""
+    """Resolve the Ark image key. Order: env ``ARK_API_KEY`` → the global keyring
+    (``~/.lunamoth/desktop.json`` ``image_api_key``, set in Settings) → the legacy
+    ``~/.lunamoth/ark_api_key`` file. Honors ``LUNAMOTH_HOME``. "" if none."""
     k = (os.getenv("ARK_API_KEY") or "").strip()
+    if k:
+        return k
+    k = str(_desktop_json().get("image_api_key") or "").strip()
     if k:
         return k
     p = _home() / "ark_api_key"
@@ -68,7 +83,15 @@ def image_key() -> str:
 
 
 def image_model() -> str:
-    return (os.getenv("ARK_IMAGE_MODEL") or "").strip() or DEFAULT_MODEL
+    """Resolve the image-generation model. Order: env ``ARK_IMAGE_MODEL`` → the
+    global keyring ``image_model`` (set in Settings) → the bundled default."""
+    m = (os.getenv("ARK_IMAGE_MODEL") or "").strip()
+    if m:
+        return m
+    m = str(_desktop_json().get("image_model") or "").strip()
+    if m:
+        return m
+    return DEFAULT_MODEL
 
 
 def ark_generate(prompt: str, size: str, *, timeout: int = 240, tries: int = 5) -> list[str]:
