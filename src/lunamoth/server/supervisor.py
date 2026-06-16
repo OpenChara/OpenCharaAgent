@@ -1335,11 +1335,16 @@ class WebHandler(http.server.SimpleHTTPRequestHandler):
             self.send_error(401, "authentication required")
             return
         if url.path == "/authinfo":
-            # Pre-auth probe: does this bind offer the password-login path? No
-            # secrets — just whether the client should show a login form. True
-            # only when a password is configured (always a public bind). The
-            # local app's loopback bind has pw_record=None ⇒ {"login": false}.
-            self._send_json(200, {"login": self.pw_record is not None})
+            # Pre-auth probe: should the client show a login form? No secrets —
+            # just a boolean. True only when a password is configured (a public
+            # bind) AND the request is NOT already authenticated. The "already
+            # authed" clause is essential: after a successful /login the user
+            # carries the lm_auth cookie but still has no #token=, so without it
+            # /authinfo would keep saying login:true and the Gate would loop
+            # forever (the user could never enter). Loopback ⇒ pw_record=None ⇒ false.
+            cookie = self.headers.get("Cookie", "")
+            already = N.request_authed(url.query, cookie, self.token)
+            self._send_json(200, {"login": self.pw_record is not None and not already})
             return
         if url.path == "/auth":
             # Boot handshake: the SPA loads its token from the URL hash (never sent

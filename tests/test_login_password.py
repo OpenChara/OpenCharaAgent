@@ -162,9 +162,18 @@ def _get(port, path, headers=None):
 
 
 def test_authinfo_reports_login_enabled(login_server):
+    # Fresh visitor (no cookie) → the client should show the login form.
     status, _h, body = _get(login_server, "/authinfo")
     assert status == 200
     assert json.loads(body) == {"login": True}
+    # ALREADY-authed (valid lm_auth cookie, e.g. just after /login) → login:false.
+    # Without this, a password user who logged in (cookie set, no #token=) would
+    # see /authinfo:true on reload and the Gate would loop forever (HIGH bug).
+    status, _h, body = _get(login_server, "/authinfo", headers={"Cookie": "lm_auth=sekret"})
+    assert json.loads(body) == {"login": False}
+    # a valid ?token= likewise counts as authed
+    status, _h, body = _get(login_server, "/authinfo?token=sekret")
+    assert json.loads(body) == {"login": False}
 
 
 def test_login_correct_mints_cookie(login_server):
