@@ -1,8 +1,8 @@
 /* The Chat view — the largest Track C piece. Connects/attaches a CharaClient via
  * useCharaStream, renders the streaming message list (the accumulator's items),
  * the composer (send/interrupt/attachments), the chat-head with the live status
- * word, the works + terminal sub-pages, and the right panel (status tab + the
- * skills/wishes/memory/settings tabs; gateway is a scoped TODO).
+ * word, the works + terminal sub-pages, and the right panel (status / skills /
+ * wishes / memory / gateway / settings tabs).
  *
  * Faithful to index.html #view-chat + chat.js ChatController. Idle is server-side
  * only — this view never drives idle.

@@ -7,7 +7,8 @@
  * Binding UI rule: the filter seg flips immediately (optimistic); copy/wake show
  * a working state and surface errors. The wake button gates on a configured model
  * (ensureModel) — when there's no key it routes to settings rather than failing
- * silently. Import + create-flow are TODO (separate overlays per §6). */
+ * silently. Import / builtin-picker / create-flow open via the overlay layer
+ * (state/overlay.tsx); new-card + builtin gate through ensureModel like wake. */
 
 import { useMemo, useState } from "react";
 import { useT } from "../i18n";
