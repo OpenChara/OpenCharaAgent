@@ -136,6 +136,33 @@ def test_first_meeting_still_shows_the_card_greeting(agent):
     assert info.opening == "greeting" and info.opening_text
 
 
+def test_greeting_is_persisted_server_side_without_a_frontend_greet(agent):
+    """The opener reaches the transcript the moment attach() decides to greet —
+    NOT on a frontend `greet` round-trip. So it survives on the board and across
+    a reconnect even if that round-trip never lands; first-meeting is consumed,
+    so a lost opener would otherwise be gone forever. The later greet RPC is
+    idempotent (no double-record)."""
+    from lunamoth.protocol.api import CharaHandle
+
+    a = agent()
+    a.state.set_rest_until(0)
+    a.transcript.reset()
+    a.presence.path.unlink(missing_ok=True)
+    handle = CharaHandle(agent=a)
+    info = handle.attach(present=True)
+    assert info.opening == "greeting" and info.opening_text
+
+    def greet_rows():
+        return [r for r in a.transcript.load(max_messages=0)
+                if r.get("role") == "assistant" and info.opening_text[:30] in str(r.get("content", ""))]
+
+    # persisted by attach() ALONE — no record_greeting/greet call yet
+    assert len(greet_rows()) == 1, a.transcript.load(max_messages=0)
+    # the frontend's later greet round-trip is a harmless no-op
+    handle.record_greeting(info.opening_text)
+    assert len(greet_rows()) == 1, "frontend greet must not double-record"
+
+
 def test_wordless_visit_leaves_no_trace(agent):
     """Enter, watch, leave without a word: nothing was added on entry and no
     departure marker is written — entering and leaving are not conversation."""

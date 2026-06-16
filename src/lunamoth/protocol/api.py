@@ -138,6 +138,13 @@ class CharaHandle:
         # greets once per life, not once per page-load. A background (present
         # =False) adopt never sets it, so it can't eat the human's greeting.
         self._greeted = False
+        # The card greeting (first_mes) is persisted to the transcript exactly
+        # once, server-side, the moment attach() decides to show it — NOT left to
+        # a frontend `greet` round-trip (which, if dropped, would show the opener
+        # once but never record it, losing it from the transcript + board while
+        # the first-meeting flag is already consumed). This latch makes the later
+        # `greet` RPC idempotent.
+        self._greeting_committed = False
         # Visit bookkeeping: a visit is presence-true → presence-false. A
         # wordless visit leaves NO trace; the first words insert a neutral
         # "entered" marker (once) and leaving after speaking adds a "left" one.
@@ -232,6 +239,13 @@ class CharaHandle:
         )
         a.presence.mark_met()
         self._greeted = True
+        # Persist the opener NOW, server-side — not on a frontend round-trip.
+        # `restored` was captured above (pre-greeting), so this never double-shows
+        # on this attach; on any reconnect the greeting rides `restored` from the
+        # transcript. record_greeting is idempotent, so the frontend's later
+        # `greet` call is a harmless no-op.
+        if opening == "greeting" and opening_text:
+            self.record_greeting(opening_text)
         if present:
             self._begin_visit()
         return info
@@ -267,7 +281,17 @@ class CharaHandle:
         return presence.marker_text(a.character, kind, a.char_name(), a.settings.user_name)
 
     def record_greeting(self, text: str) -> None:
-        """Commit a displayed card greeting (first_mes) to the conversation."""
+        """Commit the card greeting (first_mes) to the conversation, exactly once.
+
+        attach() calls this server-side the moment it decides to greet, so the
+        opener reaches the transcript (and thus the board preview + any reconnect)
+        even if the frontend never completes its `greet` round-trip. The latch
+        makes that frontend call — and any double-fire — a no-op."""
+        if self._greeting_committed or not text:
+            return
+        self._greeting_committed = True
+        if self._session is None:
+            self._session = self._agent.make_session()
         self._session.context.add("assistant", text)
 
     def detach(self) -> None:
