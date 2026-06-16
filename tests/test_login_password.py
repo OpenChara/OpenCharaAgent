@@ -94,6 +94,27 @@ def test_auth_store_is_private_from_creation(tmp_path):
     assert "pbkdf2" in p.read_text(encoding="utf-8")
 
 
+def test_client_ip_trusts_xff_only_from_a_loopback_peer():
+    """Regression: the login rate-limit key must NOT trust X-Forwarded-For from a
+    non-loopback peer — a direct hit to the published port could spoof it to mint a
+    fresh bucket per request and defeat the per-IP brute-force throttle. XFF is
+    honored ONLY when the socket peer is loopback (the same-host reverse proxy)."""
+    from lunamoth.server.supervisor import WebHandler
+
+    class _H:
+        def __init__(self, peer, xff):
+            self.client_address = (peer, 12345)
+            self.headers = {"X-Forwarded-For": xff} if xff else {}
+
+    # loopback peer (the proxy on the same host) → trust XFF (the real client IP)
+    assert WebHandler._client_ip(_H("127.0.0.1", "9.9.9.9, 1.1.1.1")) == "9.9.9.9"
+    assert WebHandler._client_ip(_H("::1", "9.9.9.9")) == "9.9.9.9"
+    # a remote peer hitting the port directly → IGNORE the spoofable XFF, key by peer
+    assert WebHandler._client_ip(_H("203.0.113.7", "9.9.9.9")) == "203.0.113.7"
+    # no XFF → always the peer IP
+    assert WebHandler._client_ip(_H("203.0.113.7", "")) == "203.0.113.7"
+
+
 def test_rate_limiter_throttles_then_refills():
     rl = A.LoginRateLimiter(capacity=3, window=60.0)
     assert all(rl.allow("1.2.3.4") for _ in range(3))  # burst of 3
