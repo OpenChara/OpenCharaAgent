@@ -41,5 +41,25 @@ so saving model-only keeps the stored secret. Tests: 5 _image_gen resolution/pre
 cases + 1 hub defaults case (secret never echoes, image fields persist, text-key save
 doesn't disturb the image secret). Audited (no secret leak, no layering break, instant
 UI). Full suite 806 green, ruff clean.
-## R11 — matte (抠像) model download + load from Settings  [TODO]
+## R11 — matte (抠像) model download + load from Settings  [DONE]
+Shipped: a new in-app package src/lunamoth/visuals/ with matte.py — the matting
+model manager. A pinned MODELS registry (birefnet-general / -lite / isnet-general-use
+/ u2net) with the EXACT rembg release URLs + byte sizes (verified against the
+~/.u2net cache: birefnet-general=972666916, isnet-general-use=178648008). Functions:
+matte_home (U2NET_HOME/~/.u2net — the SAME dir rembg reads, so a download here is
+reused at runtime), selected_model (env → desktop.json matte_model → default),
+is_installed (exact-size check — a truncated file is never "ready"), deps_available
+(rembg importable), download (stream to .onnx.part → verify size → atomic rename; bad
+size/short body rejected + cleaned up, no fabrication), download_async (threaded,
+lock-guarded _progress polled by the UI), delete, status, and cut (lazy rembg/PIL/numpy
+import — the cutout step R9 will call). rembg/onnxruntime are a new OPTIONAL `visuals`
+extra (kept out of the base install). Hub RPC: matte.status/download/delete/use
+(download guarded -32602 unknown / -32050 deps-absent; use persists matte_model). UI:
+Settings·生图 gains a 抠像模型 section — model list with size/note, installed/active
+badges, a download button with a live progress bar (poll matte.status while busy),
+make-default + delete, and a "install the extra" hint with disabled controls when deps
+are absent. Layering clean (visuals imports only stdlib; rembg lazy). Tests: 13 matte
+unit cases (registry/paths/precedence/install/download streaming+mismatch+async/delete/
+status/cut-without-deps) + 1 hub case (status/use/guards). Full suite 820 green, ruff
+clean. Audited: integrity verified, no fabrication, no poll/thread leak.
 ## R9 — bring the visuals pipeline into the app (UX decisions made pragmatically)  [TODO]

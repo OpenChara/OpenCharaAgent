@@ -428,6 +428,26 @@ def test_image_key_and_model_global_defaults_never_echo_secret():
     assert raw["image_api_key"] == "ark-secret-1"
 
 
+def test_matte_status_use_and_guards(monkeypatch):
+    # R11: matte.status reports models + deps; matte.use persists the active id to
+    # desktop.json (read by visuals.matte.selected_model); guards reject bad input.
+    monkeypatch.setenv("U2NET_HOME", str(os.path.join(os.environ["LUNAMOTH_HOME"], "u2net")))
+    st = result("matte.status")
+    assert "models" in st and st["deps"] in (True, False)
+    # an unknown model id is a clear param error
+    assert rpc_error("matte.download", {"model": "ghost"})["code"] == -32602
+    assert rpc_error("matte.use", {"model": "ghost"})["code"] == -32602
+    # picking a valid model persists matte_model into the global defaults store
+    st = result("matte.use", {"model": "isnet-general-use"})
+    assert st["active"] == "isnet-general-use"
+    raw = json.loads(H.desktop_config_path().read_text(encoding="utf-8"))
+    assert raw["matte_model"] == "isnet-general-use"
+    # without the optional visuals stack installed, download is a visible error
+    from lunamoth.visuals import matte as M
+    if not M.deps_available():
+        assert rpc_error("matte.download", {"model": "u2net"})["code"] == -32050
+
+
 def test_use_key_activates_and_delete_removes():
     set_defaults()
     result("keys.save", {"label": "home", "provider": "openrouter",

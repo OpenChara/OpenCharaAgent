@@ -85,8 +85,10 @@ def user_worlds_dir() -> Path:
 # Settings·生图 and read by tools/builtin/_image_gen.py (which reads desktop.json
 # directly — tools/ must not import server/). The secret never echoes back (see
 # _public_defaults → has_image_key), parallel to the text api_key/has_key.
+# matte_model: the active local matting (抠像) model id, set in Settings·生图 and
+# read by lunamoth.visuals.matte.selected_model(). Not a secret.
 _DEFAULT_FIELDS = ("provider", "base_url", "api_key", "model", "ui_lang", "ui_theme",
-                   "image_api_key", "image_model")
+                   "image_api_key", "image_model", "matte_model")
 # Default fields whose value is a secret: stripped from every public payload,
 # surfaced only as a has_<field> presence flag.
 _SECRET_FIELDS = ("api_key", "image_api_key")
@@ -2344,6 +2346,30 @@ class HubDispatcher:
             return delete_key(str(p.get("label") or ""))
         if method == "defaults.use_key":
             return use_key(str(p.get("label") or ""))
+        if method == "matte.status":
+            from ..visuals import matte
+            return matte.status()
+        if method == "matte.download":
+            from ..visuals import matte
+            mid = str(p.get("model") or "")
+            if mid not in matte.MODELS:
+                raise RpcError(-32602, f"unknown matte model: {mid}")
+            if not matte.deps_available():
+                raise RpcError(-32050, "the visuals extra isn't installed — run "
+                               "`uv sync --extra visuals` (rembg/onnxruntime) first")
+            matte.download_async(mid)
+            return matte.status()
+        if method == "matte.delete":
+            from ..visuals import matte
+            matte.delete(str(p.get("model") or ""))
+            return matte.status()
+        if method == "matte.use":
+            from ..visuals import matte
+            mid = str(p.get("model") or "")
+            if mid not in matte.MODELS:
+                raise RpcError(-32602, f"unknown matte model: {mid}")
+            save_defaults({"matte_model": mid})
+            return matte.status()
         if method == "chara.extras":
             return chara_extras(self._meta(p))
         if method == "works.list":

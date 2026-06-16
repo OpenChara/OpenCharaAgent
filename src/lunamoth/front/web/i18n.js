@@ -471,6 +471,14 @@ const I18N = {
   "image-key-label": ["生图密钥", "Image key"],
   "image-key-ph": ["粘贴火山方舟（Ark）图像 key…", "Paste your Volcano Ark image key…"],
   "image-model-label": ["生图模型", "Image model"],
+  // settings · matte (抠像) model download/load
+  "matte-title": ["抠像模型", "Matte model"],
+  "matte-sub": ["本地抠像（去背景）模型：把生成的立绘/表情从背景里抠出来。模型较大，按需下载与加载。", "Local matting (background removal) models: cut the generated sprite/sticker out of its background. The weights are large — download and load on demand."],
+  "matte-no-deps": ["需要先安装可选的视觉依赖：", "Install the optional visuals stack first:"],
+  "matte-download": ["下载", "Download"],
+  "matte-downloading": ["下载中…", "Downloading…"],
+  "matte-installed": ["已下载", "Downloaded"],
+  "matte-dl-failed": ["下载失败", "Download failed"],
   // delete
   "del-title": ["删除「{name}」", "Delete “{name}”"],
   "del-sub": ["这是不可撤销的。删除将：", "This cannot be undone. Deleting will:"],

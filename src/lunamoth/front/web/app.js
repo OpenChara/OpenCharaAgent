@@ -1675,12 +1675,100 @@ function keysPane() {
   return wrap;
 }
 
+/* fmt a byte count as a compact GB/MB string for the matte model list. */
+function fmtBytes(bytes) {
+  const gb = bytes / 1e9;
+  return gb >= 1 ? gb.toFixed(2) + " GB" : Math.round(bytes / 1e6) + " MB";
+}
+
+let _mattePoll = null;
+
+/* Settings·生图 · 抠像模型 (R11): select / download (with live progress) / load a
+   local matting model. The weights are large .onnx files fetched into rembg's
+   cache; deps_available gates the controls (the visuals extra must be installed).
+   While a download runs, poll matte.status so the bar advances on its own. */
+function matteSection() {
+  const wrap = el("div", { class: "keys-block" });
+  wrap.appendChild(el("h2", null, t("matte-title")));
+  wrap.appendChild(el("div", { class: "sub" }, t("matte-sub")));
+  const body = el("div", { class: "keys-list" }, el("div", { class: "muted" }, t("keys-loading")));
+  wrap.appendChild(body);
+
+  function actBtn(cls, label, fn) {
+    const b = el("button", { class: cls }, label);
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      try { await fn(); reload(); }
+      catch (e) { b.disabled = false; toast(rpcErrText(e), true); }
+    });
+    return b;
+  }
+
+  async function reload() {
+    let st;
+    try { st = await hub.call("matte.status", {}, 15000); }
+    catch (e) { body.innerHTML = ""; body.appendChild(el("div", { class: "okline bad" }, rpcErrText(e))); return; }
+    body.innerHTML = "";
+    if (!st.deps) {
+      body.appendChild(el("div", { class: "matte-deps" },
+        el("span", null, t("matte-no-deps") + " "), el("code", null, "uv sync --extra visuals")));
+    }
+    let busy = false;
+    for (const m of st.models) {
+      const prog = m.progress;
+      const downloading = prog && prog.state === "downloading";
+      if (downloading) busy = true;
+      const acts = el("div", { class: "key-acts" });
+      if (downloading) {
+        acts.appendChild(el("span", { class: "muted small" }, t("matte-downloading")));
+      } else {
+        if (m.active) acts.appendChild(el("span", { class: "key-badge on" }, t("keys-active")));
+        else if (m.installed) acts.appendChild(actBtn("btn soft sm", t("keys-use"),
+          () => hub.call("matte.use", { model: m.id }, 15000)));
+        else acts.appendChild((() => {
+          const b = actBtn("btn soft sm", t("matte-download"),
+            () => hub.call("matte.download", { model: m.id }, 20000));
+          if (!st.deps) b.disabled = true;
+          return b;
+        })());
+        if (m.installed) acts.appendChild(actBtn("btn text sm", t("del-word"),
+          () => hub.call("matte.delete", { model: m.id }, 15000)));
+      }
+
+      let foot = null;
+      if (downloading) {
+        const pct = prog.total ? Math.floor((prog.done / prog.total) * 100) : 0;
+        foot = el("div", { class: "matte-prog" },
+          el("div", { class: "matte-bar" }, el("div", { class: "matte-fill", style: `width:${pct}%` })),
+          el("span", { class: "muted small" }, `${pct}% · ${fmtBytes(prog.done || 0)} / ${fmtBytes(prog.total || m.size)}`));
+      } else if (prog && prog.state === "error") {
+        foot = el("div", { class: "okline bad small" }, prog.error || t("matte-dl-failed"));
+      } else if (m.installed) {
+        foot = el("div", { class: "muted small" }, t("matte-installed"));
+      }
+
+      body.appendChild(el("div", { class: "key-row" },
+        el("div", null,
+          el("div", null, el("b", null, m.label), " ", el("span", { class: "muted small" }, fmtBytes(m.size))),
+          el("div", { class: "muted small" }, m.note),
+          foot),
+        acts));
+    }
+    if (busy && !_mattePoll) _mattePoll = setInterval(reload, 1200);
+    else if (!busy && _mattePoll) { clearInterval(_mattePoll); _mattePoll = null; }
+  }
+
+  reload();
+  return wrap;
+}
+
 /* Settings·生图: the GLOBAL image-generation key + model. Mirrors the text-key
    pattern (password field, presence-only placeholder, never echoes the secret).
    _image_gen.py reads these from desktop.json; this is where they're set. */
 function renderImagePane() {
   const pane = $("pane-image");
   if (!pane) return;
+  if (_mattePoll) { clearInterval(_mattePoll); _mattePoll = null; }
   pane.innerHTML = "";
   const d = (state.hub && state.hub.defaults) || {};
   pane.appendChild(el("h2", null, t("set-image")));
@@ -1710,6 +1798,8 @@ function renderImagePane() {
     fieldRow(t("image-key-label"), keyIn),
     fieldRow(t("image-model-label"), modelIn),
     el("div", { class: "acts" }, saveBtn, okline)));
+
+  pane.appendChild(matteSection());
 }
 
 function promptKeyUpdate(candidates) {
