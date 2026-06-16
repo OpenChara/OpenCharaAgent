@@ -1683,7 +1683,10 @@ async function modelsCached() {
 async function openWakeSheet(card) {
   const d = (state.hub && state.hub.defaults) || {};
   let isolation = "sandbox";
-  let wantNet = false;
+  // Network ON by default at wake — matches the runtime default (state.py
+  // DEFAULT_STATUS) and lets a fresh chara reach the web (e.g. to research and
+  // build its own site). The operator can still toggle it off here.
+  let wantNet = true;
   const models = await modelsCached();
 
   const nameInput = el("input", { value: card.name });
@@ -1710,7 +1713,7 @@ async function openWakeSheet(card) {
     } }, el("b", null, label), el("span", null, desc));
     isoSeg.appendChild(opt);
   }
-  const netSwitch = el("button", { class: "switch", onclick: () => {
+  const netSwitch = el("button", { class: "switch" + (wantNet ? " on" : ""), onclick: () => {
     wantNet = !wantNet;
     netSwitch.classList.toggle("on", wantNet);
   } });

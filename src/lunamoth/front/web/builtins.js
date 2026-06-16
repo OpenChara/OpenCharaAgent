@@ -85,9 +85,21 @@ function builtinTile(name, card) {
   const copy = BUILTIN_COPY[name] || { zh: "", en: "", tags: [] };
   const lang = getLangCode();
   const theme = themeStyle(card) || "";
-  const tile = el("div", { class: "bp-tile", tabindex: "0", role: "button",
+
+  // The grid item is a CELL: the avatar sits ABOVE the portrait box (it pokes
+  // up over the top edge), then the tile rectangle below it.
+  const cell = el("div", { class: "bp-cell", tabindex: "0", role: "button",
     "aria-label": card.name, style: theme });
 
+  // Avatar circle, above the box.
+  const avSrc = avatarSrc(card);
+  const av = el("div", { class: "bp-avatar" + (avSrc ? "" : " " + paletteClass(card.name)),
+    style: theme });
+  if (avSrc) av.appendChild(el("img", { src: avSrc, alt: "" }));
+  else av.appendChild(document.createTextNode(glyphOf(card.name)));
+  cell.appendChild(av);
+
+  const tile = el("div", { class: "bp-tile" });
   // Background layer: first available visual, else a flat theme wash via CSS.
   const bgSrc = card.sprite_url || card.keyvisual_url || card.bg_url || "";
   if (bgSrc) {
@@ -102,14 +114,6 @@ function builtinTile(name, card) {
   // The bottom→top gradient in the theme color (CSS reads --card-theme).
   tile.appendChild(el("div", { class: "bp-scrim" }));
 
-  // Avatar circle at the top.
-  const avSrc = avatarSrc(card);
-  const av = el("div", { class: "bp-avatar" + (avSrc ? "" : " " + paletteClass(card.name)),
-    style: theme });
-  if (avSrc) av.appendChild(el("img", { src: avSrc, alt: "" }));
-  else av.appendChild(document.createTextNode(glyphOf(card.name)));
-  tile.appendChild(av);
-
   // Name near the bottom.
   tile.appendChild(el("div", { class: "bp-name" }, card.name));
 
@@ -121,28 +125,29 @@ function builtinTile(name, card) {
   tile.appendChild(el("div", { class: "bp-reveal" },
     el("div", { class: "bp-desc" }, lang === "en" ? copy.en : copy.zh),
     chips));
+  cell.appendChild(tile);
 
-  // Selecting a tile routes through the EXACT deck wake path: ensure a model is
+  // Selecting routes through the EXACT deck wake path: ensure a model is
   // configured (shows the model-setup step if not), then open the 2-step wake
   // editor with the full deck card object.
   // Desktop: hover reveals the overlay, a click selects. Touch (no hover): the
   // first tap reveals the overlay (so the description/tags are readable before
   // committing) and the second tap selects.
   const isTouch = window.matchMedia && window.matchMedia("(hover: none)").matches;
-  tile.addEventListener("click", () => {
-    if (isTouch && !tile.classList.contains("bp-open")) {
+  cell.addEventListener("click", () => {
+    if (isTouch && !cell.classList.contains("bp-open")) {
       // reveal this one, collapse siblings
-      const grid = tile.parentElement;
-      if (grid) grid.querySelectorAll(".bp-tile.bp-open").forEach((n) => n.classList.remove("bp-open"));
-      tile.classList.add("bp-open");
+      const grid = cell.parentElement;
+      if (grid) grid.querySelectorAll(".bp-cell.bp-open").forEach((n) => n.classList.remove("bp-open"));
+      cell.classList.add("bp-open");
       return;
     }
     selectBuiltin(card);
   });
-  tile.addEventListener("keydown", (ev) => {
+  cell.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); selectBuiltin(card); }
   });
-  return tile;
+  return cell;
 }
 
 /* Route a picked card into the existing wake flow (consistent with the deck's

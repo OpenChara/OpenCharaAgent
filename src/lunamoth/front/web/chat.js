@@ -308,7 +308,12 @@ class ChatController {
       this.snapTimer = setInterval(() => { if (!document.hidden) this.refreshSnapshot(); }, 6000);
       this.worksTimer = setInterval(() => { if (!document.hidden) this.pollWorks(); }, 45000);
       this.pollWorks();
-      if (this.opts.netOn) await this.command("/net on", true);
+      // The wake sheet passes an explicit boolean: honor it both ways so the
+      // toggle isn't a lie (runtime defaults network ON, so an off-choice must
+      // actively /net off). Other openChat callers pass undefined → leave the
+      // chara's persisted network state untouched.
+      if (this.opts.netOn === true) await this.command("/net on", true);
+      else if (this.opts.netOn === false) await this.command("/net off", true);
       await this.handleOpening(info);
     } catch (e) {
       if (!this.disposed) this.note(e.message);

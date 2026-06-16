@@ -1280,13 +1280,19 @@ body.dark .bp-close{background:rgba(255,255,255,.08); color:var(--text-2)}
   flex:0 0 100%; display:grid; grid-template-columns:repeat(4,1fr); gap:16px; padding:4px;
 }
 @media (max-width:720px){.bp-grid{grid-template-columns:repeat(2,1fr)}}
-.bp-tile{
-  position:relative; aspect-ratio:3/4; border-radius:15px; overflow:hidden; cursor:pointer;
-  background:var(--panel); box-shadow:0 1px 0 1px var(--hairline-2), 0 8px 26px rgba(10,20,30,.10);
-  transition:transform .22s cubic-bezier(.22,.61,.36,1), box-shadow .22s; outline:none;
-  --card-theme:#5B9FD4;
+/* The cell stacks the avatar ABOVE the portrait box. Top padding leaves room
+   for the avatar to sit over the top edge; the avatar's own negative margin
+   pulls the box up so it overlaps the lower part of the circle. */
+.bp-cell{
+  position:relative; display:flex; flex-direction:column; align-items:center;
+  padding-top:8px; cursor:pointer; outline:none; --card-theme:#5B9FD4;
 }
-.bp-tile:hover,.bp-tile:focus-visible{transform:translateY(-4px); box-shadow:0 2px 0 1px var(--hairline), 0 16px 40px rgba(10,20,30,.20)}
+.bp-tile{
+  position:relative; width:100%; aspect-ratio:3/4; border-radius:15px; overflow:hidden;
+  background:var(--panel); box-shadow:0 1px 0 1px var(--hairline-2), 0 8px 26px rgba(10,20,30,.10);
+  transition:transform .22s cubic-bezier(.22,.61,.36,1), box-shadow .22s;
+}
+.bp-cell:hover .bp-tile,.bp-cell:focus-visible .bp-tile{transform:translateY(-4px); box-shadow:0 2px 0 1px var(--hairline), 0 16px 40px rgba(10,20,30,.20)}
 .bp-tile.bp-flat{background:linear-gradient(165deg, rgba(8,23,39,.55), var(--card-theme))}
 .bp-bg{
   position:absolute; inset:0; background-size:cover; background-position:center top;
@@ -1301,13 +1307,16 @@ body.dark .bp-close{background:rgba(255,255,255,.08); color:var(--text-2)}
     transparent 68%);
 }
 .bp-avatar{
-  position:absolute; top:13px; left:50%; transform:translateX(-50%); z-index:2;
-  width:54px; height:54px; border-radius:50%; overflow:hidden; flex:none;
-  border:2px solid rgba(255,255,255,.85); box-shadow:0 3px 10px rgba(10,20,30,.30);
-  display:flex; align-items:center; justify-content:center; color:#fff; font-size:20px; font-weight:600;
+  position:relative; z-index:3; margin-bottom:-22px; flex:none;
+  width:60px; height:60px; border-radius:50%; overflow:hidden;
+  border:3px solid var(--panel); box-shadow:0 4px 12px rgba(10,20,30,.30);
+  display:flex; align-items:center; justify-content:center; color:#fff; font-size:22px; font-weight:600;
   background:linear-gradient(160deg, rgba(8,23,39,.55), var(--card-theme));
+  transition:transform .22s cubic-bezier(.22,.61,.36,1);
 }
+.bp-cell:hover .bp-avatar,.bp-cell:focus-visible .bp-avatar{transform:translateY(-4px)}
 .bp-avatar img{width:100%; height:100%; object-fit:cover}
+body.dark .bp-avatar{border-color:#222A31}
 .bp-name{
   position:absolute; left:0; right:0; bottom:14px; z-index:2; text-align:center;
   color:#fff; font-size:16px; font-weight:650; letter-spacing:.3px; padding:0 8px;
@@ -1321,8 +1330,8 @@ body.dark .bp-close{background:rgba(255,255,255,.08); color:var(--text-2)}
   transform:translateY(101%); opacity:0; transition:transform .26s cubic-bezier(.22,.61,.36,1), opacity .2s;
   will-change:transform;
 }
-.bp-tile:hover .bp-reveal,.bp-tile:focus-visible .bp-reveal,.bp-tile.bp-open .bp-reveal{transform:translateY(0); opacity:1}
-.bp-tile:hover .bp-name,.bp-tile:focus-visible .bp-name,.bp-tile.bp-open .bp-name{opacity:0; transform:translateY(8px)}
+.bp-cell:hover .bp-reveal,.bp-cell:focus-visible .bp-reveal,.bp-cell.bp-open .bp-reveal{transform:translateY(0); opacity:1}
+.bp-cell:hover .bp-name,.bp-cell:focus-visible .bp-name,.bp-cell.bp-open .bp-name{opacity:0; transform:translateY(8px)}
 .bp-desc{color:rgba(255,255,255,.94); font-size:12px; line-height:1.6; text-shadow:0 1px 4px rgba(0,0,0,.3)}
 .bp-tags{display:flex; flex-wrap:wrap; gap:5px}
 .bp-chip{
