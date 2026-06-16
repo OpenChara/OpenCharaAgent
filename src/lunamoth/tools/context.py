@@ -55,6 +55,13 @@ class ToolContext:
         """The chara's one working directory — every file tool is rooted here."""
         return self.sandbox.root / "workspace"
 
+    @property
+    def assets(self) -> Path:
+        """The read-only reference shelf — a SIBLING of workspace (never under
+        it). The chara reads/uses it (card art + operator-dropped reference
+        material) but never writes it; the file tools enforce that."""
+        return getattr(self.sandbox, "assets_dir", None) or (self.sandbox.root / "assets")
+
     def network_on(self) -> bool:
         return bool(self.state.load().get("network_access", False))
 

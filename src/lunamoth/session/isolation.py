@@ -109,6 +109,12 @@ def _linux_jail_argv(inner: list[str], workspace: Path, allow_network: bool, wri
     for ro in ("/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc", sys.prefix):
         cmd += ["--ro-bind-try", ro, ro]
     cmd += ["--bind", ws, ws]
+    # The read-only reference shelf is a SIBLING of the workspace (sandbox/assets).
+    # Bind it read-only so a shelled rg/grep/cat can READ assets, never write them
+    # (macOS's profile already allows reads globally; this gives bwrap parity).
+    assets = workspace.parent / "assets"
+    if assets.is_dir():
+        cmd += ["--ro-bind-try", str(assets), str(assets)]
     for p in writable:
         cmd += ["--bind", str(p), str(p)]
     cmd += ["--chdir", ws, *inner]

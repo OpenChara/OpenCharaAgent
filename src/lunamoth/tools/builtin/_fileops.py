@@ -22,7 +22,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ._pathsec import PathEscape, resolve_in_workspace
+from ._pathsec import (
+    PathEscape,
+    _resolve_nonexistent,
+    expand_user,
+    map_virtual_assets,
+    resolve_in_workspace,
+)
 
 # ---------------------------------------------------------------------------
 # Extension sets (hermes binary_extensions.py + file_operations.IMAGE_EXTENSIONS)
@@ -261,13 +267,33 @@ class FileOps:
     ``_pathsec.expand_user`` and applied at resolution time.
     """
 
-    def __init__(self, workspace: Path, writable_paths: Optional[List[str]] = None):
+    def __init__(self, workspace: Path, writable_paths: Optional[List[str]] = None,
+                 assets_dir: Optional[Path] = None):
         self.workspace = Path(workspace)
         self.writable_paths = list(writable_paths or [])
+        # The read-only reference sibling (``sandbox/assets``). Reads may resolve
+        # into it (and the virtual ``assets/`` prefix maps here); writes never.
+        self.assets_dir = Path(assets_dir) if assets_dir else None
 
     # ---- path resolution ----
-    def _resolve(self, path: str) -> Path:
-        return resolve_in_workspace(path, self.workspace, self.writable_paths)
+    def _resolve(self, path: str, *, readable: bool = False) -> Path:
+        """Resolve a model path. ``readable=True`` (read_file/read_raw) admits the
+        read-only assets sibling as a valid root; the default (writes) does not,
+        so a write into assets/ fails confinement."""
+        return resolve_in_workspace(
+            path, self.workspace, self.writable_paths,
+            assets_dir=self.assets_dir, readable=readable,
+        )
+
+    def _map(self, path: str) -> Path:
+        """The virtual-mapped absolute candidate for *path* WITHOUT confinement —
+        used only to detect whether a path targets the read-only assets shelf
+        (for the friendly write-refusal). Honors the ``assets/`` prefix and
+        ``~`` expansion; resolves symlinks/.. so the check can't be dodged."""
+        ws = Path(self.workspace).resolve()
+        ad = Path(self.assets_dir).resolve() if self.assets_dir else None
+        p = Path(expand_user(path, ws))
+        return Path(_resolve_nonexistent(map_virtual_assets(p, ws, ad)))
 
     # ---- detection helpers ----
     @staticmethod
@@ -352,7 +378,7 @@ class FileOps:
     # ---- READ ----
     def read_file(self, path: str, offset: int = 1, limit: int = 500) -> ReadResult:
         try:
-            resolved = self._resolve(path)
+            resolved = self._resolve(path, readable=True)
         except PathEscape as e:
             return ReadResult(error=str(e))
 
@@ -417,7 +443,7 @@ class FileOps:
 
     def read_file_raw(self, path: str) -> ReadResult:
         try:
-            resolved = self._resolve(path)
+            resolved = self._resolve(path, readable=True)
         except PathEscape as e:
             return ReadResult(error=str(e))
 

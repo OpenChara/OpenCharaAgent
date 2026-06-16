@@ -1989,10 +1989,11 @@ _KIND_BY_EXT = {
 
 def list_works(meta: S.SessionMeta, limit: int = 200) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    # ONE working directory: workspace/. (The legacy files/ tree is gone —
-    # folded into workspace/ on first sandbox touch.) skills/ is excluded via
-    # _WORK_SKIP_DIRS: it is the chara's know-how, not its works.
-    base = meta.sandbox_dir / "workspace"
+    # The Works tab is the chara's shareable SHELF: workspace/works/ ONLY. The
+    # rest of the workspace is the chara's private working area and is NOT
+    # surfaced here; assets/ is a read-only reference sibling (also not "works").
+    # _WORK_SKIP_DIRS still drops stray logs/skills/etc if they appear under works/.
+    base = meta.sandbox_dir / "workspace" / "works"
     if base.is_dir():
         for p in base.rglob("*"):
             if not p.is_file() or p.name.startswith("."):
@@ -2032,16 +2033,20 @@ def read_work(meta: S.SessionMeta, rel: str) -> dict[str, Any]:
     """In-app preview of one sandbox work (the deck's works page).
 
     `rel` comes from works.list and must stay inside the sandbox's workspace/
-    tree — anything else is refused (no traversal). Over-cap files return
-    truncated so the UI can offer works.open instead.
+    tree (or the read-only assets/ sibling, so the same preview can render a
+    reference asset) — anything else is refused (no traversal). Over-cap files
+    return truncated so the UI can offer works.open instead.
     """
     if not rel:
         raise RpcError(-32602, "works.read needs rel")
     sandbox = meta.sandbox_dir.resolve()
     target = (sandbox / rel).resolve()
     workspace = (sandbox / "workspace").resolve()
-    if not (workspace == target or workspace in target.parents):
-        raise RpcError(-32031, "works.read only serves files under workspace/")
+    assets = (sandbox / "assets").resolve()
+    under_ws = workspace == target or workspace in target.parents
+    under_assets = assets == target or assets in target.parents
+    if not (under_ws or under_assets):
+        raise RpcError(-32031, "works.read only serves files under workspace/ or assets/")
     if not target.is_file():
         raise RpcError(-32035, f"no such work: {rel}")
     size = target.stat().st_size

@@ -14,6 +14,7 @@ the read-loop block (≥4 identical reads), per-ctx ephemeral state stashed on
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from ..registry import registry, tool_error
 from ._fileops import FileOps
@@ -29,7 +30,8 @@ def _fileops(ctx) -> FileOps:
         writable = ctx.writable_paths()
     except Exception:
         writable = []
-    return FileOps(ctx.workspace, writable)
+    assets_dir = getattr(ctx, "assets", None)
+    return FileOps(ctx.workspace, writable, assets_dir=assets_dir)
 
 
 def _read_tracker(ctx) -> dict:
@@ -129,17 +131,24 @@ def read_file(args: dict, ctx) -> str:
 # write_file
 # ---------------------------------------------------------------------------
 def _assets_readonly_error(ctx, fops, path: str):
-    """assets/ is the card's staged reference art — read-only to the chara. Refuse
-    writes/edits that resolve inside it (reads and send_file still work). Returns a
-    tool_error string when blocked, else None."""
+    """assets/ is the read-only reference shelf (card art + operator-dropped
+    reference material), a SIBLING of the workspace. Refuse writes/edits that
+    target it (reads and send_file still work). Returns a tool_error string when
+    blocked, else None. The mapping honors the virtual ``assets/`` prefix, so a
+    write to ``assets/x`` is caught here before the resolver's hard PathEscape."""
     try:
-        resolved = fops._resolve(path)
-        assets = fops._resolve("assets")  # same resolver writes go through
-        if resolved == assets or assets in resolved.parents:
+        assets = getattr(fops, "assets_dir", None)
+        if assets is None:
+            return None
+        assets = Path(assets).resolve()
+        mapped = fops._map(path)
+        if mapped == assets or assets in mapped.parents:
             return tool_error(
-                "assets/ holds your card's reference visuals and is read-only — it "
-                "can't be written to or modified. Keep your own work elsewhere in the "
-                "workspace; you can still read these files and show them with send_file."
+                "assets/ is your read-only reference shelf (your card's visuals plus "
+                "any reference material your user placed there) — it can't be written "
+                "to or modified. Keep your own work in your workspace (put things to "
+                "show your user under works/); you can still read these files and show "
+                "them with send_file."
             )
     except Exception:
         return None

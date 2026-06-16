@@ -145,7 +145,7 @@ class LunaMothAgent:
         )
         self._load_toolpack()
         self._stable_prefix_cache: list[str] | None = None
-        self._art_staged = False  # workspace/assets populated once per session, not per prefix build
+        self._art_staged = False  # assets/ sibling populated once per session, not per prefix build
         self.llm = LLMClient(self.settings.to_llm_config())
         self.thought_cfg = ThoughtConfig()
         self.presence = presence.PresenceState(SANDBOX_ROOT)
@@ -437,15 +437,16 @@ class LunaMothAgent:
         self._skills_snapshot = self.skills.render_block()
 
     def _stage_art_assets(self) -> str:
-        """Copy the card's bundled art into workspace/assets (so the chara can
-        reach and send it via its file tools) and return a NEUTRAL one-line note
-        naming what's there — a fact, never an instruction about what to want.
+        """Copy the card's bundled art into the read-only assets shelf — a SIBLING
+        of the workspace (``sandbox/assets``, never under workspace) — so the chara
+        can read and send it via its file tools, and return a NEUTRAL one-line note
+        naming what's there (a fact, never an instruction about what to want).
         Returns '' when the card carries no art. Runs once per session (the
         stable prefix is cached)."""
         card = self.character
         if card is None or not getattr(card, "has_art", None) or not card.has_art():
             return ""
-        dest = self.sandbox.workspace_dir / "assets"
+        dest = self.sandbox.assets_dir
         # Copy ONCE per session (not on every prefix rebuild / reset): the prompt
         # cache keys on prefix bytes, so this must be an idempotent setup step.
         if not self._art_staged:
@@ -479,12 +480,13 @@ class LunaMothAgent:
             parts.append(f"{n_stick} expression stickers (assets/stickers/)")
         if not parts:
             return ""
-        return ("[Your visual set] Your workspace's assets/ folder holds your card's "
-                "reference art — read-only roleplay visuals, kept out of your works: "
+        return ("[Your visual set] Your assets/ shelf — a read-only reference area beside "
+                "your workspace — holds your card's reference art: "
                 + "; ".join(parts)
-                + ". Reach them with plain workspace-relative paths — e.g. assets/sprite.png, "
-                "NOT workspace/assets/... . You can show any of these to the foreground when "
-                "it fits (e.g. with send_file).")
+                + ". Reach them by the plain prefix assets/… — e.g. assets/sprite.png. "
+                "assets/ is read-only (you can read and send these, but not write there); "
+                "your own work lives in your workspace. You can show any of these to the "
+                "foreground when it fits (e.g. with send_file).")
 
     def _stable_prefix(self) -> list[str]:
         """Session-stable prompt prefix. The same list object is reused until a
@@ -534,8 +536,8 @@ class LunaMothAgent:
             msgs.append(apply_macros(rules_layer.tool_use(card_tooluse), char, user))
             if self.toolpack and self.toolpack.note.strip():
                 msgs.append(self.toolpack.note.strip())
-            # If the card bundles its own art, stage it into workspace/assets and
-            # name it neutrally (a fact, not a directive) so the chara can send it.
+            # If the card bundles its own art, stage it into the assets/ sibling
+            # and name it neutrally (a fact, not a directive) so the chara can send it.
             art_note = self._stage_art_assets()
             if art_note:
                 msgs.append(art_note)
@@ -605,7 +607,9 @@ class LunaMothAgent:
             today = datetime.now().strftime("%Y-%m-%d %a")
             msgs.append(
                 f"Environment: isolation={status.get('isolation', 'sandbox')}, network={net}, "
-                f"operator={who}, date={today}, workspace is your read/write directory."
+                f"operator={who}, date={today}. workspace is your private read/write directory "
+                "(put work you want your user to see under works/); assets/ beside it is a "
+                "read-only reference shelf you can read but not write."
             )
 
         world_blocks = self._keyword_world_info_blocks(scan_text, session)
@@ -739,7 +743,7 @@ class LunaMothAgent:
             mime = str(meta.get("mime") or "application/octet-stream")
             caption = str(meta.get("caption") or args.get("caption") or "")
             try:
-                fp = self.sandbox.resolve_inside(relp, base=self.sandbox.workspace_dir)
+                fp = self.sandbox.resolve_readable(relp)
                 if not fp.is_file():
                     raise FileNotFoundError(relp)
                 # Reference the LIVE sandbox file, served on demand — never embed or
@@ -789,7 +793,7 @@ class LunaMothAgent:
         try:
             if not self.llm.vision_supported():
                 return None
-            fp = self.sandbox.resolve_inside(relp, base=self.sandbox.workspace_dir)
+            fp = self.sandbox.resolve_readable(relp)
             if not fp.is_file():
                 return None
             data = fp.read_bytes()

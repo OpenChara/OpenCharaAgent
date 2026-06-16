@@ -17,9 +17,16 @@ class Sandbox:
         self.root = root.resolve()
         self.logs_dir = (self.root / "logs").resolve()
         self.workspace_dir = (self.root / "workspace").resolve()
+        # assets/ is a READ-ONLY reference shelf — a SIBLING of workspace, never
+        # under it. It holds the card's staged art plus any reference material an
+        # operator drops in (rulebooks, lore, more art): the chara reads & uses
+        # it for roleplay but never owns or writes it. Confinement enforces the
+        # read-only contract; this just lays down the directory.
+        self.assets_dir = (self.root / "assets").resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
+        self.assets_dir.mkdir(parents=True, exist_ok=True)
         self._migrate_legacy_files()
 
     def _migrate_legacy_files(self) -> None:
@@ -60,6 +67,31 @@ class Sandbox:
         target_base = (base or self.workspace_dir).resolve()
         target = (target_base / rel).resolve()
         if target != target_base and target_base not in target.parents:
+            raise SandboxViolation("path escapes sandbox")
+        return target
+
+    def resolve_readable(self, relative: str | Path) -> Path:
+        """Resolve a model path for READING, honoring the virtual ``assets/`` prefix.
+
+        A leading ``assets`` component maps to the read-only sibling assets shelf
+        (``self.assets_dir``); everything else is workspace-relative. The result
+        must live under workspace OR assets — any escape (absolute path, ``..``
+        traversal, or a symlink pointing out) raises :class:`SandboxViolation`.
+        READ-ONLY surfaces only (send_file, image vision): never resolve a write
+        through this — writes must stay workspace-confined.
+        """
+        rel = Path(relative)
+        if rel.is_absolute():
+            raise SandboxViolation("absolute paths are not allowed")
+        parts = rel.parts
+        if parts and parts[0] == "assets":
+            base = self.assets_dir
+            sub = Path(*parts[1:]) if len(parts) > 1 else Path()
+        else:
+            base = self.workspace_dir
+            sub = rel
+        target = (base / sub).resolve()
+        if target != base and base not in target.parents:
             raise SandboxViolation("path escapes sandbox")
         return target
 

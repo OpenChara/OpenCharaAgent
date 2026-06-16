@@ -353,10 +353,10 @@ def test_works_list_visible_under_a_dot_dir_home(tmp_path, monkeypatch):
     monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / ".lunahome"))
     meta = wake_session()
     assert ".lunahome" in str(meta.sandbox_dir)
-    ws = meta.sandbox_dir / "workspace"
-    ws.mkdir(parents=True, exist_ok=True)
-    (ws / "poem.md").write_text("moth", encoding="utf-8")
-    (ws / ".hidden.md").write_text("x", encoding="utf-8")
+    works_dir = meta.sandbox_dir / "workspace" / "works"
+    works_dir.mkdir(parents=True, exist_ok=True)
+    (works_dir / "poem.md").write_text("moth", encoding="utf-8")
+    (works_dir / ".hidden.md").write_text("x", encoding="utf-8")
     works = result("works.list", {"name": meta.name})
     names = [w["name"] for w in works]
     assert "poem.md" in names and ".hidden.md" not in names

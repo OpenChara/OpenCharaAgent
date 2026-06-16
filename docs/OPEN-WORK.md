@@ -418,35 +418,24 @@ Game-style multi-page card view: 设定 / 视觉(立绘+主视觉) / 表情 / wo
 Well-designed interaction; depends on R4.
 
 
-## R7 (P0, owner's highest) — Sandbox geography: assets (read-only ref, SIBLING) + workspace (private) + works/ (shelf)
-Owner-confirmed layout (2026-06-16):
-```
-sandbox/
-  assets/     read-only REFERENCE — the card's art PLUS user-uploaded material
-              (D&D rulebooks, lore, more art); the chara reads & uses it for
-              roleplay but does NOT own/create it. A SIBLING of workspace (moved
-              OUT of workspace/assets), model-READABLE, never writable.
-  workspace/  the chara's own private working area (read-write).
-    works/    the shareable shelf — what the 作品 (Works) tab shows.
-```
-Confinement (SECURITY-CRITICAL — careful + well-tested):
-- read_file / list_files / search / send_file resolve under {workspace, assets}; assets read-only.
-- write_file / patch / terminal-writes resolve under workspace ONLY (+ operator writable_paths);
-  a write into assets/ is refused with a clear note. Keep resolve_inside's ../symlink guards;
-  add a readable-roots variant (don't loosen the write path).
-Pieces: tools/sandbox.py (readable-roots model); tools/builtin/file_tools.py (reads allow
-assets/, writes refuse — generalize _assets_readonly_error to the sibling path);
-core/agent.py _stage_art_assets → sandbox/assets (sibling) not workspace/assets;
-server/hub.py wake _copy_card_assets → sandbox/assets; server/hub.py list_works → scan
-workspace/works/ ONLY (drop assets from skip-set; it's no longer under workspace);
-read_work preview allow workspace+assets; /asset serving still under the session dir (verify);
-prompt geography in rules._RULES (neutral 3-tier) + agent volatile env-facts.
-Later sub-item: an operator "add reference to assets/" upload route (deck/works UI).
-Acceptance: (a) chara reads an assets/ file (incl a user-dropped one) via read_file; (b)
-write/patch/terminal into assets/ refused; (c) Works tab = workspace/works/ only (private
-workspace files NOT listed); (d) card art staged into sandbox/assets on wake; (e) /asset
-still serves card art; (f) confinement audited — no read/write escape of the sandbox,
-assets truly read-only — dedicated security tests + audit subagent; (g) full suite green;
-(h) live Quinn (deepseek/deepseek-v4-flash): reads an assets/ file, is refused writing to
-assets/, puts a shareable thing in works/ and a private note in workspace/.
-NOTE: all Quinn test runs use deepseek/deepseek-v4-flash.
+## R8 (P1, owner request 2026-06-16) — New-user character-select carousel
+Replace the "wake Quinn" first-run step with a mobile-game-style character picker
+over the 8 built-in cards. Each card = a vertical rectangle: sprite as background,
+theme-color bottom→top gradient, avatar at the top; hover → a bilingual (zh/en)
+description + TAGs (authored by hand, baked into the repo/code, not model-gen).
+8 cards over 2 swipeable pages; the FIRST page's 4 are different functions/leanings
+— recommend Quinn (general coding/work), Vale (TTRPG KP), Mars (music), Yan (literature).
+Header line: 【LunaMoth 内置的推荐角色，他们来自不同的背景和世界观，掌握和热爱不同的
+技能，自主运行的时候，他们都会着手构筑自己的个人网站】(+ EN). Don't drastically change
+the front-end; must not lag. Plan + acceptance to be written next iteration.
+
+## R7-followup (LOW, from the R7 security audit) — V4A Move header polish
+`file_tools._V4A_HEADER_RE` matches Update|Add|Delete but not Move, so a V4A
+`Move File: src -> dst` skips both the friendly assets read-only message and the
+`..`-traversal pre-guard. NOT a confinement hole (move_file's write-mode resolver
+still refuses assets/escape destinations — verified by the audit), only a less
+helpful error. Add Move to the regex (and check its destination) for consistency.
+
+DONE this loop: R1 tool-access single-source (4435d77), R2 on-disk image vision
+(f34a55e), R3 tool-call fold i18n (e4dcce4), R7 sandbox geography (assets read-only
+sibling / workspace / works/ — full suite green, security-audited, live-Quinn verified).

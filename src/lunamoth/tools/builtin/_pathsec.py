@@ -32,6 +32,26 @@ def has_traversal_component(path_str: str) -> bool:
     return ".." in Path(path_str).parts
 
 
+def map_virtual_assets(p: Path, workspace: Path, assets_dir: Path | None) -> Path:
+    """Anchor a relative model path, honoring the virtual ``assets/`` prefix.
+
+    The chara addresses its read-only reference shelf as ``assets/...`` even
+    though that shelf physically lives in a SIBLING dir of the workspace
+    (``sandbox/assets``, not ``sandbox/workspace/assets``). A leading ``assets``
+    path component is therefore re-anchored under *assets_dir*; everything else
+    is workspace-relative. An absolute path is returned unchanged (confinement
+    is enforced later by the caller). When *assets_dir* is ``None`` the virtual
+    prefix is inert and ``assets/...`` is treated as an ordinary workspace path.
+    """
+    if p.is_absolute():
+        return p
+    parts = p.parts
+    if assets_dir is not None and parts and parts[0] == "assets":
+        rest = Path(*parts[1:]) if len(parts) > 1 else Path()
+        return assets_dir / rest
+    return workspace / p
+
+
 def expand_user(path_str: str, workspace: Path) -> str:
     """Expand a leading ``~`` to the chara's workspace (its home).
 
@@ -52,27 +72,43 @@ def resolve_in_workspace(
     path_str: str,
     workspace: Path,
     writable_paths: Iterable[str] = (),
+    *,
+    assets_dir: Path | None = None,
+    readable: bool = False,
 ) -> Path:
     """Resolve a model-supplied path to an absolute Path confined to the workspace.
 
     Resolution order (hermes ``_resolve_path_for_task`` re-anchored to the
-    sandbox): expand ``~``; an absolute path is taken as-is; a relative path is
-    anchored under ``workspace``. The resolved path must live under ``workspace``
-    (or under one of the operator-opted-in ``writable_paths``); otherwise
-    ``PathEscape`` is raised so a sandbox-escape write is visible, never silent.
+    sandbox): expand ``~``; a leading ``assets/`` component is re-anchored to the
+    read-only reference sibling (*assets_dir*); an absolute path is taken as-is;
+    any other relative path is anchored under ``workspace``. The resolved path
+    must live under ``workspace`` (or an operator-opted-in ``writable_path``);
+    otherwise ``PathEscape`` is raised so a sandbox escape is visible, never
+    silent.
+
+    The ``assets`` sibling is a READ-only root: it is an allowed destination only
+    when *readable* is true (read_file/search/send_file). Write paths
+    (``readable=False``, the default) deliberately EXCLUDE it from the allowed
+    roots, so a write that resolves into ``assets/`` fails confinement — the
+    file-tool wrapper turns that into a friendly read-only refusal first, but the
+    resolver is the hard backstop. The virtual ``assets/`` prefix is mapped in
+    both cases so the refusal/escape points at the real sibling location.
     """
     if not path_str:
         raise PathEscape("empty path")
 
     workspace = Path(workspace).resolve()
+    assets_dir = Path(assets_dir).resolve() if assets_dir else None
     expanded = expand_user(path_str, workspace)
     p = Path(expanded)
-    candidate = p if p.is_absolute() else (workspace / p)
+    candidate = map_virtual_assets(p, workspace, assets_dir)
 
     # Resolve symlinks + ``..`` without requiring the file to exist.
     resolved = Path(_resolve_nonexistent(candidate))
 
     roots = [workspace] + [Path(w).resolve() for w in writable_paths if w]
+    if readable and assets_dir is not None:
+        roots.append(assets_dir)
     for root in roots:
         try:
             resolved.relative_to(root)

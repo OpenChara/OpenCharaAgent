@@ -575,35 +575,43 @@ def test_upload_recognizes_world_books_and_cards():
 
 # ---- works & extras --------------------------------------------------------------
 
-def test_works_list_reads_sandbox_tree():
+def test_works_list_reads_the_works_shelf():
     set_defaults()
     entry = result("session.wake", {"card": luna_card_path()})
     meta = S.load_session(entry["name"])
-    ws = meta.sandbox_dir / "workspace" / "gallery"
-    ws.mkdir(parents=True)
-    (ws / "aurora.html").write_text("<html>", encoding="utf-8")
-    (meta.sandbox_dir / "logs").mkdir(exist_ok=True)
-    (meta.sandbox_dir / "logs" / "noise.log").write_text("x", encoding="utf-8")
-    skills = meta.sandbox_dir / "workspace" / "skills" / "make-art"
-    skills.mkdir(parents=True)
-    (skills / "SKILL.md").write_text("# how-to", encoding="utf-8")
+    # The shelf is workspace/works/ — only what the chara puts there is surfaced.
+    shelf = meta.sandbox_dir / "workspace" / "works" / "gallery"
+    shelf.mkdir(parents=True)
+    (shelf / "aurora.html").write_text("<html>", encoding="utf-8")
+    # A private workspace file (NOT under works/) must stay private.
+    (meta.sandbox_dir / "workspace" / "scratch.txt").write_text("notes", encoding="utf-8")
+    # A skip-dir (logs/) that happens to land under works/ is still skipped.
+    (shelf / "logs").mkdir()
+    (shelf / "logs" / "noise.log").write_text("x", encoding="utf-8")
     works = result("works.list", {"name": entry["name"]})
     names = [w["name"] for w in works]
     assert "aurora.html" in names
+    assert "scratch.txt" not in names  # private workspace, not the shelf
     assert "noise.log" not in names  # logs are diagnostics, not works
-    assert "SKILL.md" not in names  # skills are know-how, not works
     assert works[0]["kind"] == "web"
 
 
-def test_works_list_scans_only_workspace_not_legacy_files():
+def test_works_list_excludes_private_workspace_and_assets():
     set_defaults()
     entry = result("session.wake", {"card": luna_card_path()})
     meta = S.load_session(entry["name"])
-    legacy = meta.sandbox_dir / "files"
-    legacy.mkdir(parents=True, exist_ok=True)
-    (legacy / "ghost.txt").write_text("residue", encoding="utf-8")
-    works = result("works.list", {"name": entry["name"]})
-    assert "ghost.txt" not in [w["name"] for w in works]
+    # Legacy files/ tree, a private workspace file, and the read-only assets
+    # sibling are all NOT works — none should be listed.
+    (meta.sandbox_dir / "files").mkdir(parents=True, exist_ok=True)
+    (meta.sandbox_dir / "files" / "ghost.txt").write_text("residue", encoding="utf-8")
+    (meta.sandbox_dir / "workspace").mkdir(parents=True, exist_ok=True)
+    (meta.sandbox_dir / "workspace" / "draft.md").write_text("private", encoding="utf-8")
+    (meta.sandbox_dir / "assets").mkdir(parents=True, exist_ok=True)
+    (meta.sandbox_dir / "assets" / "sprite.png").write_bytes(b"\x89PNG")
+    names = [w["name"] for w in result("works.list", {"name": entry["name"]})]
+    assert "ghost.txt" not in names
+    assert "draft.md" not in names
+    assert "sprite.png" not in names
 
 
 def test_works_read_refuses_legacy_files_path():

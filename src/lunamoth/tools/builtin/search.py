@@ -139,15 +139,33 @@ class SearchResult:
 # ---------------------------------------------------------------------------
 
 def _confine(ctx, path: str) -> tuple[str | None, str | None]:
-    """Resolve *path* under ctx.workspace. Returns (resolved_abs, error)."""
+    """Resolve *path* under ctx.workspace (or the read-only assets sibling).
+
+    Search is read-only, so it may also scan the ``assets/`` reference shelf: a
+    leading ``assets`` component maps to the sibling assets dir (the same virtual
+    prefix the file tools use). Returns (resolved_abs, error). NOTE: on Linux/
+    docker isolation the OS jail binds only the workspace, so a shelled rg/grep
+    won't see assets there — read_file/send_file (direct, unjailed I/O) remain
+    the portable way to reach assets; assets scanning works under macOS sandbox
+    (reads are unrestricted) and is bound read-only for bwrap (isolation.py)."""
     workspace = Path(ctx.workspace).resolve()
+    assets_dir = getattr(ctx, "assets", None)
+    try:
+        assets_dir = Path(assets_dir).resolve() if assets_dir else None
+    except Exception:  # noqa: BLE001
+        assets_dir = None
     raw = (path or ".").strip()
     p = Path(raw).expanduser()
-    if p.is_absolute():
+    if not p.is_absolute() and assets_dir is not None and p.parts and p.parts[0] == "assets":
+        rest = Path(*p.parts[1:]) if len(p.parts) > 1 else Path()
+        resolved = (assets_dir / rest).resolve()
+    elif p.is_absolute():
         resolved = p.resolve()
     else:
         resolved = (workspace / p).resolve()
     if resolved == workspace or workspace in resolved.parents:
+        return str(resolved), None
+    if assets_dir is not None and (resolved == assets_dir or assets_dir in resolved.parents):
         return str(resolved), None
     # Allow paths under any runtime writable allowlist entry.
     for w in ctx.writable_paths():

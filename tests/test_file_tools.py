@@ -16,13 +16,20 @@ from lunamoth.tools.registry import registry, discover_builtin_tools
 # ---------------------------------------------------------------------------
 class FakeCtx:
     def __init__(self, workspace: Path):
-        self.sandbox = types.SimpleNamespace(root=workspace.parent)
+        # assets/ is a SIBLING of workspace (sandbox/assets), per R7 geography.
+        self._assets = workspace.parent / "assets"
+        self._assets.mkdir(parents=True, exist_ok=True)
+        self.sandbox = types.SimpleNamespace(root=workspace.parent, assets_dir=self._assets)
         self._ws = workspace
         self._scratch = {}
 
     @property
     def workspace(self) -> Path:
         return self._ws
+
+    @property
+    def assets(self) -> Path:
+        return self._assets
 
     def writable_paths(self):
         return []
@@ -342,10 +349,9 @@ def test_patch_content_required(ctx):
     assert out["error"] == "patch content required"
 
 
-# ---- assets/ is read-only to the chara ---------------------------------------
+# ---- assets/ is read-only to the chara (a read-only SIBLING of workspace) ----
 def test_assets_dir_is_read_only(ctx):
-    (ctx.workspace / "assets").mkdir()
-    (ctx.workspace / "assets" / "sprite.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (ctx.assets / "sprite.png").write_bytes(b"\x89PNG\r\n\x1a\n")
     # write_file under assets/ is refused
     out = _call(file_tools.write_file, {"path": "assets/x.txt", "content": "nope"}, ctx)
     assert out.get("error") and "read-only" in out["error"].lower()

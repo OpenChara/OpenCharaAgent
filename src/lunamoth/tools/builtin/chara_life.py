@@ -36,13 +36,16 @@ def send_file(args, ctx) -> str:
     event) happens in the agent loop — this validates the file and confirms."""
     rel = str(args.get("path") or "").strip()
     if not rel:
-        return tool_error("send_file needs `path` — a file inside your workspace")
+        return tool_error("send_file needs `path` — a file in your workspace or assets/")
     try:
-        p = ctx.sandbox.resolve_inside(rel, base=ctx.sandbox.workspace_dir)
+        # Read-only resolve: workspace OR the assets/ reference shelf (so the
+        # chara can show card art and dropped reference material, not just its
+        # own work). send_file never writes, so the read-only resolver is right.
+        p = ctx.sandbox.resolve_readable(rel)
     except Exception as exc:  # noqa: BLE001 - SandboxViolation / bad path
         return tool_error(f"path not allowed: {exc}")
     if not p.is_file():
-        return tool_error(f"no such file in your workspace: {rel}")
+        return tool_error(f"no such file to send: {rel}")
     size = p.stat().st_size
     if size > _MAX_SEND_BYTES:
         return tool_error(f"file is too large to send ({size} bytes; limit ~8MB)")

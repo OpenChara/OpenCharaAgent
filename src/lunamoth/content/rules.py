@@ -36,6 +36,11 @@ from pathlib import Path
 _RULES = (
     "Your workspace, files, and memory are yours to manage — you have full authority over "
     "them, exercised through your tools, not by describing changes.\n"
+    "Your space has three areas. Your workspace is your private read/write home — work freely "
+    "there. Inside it, works/ is your shelf for finished things you want your user to see "
+    "(that's the area they browse). Beside your workspace sits assets/: a read-only reference "
+    "shelf (your own reference art and anything your user has placed there for you to use) — "
+    "read from it freely with the plain prefix assets/…, but you cannot write to it.\n"
     "What you produce here must be real. If you say you wrote, built, or finished something — "
     "a file, a program, a piece of writing or music, a web page — it MUST actually exist in "
     "your workspace; create it with your tools. Never report a result, or describe a thing as "
