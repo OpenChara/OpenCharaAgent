@@ -36,7 +36,7 @@ from . import authpw as AUTHPW
 from . import hub as H
 from . import netsec as N
 from .pty import PtyBridge
-from .ws import _WSSink, _close_ws, _path_from_ws, _recv_text, query_auth_ok
+from .ws import _WSSink, _close_ws, _path_from_ws, _recv_text
 
 _log = logging.getLogger("lunamoth.server.supervisor")
 
@@ -1178,16 +1178,20 @@ class WebHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(raw)
 
     def _client_ip(self) -> str:
-        """Best-effort per-client key for the login rate limit. Honors a single
-        proxy hop's ``X-Forwarded-For`` (the public deploy sits behind a TLS
-        reverse proxy), else the socket peer."""
-        fwd = self.headers.get("X-Forwarded-For", "")
-        if fwd:
-            return fwd.split(",")[0].strip()
+        """Per-client key for the login rate limit. Trust ``X-Forwarded-For`` ONLY
+        when the socket peer is loopback (the reverse proxy runs on the same host).
+        A direct connection to the published port could spoof XFF to mint a fresh
+        rate-limit bucket per request and defeat the per-IP brute-force throttle —
+        so for a non-loopback peer use the real peer IP and ignore XFF."""
         try:
-            return self.client_address[0]
+            peer = self.client_address[0]
         except (AttributeError, IndexError):
             return "?"
+        if N.is_loopback_host(peer):
+            fwd = self.headers.get("X-Forwarded-For", "")
+            if fwd:
+                return fwd.split(",")[0].strip()
+        return peer
 
     def _handle_login(self) -> None:
         """POST /login {password} → mint the SAME auth cookie on success.
@@ -1743,12 +1747,28 @@ class Supervisor:
                     origin = headers.get("Origin", "") or headers.get("origin", "") or ""
         return N.origin_allowed(origin, self.allow_hosts, wildcard_bind=self.wildcard_bind)
 
+    def _ws_cookie(self, ws: Any) -> str:
+        """The Cookie header from the WS handshake (browsers send same-origin
+        cookies on the upgrade request) — so a password-login user, who reached the
+        bare bookmark with no ?token=, authenticates the WS via the lm_auth cookie."""
+        request = getattr(ws, "request", None)
+        if request is not None:
+            headers = getattr(request, "headers", None)
+            if headers is not None:
+                with contextlib.suppress(Exception):
+                    return headers.get("Cookie", "") or headers.get("cookie", "") or ""
+        return ""
+
     async def _ws_entry(self, ws: Any, path: str = "") -> None:
         path = _path_from_ws(ws, path)
+        # Origin is checked FIRST (anti-CSWSH) — a cross-origin browser WS is
+        # rejected 4403 before auth, so accepting the cookie below is safe.
         if not self._origin_ok(ws):
             await _close_ws(ws, 4403, "origin not allowed")
             return
-        if not query_auth_ok(path, self.token):
+        # Dual-read like the HTTP gate: ?token= (Electron/SSH/token-URL) OR the
+        # lm_auth cookie (password-login users, whose bookmark has no token).
+        if not N.request_authed(urlsplit(path).query, self._ws_cookie(ws), self.token):
             await _close_ws(ws, 4401, "authentication required")
             return
         route = urlsplit(path).path

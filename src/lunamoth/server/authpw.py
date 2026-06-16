@@ -16,9 +16,11 @@ never the plaintext. The verify is constant-time (``hmac.compare_digest``).
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import string
 import threading
@@ -86,16 +88,25 @@ def load_record(path: Path | None = None) -> dict[str, object] | None:
 
 
 def save_record(record: dict[str, object], path: Path | None = None) -> Path:
-    """Persist a PBKDF2 record (hash+salt+iters only, never plaintext)."""
+    """Persist a PBKDF2 record (hash+salt+iters only, never plaintext).
+
+    The tmp file is created 0o600 BEFORE any bytes are written, so the record is
+    never group/world-readable for even a moment (no write-then-chmod race)."""
     p = path or auth_store_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(p)
+    data = json.dumps(record, ensure_ascii=False).encode("utf-8")
+    # os.open with 0o600 means the file is private from creation (umask can only
+    # remove bits, and O_CREAT honors the mode for a new file).
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
-        p.chmod(0o600)
-    except OSError:
-        pass
+        os.fchmod(fd, 0o600)  # in case the tmp pre-existed with looser perms
+        os.write(fd, data)
+    finally:
+        os.close(fd)
+    os.replace(tmp, p)
+    with contextlib.suppress(OSError):
+        p.chmod(0o600)  # belt-and-suspenders if the tmp pre-existed with looser perms
     return p
 
 
