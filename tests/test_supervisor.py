@@ -690,7 +690,8 @@ def test_asset_route_serves_image_confines_and_rejects_nonimage():
     srv = SV.start_http("127.0.0.1", port, token="t", supervisor=None)
 
     def code(abspath):
-        url = f"http://127.0.0.1:{port}/asset?p=" + urllib.parse.quote(abspath)
+        # SEC-1: /asset now requires the session token (cookie or ?token=).
+        url = f"http://127.0.0.1:{port}/asset?token=t&p=" + urllib.parse.quote(abspath)
         try:
             return urllib.request.urlopen(url, timeout=5).status
         except urllib.error.HTTPError as e:
@@ -702,6 +703,62 @@ def test_asset_route_serves_image_confines_and_rejects_nonimage():
             assert code(str(sprite)) == 200                  # a real card asset serves
         assert code("/etc/passwd") == 404                    # outside the allowed roots
         assert code(str((H.bundled_cards_dir() / "Quinn" / "card.json").resolve())) == 404  # non-image
+    finally:
+        srv.shutdown()
+
+
+def test_asset_route_requires_auth(tmp_path, monkeypatch):
+    """SEC-1: /asset is authenticated — a request without the session token (no
+    cookie, no ?token=) is refused; the cookie OR the query token unlocks it."""
+    import types
+    import urllib.parse, urllib.request, urllib.error
+    from lunamoth.server import supervisor as SV
+
+    root = (tmp_path / "sessions" / "probe").resolve()
+    (root / "sandbox" / "workspace" / "works").mkdir(parents=True)
+    img = root / "sprite.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    monkeypatch.setattr(SV.S, "list_sessions", lambda: [types.SimpleNamespace(root=root, sandbox_dir=root / "sandbox")])
+
+    port = SV.free_port()
+    srv = SV.start_http("127.0.0.1", port, token="t", supervisor=None)
+    base = f"http://127.0.0.1:{port}/asset?p=" + urllib.parse.quote(str(img))
+
+    def status(url, cookie=None):
+        req = urllib.request.Request(url)
+        if cookie:
+            req.add_header("Cookie", cookie)
+        try:
+            return urllib.request.urlopen(req, timeout=5).status
+        except urllib.error.HTTPError as e:
+            return e.code
+
+    try:
+        assert status(base) == 403                       # no token, no cookie → refused
+        assert status(base + "&token=t") == 200           # query token unlocks
+        assert status(base, cookie="lm_asset=t") == 200   # SameSite cookie unlocks
+        assert status(base, cookie="lm_asset=wrong") == 403
+        assert status(base, cookie="=bad;; junk") == 403   # malformed Cookie header → no crash, refused
+    finally:
+        srv.shutdown()
+
+
+def test_asset_route_open_when_no_server_token(tmp_path, monkeypatch):
+    """Dev mode (no token configured): /asset stays open, as it was before SEC-1."""
+    import types
+    import urllib.parse, urllib.request, urllib.error
+    from lunamoth.server import supervisor as SV
+
+    root = (tmp_path / "sessions" / "p").resolve()
+    (root / "sandbox" / "workspace").mkdir(parents=True)
+    img = root / "avatar.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\n")
+    monkeypatch.setattr(SV.S, "list_sessions", lambda: [types.SimpleNamespace(root=root, sandbox_dir=root / "sandbox")])
+    port = SV.free_port()
+    srv = SV.start_http("127.0.0.1", port, token="", supervisor=None)
+    try:
+        url = f"http://127.0.0.1:{port}/asset?p=" + urllib.parse.quote(str(img))
+        assert urllib.request.urlopen(url, timeout=5).status == 200  # open, no token required
     finally:
         srv.shutdown()
 
@@ -734,7 +791,7 @@ def test_asset_route_never_leaks_session_secrets(tmp_path, monkeypatch):
     srv = SV.start_http("127.0.0.1", port, token="t", supervisor=None)
 
     def get(abspath):
-        url = f"http://127.0.0.1:{port}/asset?p=" + urllib.parse.quote(str(abspath))
+        url = f"http://127.0.0.1:{port}/asset?token=t&p=" + urllib.parse.quote(str(abspath))
         try:
             r = urllib.request.urlopen(url, timeout=5)
             return r.status, r.read()

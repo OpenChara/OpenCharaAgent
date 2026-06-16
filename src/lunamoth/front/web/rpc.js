@@ -19,6 +19,14 @@ const BOOT = (() => {
       if (saved) { token = saved.token || ""; wsPort = saved.ws || ""; }
     } catch (e) { /* corrupt */ }
   }
+  // SEC-1: also set the lm_asset cookie ourselves (the server sets it too, but the
+  // token lives in the URL hash which never reaches the server — this guarantees
+  // same-origin /asset <img>/background requests authenticate). SameSite=Strict so a
+  // cross-site page can't send it.
+  if (token) {
+    try { document.cookie = `lm_asset=${encodeURIComponent(token)}; path=/; samesite=strict`; }
+    catch (e) { /* non-browser context */ }
+  }
   return {
     token,
     wsPort: wsPort || location.port,

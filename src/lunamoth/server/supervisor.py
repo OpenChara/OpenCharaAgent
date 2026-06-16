@@ -12,6 +12,7 @@ import dataclasses
 import functools
 import gc
 import hmac
+import http.cookies
 import http.server
 import json
 import logging
@@ -1105,7 +1106,29 @@ class WebHandler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self) -> None:
         if not getattr(self, "_skip_no_store", False):
             self.send_header("Cache-Control", "no-store")
+        # SEC-1: hand the same-origin renderer a SameSite=Strict cookie carrying the
+        # session token, so its <img>/background /asset requests authenticate without
+        # any URL change. A cross-site page can neither read nor send this cookie.
+        if self.token:
+            self.send_header(
+                "Set-Cookie", f"lm_asset={self.token}; Path=/; SameSite=Strict; HttpOnly")
         super().end_headers()
+
+    def _asset_authed(self, url) -> bool:
+        """The /asset GET is same-origin only. Accept the session token from the
+        `lm_asset` SameSite=Strict cookie OR the `?token=` query; a cross-site page
+        can do neither. No token configured (dev) → open, as the route was before."""
+        if not self.token:
+            return True
+        qtok = (parse_qs(url.query).get("token") or [""])[0]
+        if qtok and hmac.compare_digest(qtok, self.token):
+            return True
+        try:
+            jar = http.cookies.SimpleCookie(self.headers.get("Cookie") or "")
+            ctok = jar["lm_asset"].value if "lm_asset" in jar else ""
+        except http.cookies.CookieError:
+            ctok = ""
+        return bool(ctok) and hmac.compare_digest(ctok, self.token)
 
     def _card_roots(self) -> list[Path]:
         return [H.bundled_cards_dir().resolve(), H.user_cards_dir().resolve()]
@@ -1203,6 +1226,9 @@ class WebHandler(http.server.SimpleHTTPRequestHandler):
         self._skip_no_store = False
         url = urlsplit(self.path)
         if url.path == "/asset":
+            if not self._asset_authed(url):
+                self.send_error(403)
+                return
             self._serve_asset(url)
             return
         super().do_GET()
