@@ -485,7 +485,11 @@ docker compose up -d
   `#token=` URL. PBKDF2-HMAC-SHA256 (600k), hash-only `auth.json` (chmod 600), per-IP rate-limit,
   `/login`+`/authinfo` pre-auth, mints the SAME cookie. The token path is untouched and the
   loopback/Electron/SSH app stays byte-for-byte inert (verified e2e: /authinfo:false, /login 404,
-  no auth.json, token 204/200). 854 pytest / 147 vitest green.
+  no auth.json, token 204/200). Adversarially security-reviewed (VERDICT: SOLID — no bypass); the
+  3 findings all fixed + regression-tested: the WS handshake now dual-reads the lm_auth cookie (a
+  login user's WS-driven UI couldn't connect before — Origin-check-first keeps it CSWSH-safe), XFF
+  is trusted only from a loopback peer (rate-limit can't be spoofed on a direct port hit), and
+  auth.json is 0600-from-creation. 856 pytest / 147 vitest green.
 
 **Verification still needing a real host (environment-blocked here, not code gaps):**
 - **Docker `docker compose up`**: the wheel builds + bundles the UI (verified via build-wheel.sh:
