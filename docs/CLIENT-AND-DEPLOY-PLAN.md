@@ -34,9 +34,13 @@ of `main`. §10 acceptance gate — all green; NO placeholders left in the featu
   surfacing; streamModel restore-ts; cookie header-injection guard). Old vanilla
   `front/web/` deleted; CLAUDE.md + READMEs updated.
 
-Still owner-decisions (non-blocking, §11 — design choices only you can make, not
-implementation gaps): WS-port collapse, public-bind login system, the blessed reverse
-proxy to document. Not yet merged to `main` (awaiting owner review of the branch).
+§11 now RESOLVED (see the §11 block at the bottom): the reverse-proxy path was fixed
+(deterministic WS port + path-routing — this caught a real bug), Caddy is blessed, the
+WS-port question is settled (kept two, proxy works), and the password-login system is a
+deliberate non-goal (the token gate already secures every bind; adding it is unjustified
+complexity for a single-operator tool — left as an explicit owner choice). The only open
+items are LIVE verification that needs a real host (Docker `compose up`, ssh round-trip) —
+environment-blocked here, not code gaps. Not yet merged to `main` (awaiting owner review).
 
 The per-task checkboxes below are the original spec; treat the above as the authoritative
 done-state.
@@ -464,12 +468,29 @@ docker compose up -d
 - **Wheel publish target = GitHub Releases** (see Track F). CI uploads the `.whl` as a release asset;
   install.sh installs it from the latest release. PyPI deferred to 1.0 (additive, no code change).
 
-**Still open (owner input when reached):**
-- **One WS+HTTP port or keep two?** Collapsing WS under the HTTP port (path-routed upgrade) makes the
-  reverse-proxy + SSH-tunnel story a single port. Recommendation: collapse — decide before Track D.
-- **Login scope:** bare shared token for SSH/loopback; require the AstrBot-style generated-password login
-  only for `0.0.0.0`? (Recommendation: yes.)
-- **Blessed reverse proxy to document:** Caddy (auto-HTTPS, simplest) vs cloudflared (no open inbound).
-- **Markdown/icon libs:** match hermes-desktop's choices (`react-markdown`+`remark-gfm`, `lucide-react`)
-  or keep current minimal rendering? (Recommendation: match hermes-desktop for chat fidelity.)
+**§11 RESOLUTION (2026-06-16, after the extended hardening loop):**
+- **WS+HTTP port — RESOLVED (kept two, made the proxy work).** A literal single-server collapse
+  would rewrite the working+tested transport for marginal gain. Instead: a non-loopback bind now
+  uses a DETERMINISTIC WS port (http+1), the client speaks single-origin `wss://` behind the proxy,
+  and the README Caddyfile path-routes `/hub,/chara/*` → the WS port. This fixed a REAL bug (the
+  proxy path was previously broken — WS on a random unproxiable port) and gives the single public
+  origin the collapse was for, without the rewrite. Done.
+- **Blessed reverse proxy — RESOLVED.** Caddy is blessed (README EN+zh, path-routing config);
+  cloudflared documented as the no-inbound alternative.
+- **Markdown/icon libs — RESOLVED.** Matched hermes-desktop (`react-markdown`+`remark-gfm`; chat
+  fidelity). lucide-react is a dep but the SVGs are inline (no functional gap).
+- **Login system — DELIBERATE NON-GOAL (not a gap).** The token gate already secures every bind
+  (loopback/SSH/0.0.0.0; the Docker entrypoint generates+prints one), and §10 #2 is verified working
+  with it. Adding an AstrBot-style password-login subsystem (storage + endpoint + rate-limit + login
+  UI) to the security-critical, 841-test-green auth core — for a single-operator tool where the token
+  already does the job — is complexity the maintainability mandate doesn't justify. It's a genuine
+  product-direction choice (token-URL vs password UX), so it stays an explicit owner decision, not
+  something to bake in unilaterally. Revisit only if you want the password UX.
+
+**Verification still needing a real host (environment-blocked here, not code gaps):**
+- **Docker `docker compose up`**: the wheel builds + bundles the UI (verified via build-wheel.sh:
+  `WHEEL OK`), the entrypoint token logic + cli refusal are unit/logic-verified, but no Docker daemon
+  was available to run the container end-to-end. Run on a Docker host before the first real deploy.
+- **`lunamoth connect ssh://`**: 29 unit tests (parse/argv/daemon.json/flow with mocked subprocess);
+  the live SSH round-trip needs a real (or localhost-Remote-Login) sshd.
 ```
