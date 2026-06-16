@@ -33,6 +33,7 @@
     "browser_dialog",
     "speak",
     "send_file",
+    "generate_image",
     "rest",
     "add_wish",
     "set_wish_status"

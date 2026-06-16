@@ -407,10 +407,6 @@ parity with `reference/hermes-agent` for commodity surfaces), confirms
 delete), then **removes the item from this list**. Anyone (incl. subagents) may
 add a diagnosed problem here with a priority. Independent items run in parallel.
 
-## R4 (P2) — Agent self-image-generation
-Add an IMAGE provider key (default Volcano Seedream 5) beside the text key; an
-image-gen tool the chara can call. Reference hermes' media handling. Design needed.
-
 ## R5 (P2) — Better card preview (multi-page, ideally editable)
 Game-style multi-page card view: 设定 / 视觉(立绘+主视觉) / 表情 / world. Editable.
 
@@ -431,4 +427,8 @@ sibling / workspace / works/ — full suite green, security-audited, live-Quinn 
 R8 new-user character-select carousel + R8b deck filter (未唤醒/已唤醒 toggle + colorful
 ✨默认 carousel entry; 8 built-ins, 2 swipeable pages, authored bilingual copy/tags in
 front/web/builtins.js; selecting routes to the existing wake flow; deck splits editable
-OCs from read-only living charas).
+OCs from read-only living charas),
+R4 agent self-image-generation (generate_image tool → Volcano Ark Seedream, gated on
+an image key via check_fn so no key = no tool = no spend; saves to workspace/works via
+the R7 write path; image-signature-validated, size-capped, no-fallback; security-audited;
+live-Quinn generated + sent one real 2048² image).
