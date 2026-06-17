@@ -10,12 +10,14 @@ This module is deliberately **stdlib-only** (``session/`` imports only
 config/stdlib) so the supervisor can build jails without touching ``core/``
 or ``tools/``.
 
-Three isolation mechanisms (chosen per session, see ``sessions.py``):
+Two isolation mechanisms (chosen per session, see ``sessions.py``):
 
-    dir      no jail — full user privileges, cwd in the workspace.
-    sandbox  OS jail: sandbox-exec (macOS) / bubblewrap (Linux). Writes
-             confined to the workspace (+ allow-listed paths); network gated.
-    docker   container: read-only rootfs, bind-mounted workspace, network gated.
+    admin    no jail — full-machine read/write with your user's privileges, cwd
+             in the workspace (for the trusted operator). The renamed legacy
+             ``dir``/``local`` mode.
+    sandbox  OS jail: sandbox-exec (macOS) / bubblewrap (Linux) / Landlock.
+             Writes confined to the workspace (+ allow-listed paths); network
+             gated.
 
 Permissions snapshot semantics differ by caller: ``run_terminal`` re-reads
 allow_network / writable paths on EVERY call, so a mid-session ``/net on``
@@ -50,9 +52,13 @@ class JailUnavailableError(RuntimeError):
 
 
 def backend() -> str:
-    """Isolation mechanism for this session (LUNAMOTH_PY_BACKEND: dir|sandbox|docker)."""
+    """Isolation mechanism for this session (LUNAMOTH_PY_BACKEND: sandbox|admin).
+
+    Legacy values (``dir``/``local``/``docker``) normalize to ``admin`` so old
+    session configs keep working without migration.
+    """
     raw = os.environ.get("LUNAMOTH_PY_BACKEND", os.environ.get("LUNAMOSS_PY_BACKEND", "sandbox")).strip().lower()
-    return "dir" if raw in {"dir", "local"} else raw
+    return "admin" if raw in {"admin", "dir", "local", "docker"} else raw
 
 
 def os_sandbox_available() -> bool:
@@ -186,34 +192,12 @@ def _linux_landlock_jail(command: str, workspace: Path, allow_network: bool, wri
     return _linux_landlock_argv(["/bin/bash", "-c", command], workspace, allow_network, writable)
 
 
-def _docker_argv(inner: list[str], workspace: Path, allow_network: bool, image: str,
-                 memory_mb: int, cpus: float, *, tty: bool = False) -> list[str]:
-    # NOTE: disk isn't hard-capped here — the container is read-only except the
-    # bind-mounted workspace (host disk). A hard quota needs --storage-opt, which
-    # only some drivers accept; we skip it rather than risk failing to launch.
-    return [
-        "docker", "run", "--rm", "-it" if tty else "-i",
-        "--network", "bridge" if allow_network else "none",
-        "--memory", f"{memory_mb}m", "--cpus", str(cpus), "--pids-limit", "256",
-        "--read-only", "--tmpfs", "/tmp:rw,nosuid,size=256m",
-        "-v", f"{workspace}:/workspace:rw", "-w", "/workspace",
-        image, *inner,
-    ]
-
-
-def _docker(command: str, workspace: Path, allow_network: bool, image: str, memory_mb: int, cpus: float) -> list[str]:
-    return _docker_argv(["sh", "-c", command], workspace, allow_network, image, memory_mb, cpus)
-
-
 def interactive_shell_argv(
     isolation: str,
     workspace: Path,
     *,
     allow_network: bool = False,
     writable_paths: Sequence[str] = (),
-    image: str = "python:3.11-slim",
-    memory_mb: int = 2048,
-    cpus: float = 2,
 ) -> tuple[list[str], str | None, dict[str, str]]:
     """argv/cwd/env for an INTERACTIVE shell under the session's jail.
 
@@ -228,19 +212,13 @@ def interactive_shell_argv(
     workspace = workspace.resolve()
     workspace.mkdir(parents=True, exist_ok=True)
     isolation = (isolation or backend()).lower()
-    if isolation == "local":
-        isolation = "dir"
+    if isolation in {"dir", "local", "docker"}:
+        isolation = "admin"
     writable = [Path(p).resolve() for p in writable_paths]
     env = _base_env(workspace)
 
-    if isolation == "dir":
+    if isolation == "admin":
         return ["/bin/bash", "-i"], str(workspace), env
-    if isolation == "docker":
-        if not shutil.which("docker"):
-            raise JailUnavailableError("docker isolation requested but the `docker` CLI is not available")
-        # The PTY wraps the docker CLIENT; -t gives the container its inner tty.
-        argv = _docker_argv(["sh"], workspace, allow_network, image, memory_mb, cpus, tty=True)
-        return argv, str(workspace), env
     if isolation == "sandbox":
         if sys.platform == "darwin":
             if not os_sandbox_available():

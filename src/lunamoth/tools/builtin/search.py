@@ -3,7 +3,7 @@
 tools/file_operations.py:1864-2292).
 
 Re-anchored to LunaMoth's runtime: paths confine under ``ctx.workspace``, shell
-commands run through ``ctx.run_terminal`` (dir/sandbox/docker isolation). The
+commands run through ``ctx.run_terminal`` (sandbox/admin isolation). The
 *behaviors* (rg flag-building per output_mode, context lines, file_glob filter,
 ``set -o pipefail``, exit==2-only error guard, mtime-desc file sort, 500-char
 content truncation, JSON ``line`` key, loop guard, truncation hint) are preserved
@@ -144,8 +144,8 @@ def _confine(ctx, path: str) -> tuple[str | None, str | None]:
 
     Search is read-only, so it may also scan the ``assets/`` reference shelf: a
     leading ``assets`` component maps to the sibling assets dir (the same virtual
-    prefix the file tools use). Returns (resolved_abs, error). NOTE: on Linux/
-    docker isolation the OS jail binds only the workspace, so a shelled rg/grep
+    prefix the file tools use). Returns (resolved_abs, error). NOTE: under Linux
+    sandbox isolation the OS jail binds only the workspace, so a shelled rg/grep
     won't see assets there — read_file/send_file (direct, unjailed I/O) remain
     the portable way to reach assets; assets scanning works under macOS sandbox
     (reads are unrestricted) and is bound read-only for bwrap (isolation.py)."""

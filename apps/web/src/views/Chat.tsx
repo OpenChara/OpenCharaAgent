@@ -8,11 +8,13 @@
  * only — this view never drives idle.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useT } from "../i18n";
 import { useNavigate, type ChatSub } from "../hooks/useHashRoute";
 import { useHubApi } from "../state/hub";
 import { glyphOf, paletteClass } from "../lib/format";
+import { assetUrl } from "../rpc";
+import { readVisualPrefs } from "../lib/visual";
 import { useCharaStream, type Snapshot } from "../hooks/useCharaStream";
 import { StreamItemView } from "../components/chat/StreamItems";
 import { Composer } from "../components/chat/Composer";
@@ -36,6 +38,7 @@ export function Chat({ name, sub }: { name: string; sub: ChatSub }) {
   const netOff = !!snap && snap.net_on === false;
   const sandboxRoot = snap ? String(snap.sandbox_root || snap.workspace_root || "") : undefined;
   const lifeAttr = stream.streaming ? "working" : stream.resting ? "resting" : "";
+  const avatarUri = snap?.avatar_uri ? String(snap.avatar_uri) : "";
 
   const togglePanel = () => {
     setPanelOpen((open) => {
@@ -57,8 +60,12 @@ export function Chat({ name, sub }: { name: string; sub: ChatSub }) {
             <button className="back" onClick={() => nav("#/")}>
               ‹
             </button>
-            <div className={`avatar-s avatar-btn ${paletteClass(stream.charName)}`} title="">
-              <span className="glyph-txt">{glyphOf(stream.charName)}</span>
+            <div className={`avatar-s avatar-btn ${avatarUri ? "" : paletteClass(stream.charName)}`} title="">
+              {avatarUri ? (
+                <img src={avatarUri} alt="" />
+              ) : (
+                <span className="glyph-txt">{glyphOf(stream.charName)}</span>
+              )}
               <span className={`mini-dot${stream.connected ? "" : " off"}`} />
             </div>
             <div className="who">
@@ -100,7 +107,7 @@ export function Chat({ name, sub }: { name: string; sub: ChatSub }) {
           </div>
 
           <div className="chat-pages">
-            {sub === "chat" && <ChatStreamPage stream={stream} />}
+            {sub === "chat" && <ChatStreamPage stream={stream} avatarUri={avatarUri} snap={snap} />}
             {sub === "works" && <ChatWorks name={name} sandboxRoot={sandboxRoot} />}
             {sub === "term" && <ChatTerminal name={name} sandboxRoot={sandboxRoot} />}
           </div>
@@ -119,12 +126,35 @@ export function Chat({ name, sub }: { name: string; sub: ChatSub }) {
 /* The chat stream page — the message list + work-status slot + composer. Auto-
    scrolls to the bottom on new items unless the operator scrolled up (chat.js
    scrollDown's near-bottom guard). */
-function ChatStreamPage({ stream }: { stream: ReturnType<typeof useCharaStream> }) {
+function ChatStreamPage({
+  stream,
+  avatarUri,
+  snap,
+}: {
+  stream: ReturnType<typeof useCharaStream>;
+  avatarUri: string;
+  snap: Snapshot | null;
+}) {
   const t = useT();
   const { hub } = useHubApi();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [superReadTs, setSuperReadTs] = useState(0);
   const technical = false; // the "technical" display mode toggle (default off)
+
+  // The chara's living backdrop: a low-opacity background image with a readability
+  // veil, plus the sprite (立绘). Operator presentation prefs (on/off, opacities,
+  // sprite position) are read per-chara from localStorage; the snapshot supplies
+  // the URLs (bg_url / sprite_url|keyvisual_url need the auth token via assetUrl).
+  const prefs = readVisualPrefs(stream.charName);
+  const bgUrl = prefs.bgOn && snap?.bg_url ? assetUrl(String(snap.bg_url)) : "";
+  const spriteUrl =
+    prefs.spritePos !== "off" ? assetUrl(String(snap?.sprite_url || snap?.keyvisual_url || "")) : "";
+  // veilOpacity drives the readability wash (higher = more legible text); the bg
+  // image stays at the CSS-default opacity and is dimmed by the veil on top of it.
+  const visualVars = {
+    "--chat-veil-opacity": String(prefs.veilOpacity / 100),
+    "--chat-sprite-opacity": String(prefs.spriteOpacity / 100),
+  } as CSSProperties;
 
   // Auto-scroll to bottom on new items when already near the bottom.
   useEffect(() => {
@@ -178,12 +208,31 @@ function ChatStreamPage({ stream }: { stream: ReturnType<typeof useCharaStream> 
   const workCls = work.active ? work.phase : "life";
 
   return (
-    <div className="chat-page on" id="page-chat">
+    <div className="chat-page on" id="page-chat" style={visualVars}>
+      {bgUrl && (
+        <>
+          <div
+            className="chat-bg"
+            style={{ backgroundImage: `url("${bgUrl.replace(/"/g, "%22")}")` }}
+            aria-hidden="true"
+          />
+          <div className="chat-veil" aria-hidden="true" />
+        </>
+      )}
+      {spriteUrl && (
+        <div className={`chat-sprite pos-${prefs.spritePos}`} aria-hidden="true">
+          <img src={spriteUrl} alt="" />
+        </div>
+      )}
       <div className="stream" id="stream" ref={scrollRef}>
         <div className="stream-inner" id="stream-inner">
           <div className="chat-empty">
-            <div className={`avatar-s ${paletteClass(stream.charName)}`}>
-              <span className="glyph-txt">{glyphOf(stream.charName)}</span>
+            <div className={`avatar-s ${avatarUri ? "" : paletteClass(stream.charName)}`}>
+              {avatarUri ? (
+                <img src={avatarUri} alt="" />
+              ) : (
+                <span className="glyph-txt">{glyphOf(stream.charName)}</span>
+              )}
             </div>
             <b>{stream.charName}</b>
             {/* The "it's alive" moment: after waking a chara with no opening +
@@ -199,6 +248,7 @@ function ChatStreamPage({ stream }: { stream: ReturnType<typeof useCharaStream> 
               charName={stream.charName}
               superReadTs={superReadTs}
               technical={technical}
+              avatarUri={avatarUri}
               onPermission={stream.permissionReply}
               onClarify={stream.clarifyReply}
             />

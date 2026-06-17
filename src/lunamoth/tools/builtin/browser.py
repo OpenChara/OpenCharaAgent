@@ -24,7 +24,7 @@ handlers auto-prefix ``@``. browser_navigate auto-returns a compact snapshot so
 the model can act immediately.
 
 OS-JAIL: a real Chromium will NOT launch under LunaMoth's default sandbox-exec /
-bwrap isolation — the browser toolpack needs ``dir``/``docker`` isolation +
+bwrap isolation — the browser toolpack needs ``admin`` isolation +
 ``--no-sandbox`` (the driver injects the latter when root/AppArmor). See
 ``_browser_driver`` for the full flag.
 

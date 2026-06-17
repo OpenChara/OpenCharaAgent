@@ -13,7 +13,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 class _FakeState:
-    def __init__(self, isolation="dir", network=False, writable=None):
+    def __init__(self, isolation="admin", network=False, writable=None):
         self._d = {
             "isolation": isolation,
             "network_access": network,
@@ -25,7 +25,7 @@ class _FakeState:
 
 
 class _FakeCtx:
-    def __init__(self, workspace: Path, isolation="dir"):
+    def __init__(self, workspace: Path, isolation="admin"):
         self._workspace = workspace
         self.state = _FakeState(isolation=isolation)
         self.processes = None
@@ -40,7 +40,7 @@ class _FakeCtx:
         return _run(
             command,
             workdir or self.workspace,
-            isolation="dir",
+            isolation="admin",
             allow_network=bool(status.get("network_access", False)),
             writable_paths=status.get("writable_paths", []),
             timeout=timeout,
@@ -51,7 +51,7 @@ class _FakeCtx:
 def ctx(tmp_path):
     ws = tmp_path / "workspace"
     ws.mkdir()
-    return _FakeCtx(ws, isolation="dir")
+    return _FakeCtx(ws, isolation="admin")
 
 
 # ---------------------------------------------------------------------------

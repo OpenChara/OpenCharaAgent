@@ -20,7 +20,7 @@ pipes. agent-browser spawns a background daemon that inherits fds; with pipes
 OS-JAIL WARNING (flagged loudly): a real Chromium will almost certainly NOT
 launch under LunaMoth's default ``sandbox`` isolation (macOS sandbox-exec /
 Linux bwrap) — namespace creation, /dev/shm, socket dirs, and process spawn are
-blocked. The browser toolpack realistically needs ``dir`` or ``docker``
+blocked. The browser toolpack realistically needs ``admin``
 isolation plus ``--no-sandbox`` (this module injects
 ``AGENT_BROWSER_ARGS=--no-sandbox,--disable-dev-shm-usage`` when running as root
 or under AppArmor userns restrictions). Treat "browser under sandbox-exec/bwrap"
@@ -31,7 +31,7 @@ LunaMoth is one-process-one-chara, so the *session manager* is an ephemeral
 store stashed on ``ctx.browser`` (created lazily). ``task_id`` is the internal
 session key — defaults to ``"default"`` — and is NOT part of any tool schema.
 Commands run through ``ctx.run_terminal`` so the chara's isolation
-(dir/sandbox/docker) and network/writable facts are honoured; agent-browser is
+(sandbox/admin) and network/writable facts are honoured; agent-browser is
 invoked by absolute path with its socket-dir / idle-timeout / no-sandbox env
 baked into the command line via env-prefix, because ``run_terminal`` takes a
 single shell string.

@@ -80,10 +80,10 @@ def test_bridge_close_twice_no_zombie():
 
 # ---- isolation: interactive_shell_argv ----------------------------------------
 
-def test_interactive_argv_dir(tmp_path, monkeypatch):
+def test_interactive_argv_admin(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
     monkeypatch.setenv("GITHUB_TOKEN", "ghp-secret")
-    argv, cwd, env = I.interactive_shell_argv("dir", tmp_path / "ws")
+    argv, cwd, env = I.interactive_shell_argv("admin", tmp_path / "ws")
     assert argv == ["/bin/bash", "-i"]
     assert cwd == str((tmp_path / "ws").resolve())
     # credential blocklist applies to interactive shells too
@@ -115,13 +115,11 @@ def test_interactive_argv_linux_sandbox_shape(tmp_path):
     assert argv[-2:] == ["/bin/bash", "-i"]
 
 
-def test_interactive_argv_docker_shape(tmp_path, monkeypatch):
-    monkeypatch.setattr(I.shutil, "which", lambda name: f"/usr/bin/{name}")
-    argv, cwd, env = I.interactive_shell_argv("docker", tmp_path / "ws", allow_network=False)
-    assert argv[:4] == ["docker", "run", "--rm", "-it"]  # -t: inner tty for the container
-    assert argv[-1] == "sh"
-    net = argv[argv.index("--network") + 1]
-    assert net == "none"
+def test_interactive_argv_legacy_docker_maps_to_admin(tmp_path):
+    # Old `docker`/`dir`/`local` values normalize to admin (no jail).
+    for legacy in ("docker", "dir", "local"):
+        argv, cwd, env = I.interactive_shell_argv(legacy, tmp_path / "ws")
+        assert argv == ["/bin/bash", "-i"]
 
 
 def test_jail_unavailable_raises_no_degrade(tmp_path, monkeypatch):
@@ -129,11 +127,9 @@ def test_jail_unavailable_raises_no_degrade(tmp_path, monkeypatch):
     with pytest.raises(I.JailUnavailableError):
         I.interactive_shell_argv("sandbox", tmp_path / "ws")
     with pytest.raises(I.JailUnavailableError):
-        I.interactive_shell_argv("docker", tmp_path / "ws")
-    with pytest.raises(I.JailUnavailableError):
         I.interactive_shell_argv("warden", tmp_path / "ws")  # unknown mechanism
-    # dir needs no jail and still works
-    argv, _, _ = I.interactive_shell_argv("dir", tmp_path / "ws")
+    # admin needs no jail and still works
+    argv, _, _ = I.interactive_shell_argv("admin", tmp_path / "ws")
     assert argv == ["/bin/bash", "-i"]
 
 
@@ -171,7 +167,7 @@ def pty_home(tmp_path, monkeypatch):
     monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
     from lunamoth.session import sessions as S
 
-    meta = S.create_session("shellpal", isolation="dir")
+    meta = S.create_session("shellpal", isolation="admin")
     return meta
 
 
@@ -242,7 +238,7 @@ def test_pty_ws_shell_roundtrip_resize_and_audit(pty_home):
     opens = [r for r in records if r["event"] == "pty_open"]
     closes = [r for r in records if r["event"] == "pty_close"]
     assert opens and closes
-    assert opens[0]["chara"] == "shellpal" and opens[0]["isolation"] == "dir" and opens[0]["pid"] > 0
+    assert opens[0]["chara"] == "shellpal" and opens[0]["isolation"] == "admin" and opens[0]["pid"] > 0
     assert closes[0]["chara"] == "shellpal"
 
 

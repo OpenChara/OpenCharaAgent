@@ -656,10 +656,14 @@ Owner blessed free refactoring; no back-compat with old cards/tavern/contexts.
   speech-driven quiet timer. (presence/, core/state, core/agent, core/rules, protocol/api,
   dispatch, supervisor, messaging)
 - **[DONE] StateSnapshot now carries the active chara's avatar/sprite/bg/keyvisual.**
-- **[TODO] #1b Frontend: render the active chara's avatar/visuals in the chat view**
-  (Chat.tsx header + empty-state + StreamItems Avatar were stubbed at glyphOf) and add
-  an in-session bg/sprite (立绘) control (a ChatPanel tab calling card.save_asset/
-  card.visual_generate against the chara's frozen session card).
+- **[DONE] #1a Frontend: render the active chara's avatar/visuals in the chat view.**
+  useCharaStream exposes the snapshot's avatar_uri/sprite_url/bg_url/keyvisual_url;
+  Chat header + empty-state + per-message Avatar render avatar_uri (glyph only as
+  fallback); the chara background uses the already-ported-but-unwired .chat-bg/
+  .chat-veil/.chat-sprite layers via assetUrl(); + a mobile right-panel drawer.
+- **[TODO] #1b in-session bg/sprite (立绘) EDIT control** (a ChatPanel tab calling
+  card.save_asset / card.asset_delete / card.visual_generate against the active
+  chara's frozen session card path) — RENDER done, EDIT control still to build.
 - **[TODO] #3 Image assets: compress quality + progressive load** (compressed first).
 - **[TODO] #4 Matte models: let the user install BiRefNet's two models from web/electron;
   delete the other two; shareable across instances; default to the stronger one.**
@@ -668,10 +672,16 @@ Owner blessed free refactoring; no back-compat with old cards/tavern/contexts.
   input control styles.
 - **[TODO] #6 The empty rightmost column on web looks abrupt — fill or remove it.**
 - **[TODO] Mobile: make the web app responsive (mobile-first for the new UI work above).**
-- **[TODO] Delete per-chara `docker` isolation entirely** (isolation.py `_docker`/argv,
-  runner.py docker tier + image/memory/cpus params, session `docker` option, CLI
-  `--isolation docker`). Keep `sandbox` + the full-access dir mode; rename `dir`→`admin`
-  (same dir, full-machine r/w). (owner 2026-06-18)
+- **[DONE] Deleted per-chara `docker` isolation; `dir`→`admin`.** Two modes now:
+  `sandbox` (bwrap→Landlock→refuse ladder, untouched) + `admin` (no jail, full-machine
+  r/w, same workspace). Legacy `dir`/`local`/`docker` normalize to `admin` at every read
+  site. (isolation.py, runner.py, _process_registry.py, sessions.py, cli.py, state.py,
+  hub.py, supervisor.py + tests)
+- **[TODO] background-process sandbox degrade (MEDIUM, pre-existing).** `_process_registry`
+  silently degrades `sandbox`→directory-trust on a no-bwrap host and never tries Landlock,
+  diverging from `runner.run_terminal`'s native→Landlock→refuse ladder. Align them (factor
+  the ladder into one helper both call). Latent on the bwrap-equipped server; bites a
+  no-userns deploy.
 - Review LOW/MEDIUM from the keystone review: `_card_visuals` re-reads the card from
   disk instead of reusing the in-memory `character` (cached, harmless); bundled cards
   still carry inert `on_attach`/`on_detach` keys (cleanup).

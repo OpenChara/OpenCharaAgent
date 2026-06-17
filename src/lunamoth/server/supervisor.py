@@ -56,7 +56,7 @@ _PREAUTH_PREFIXES = ("/assets/",)
 
 def _is_preauth_path(path: str) -> bool:
     return path in _PREAUTH_EXACT or any(path.startswith(p) for p in _PREAUTH_PREFIXES)
-ISOLATION_TO_BACKEND = {"dir": "local", "sandbox": "sandbox", "docker": "docker"}
+ISOLATION_TO_BACKEND = {"sandbox": "sandbox", "admin": "admin"}
 
 # Whole-frame resize escape consumed server-side by the PTY endpoint
 # (hermes shape): \x1b[RESIZE:<cols>;<rows>] — full-match only.

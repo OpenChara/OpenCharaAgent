@@ -8,7 +8,7 @@ module-level function ``def handler(args: dict, ctx: ToolContext) -> str``.
 
 Touchpoint map (hermes → LunaMoth), per .codex-fleet/seam-lunamoth.md:
   session cwd / TERMINAL_CWD      → ctx.workspace  (the chara's sandbox workspace)
-  VM / BaseEnvironment backend    → ctx.run_terminal(...) over dir/sandbox/docker
+  VM / BaseEnvironment backend    → ctx.run_terminal(...) over sandbox/admin
   lazy-imported provider llm      → ctx.llm  (core/llm.py LLMClient)
   ~/.hermes memories/skills home  → ctx.memory / ctx.skills (per-chara sandbox)
   session transcript              → ctx.transcript (SQLite, for session_search)
@@ -72,7 +72,7 @@ class ToolContext:
         return str(self.state.load().get("isolation", "sandbox"))
 
     def run_terminal(self, command: str, *, timeout: int, workdir: Path | None = None) -> str:
-        """Run a shell command under the chara's isolation (dir/sandbox/docker).
+        """Run a shell command under the chara's isolation (sandbox/admin).
         Thin pass-through to tools.runner.run_terminal with the live env facts."""
         from .runner import run_terminal as _run
         status = self.state.load()

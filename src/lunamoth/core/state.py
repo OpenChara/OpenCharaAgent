@@ -7,7 +7,7 @@ from typing import Any
 # Neutral runtime environment state — character-agnostic. Roleplay flavor
 # belongs in the character card and world book, never in the engine.
 DEFAULT_STATUS = {
-    "isolation": "sandbox",          # dir | sandbox | docker (informational)
+    "isolation": "sandbox",          # sandbox | admin (informational)
     "network_access": True,          # ON by default (owner 2026-06-15); operator can /net off
     "writable_paths": [],            # extra dirs the terminal tool may write to
     "rest_until": 0.0,               # epoch until which the chara chose to rest (rest tool)
@@ -53,6 +53,11 @@ class EnvState:
             data.pop("tool_access", None)
             changed = True
         data.setdefault("isolation", "sandbox")
+        # Map legacy isolation values (dir/local/docker) → admin so old
+        # env_status.json files don't surface a retired mode.
+        if data.get("isolation") in {"dir", "local", "docker"}:
+            data["isolation"] = "admin"
+            changed = True
         data.setdefault("rest_until", 0.0)
         # user_present was retired — the chara is independent of attach/detach.
         # Drop any leftover so an old state file can't mislead a reader.

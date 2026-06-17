@@ -4,15 +4,15 @@ The agent is given ONE language-agnostic capability: run a shell command in its
 session workspace. Isolation is provided by the OS, not by intercepting a
 specific interpreter, so there is no Python-only guard and no language lock-in.
 
-Three isolation mechanisms (chosen per session, see `sessions.py`):
+Two isolation mechanisms (chosen per session, see `sessions.py`):
 
-    dir      no jail — the command runs with your user's full privileges, cwd in
-             the workspace (Claude-Code-style "I trust this directory"). Network
-             always available.
-    sandbox  OS jail: sandbox-exec (macOS) / bubblewrap (Linux). Writes confined
-             to the workspace (+ any allow-listed paths); network gated by the
-             runtime `allow_network` permission. The default.
-    docker   container: read-only rootfs, bind-mounted workspace, network gated.
+    admin    no jail — the command runs with your user's full privileges,
+             full-machine read/write, cwd in the workspace (Claude-Code-style
+             "I trust this machine"; for the trusted operator). Network always
+             available.
+    sandbox  OS jail: sandbox-exec (macOS) / bubblewrap (Linux) / Landlock.
+             Writes confined to the workspace (+ any allow-listed paths);
+             network gated by the runtime `allow_network` permission. The default.
 
 Permissions (allow_network, writable_paths) are read fresh on every call, so the
 operator can flip them mid-session (TUI `/net on`, `/allow-dir`) without restart.
@@ -25,7 +25,6 @@ from __future__ import annotations
 import fcntl
 import os
 import re
-import shutil
 import signal
 import subprocess
 import sys
@@ -35,7 +34,6 @@ from pathlib import Path
 from ..obs import get_logger
 from ..session.isolation import (
     _base_env,
-    _docker,
     _linux_jail,
     _linux_landlock_jail,
     _macos_jail,
@@ -223,14 +221,13 @@ def run_terminal(
     writable_paths: "list[str] | tuple[str, ...]" = (),
     timeout: int = DEFAULT_TIMEOUT,
     workdir: str | None = None,
-    image: str = "python:3.11-slim",
-    memory_mb: int = 2048,
-    cpus: float = 2,
 ) -> str:
     """Execute *command* in a shell under the active isolation mechanism."""
     workspace = workspace.resolve()
     workspace.mkdir(parents=True, exist_ok=True)
     isolation = (isolation or backend()).lower()
+    if isolation in {"dir", "local", "docker"}:  # legacy values → admin (no jail)
+        isolation = "admin"
     # Clamp the (model-supplied) timeout, with a note when clamped — the model
     # must learn the real bound instead of silently getting a different wait.
     requested = int(timeout)
@@ -243,22 +240,17 @@ def run_terminal(
     cwd = workspace
     if workdir:
         cand = (workspace / workdir).resolve() if not os.path.isabs(workdir) else Path(workdir).resolve()
-        if isolation == "dir" or cand == workspace or workspace in cand.parents or cand in writable:
+        if isolation == "admin" or cand == workspace or workspace in cand.parents or cand in writable:
             cwd = cand
 
     note = clamp_note
     cmd: list[str]
     run_cwd: str | None
-    if isolation == "dir":
-        # Explicit opt-out of the jail (operator chose `dir`): directory trust.
+    if isolation == "admin":
+        # Explicit opt-out of the jail (operator chose `admin`): full-machine
+        # read/write, cwd in the workspace (trusted operator).
         cmd = ["/bin/bash", "-c", command]
         run_cwd = str(cwd)
-    elif isolation == "docker":
-        if not shutil.which("docker"):
-            return ("[lunamoth: refused — 'docker' isolation requested but the docker CLI is "
-                    "unavailable. Not running unconfined.]" + note).strip()
-        cmd = _docker(command, workspace, allow_network, image, memory_mb, cpus)
-        run_cwd = None
     elif isolation == "sandbox":
         # Isolation ladder: native OS jail (bwrap/seatbelt) → Landlock → refuse.
         # NEVER degrade to directory trust — under it the chara could read the
@@ -276,7 +268,7 @@ def run_terminal(
         else:
             return ("[lunamoth: refused — sandbox isolation requested but no jail is available "
                     "(no bwrap user namespaces, no Landlock ≥5.13). Not running unconfined. "
-                    "Install bubblewrap, run on a Landlock-capable kernel, or set isolation=dir "
+                    "Install bubblewrap, run on a Landlock-capable kernel, or set isolation=admin "
                     "to explicitly opt out of the jail.]" + note).strip()
     else:
         return (f"[lunamoth: refused — unknown isolation {isolation!r}]" + note).strip()

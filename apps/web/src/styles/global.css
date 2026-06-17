@@ -577,6 +577,26 @@ body.dark .drop-overlay{background:color-mix(in srgb, var(--accent) 22%, transpa
   .lm-thinking::before,.av-note.thinking::before,.transcribing i{animation:none !important}
 }
 
+/* ---------- 手机端：聊天视图自适应 ----------
+   窄屏时右侧面板从常驻列变为覆盖在对话之上的抽屉（占满宽度），拖拽分隔条隐藏；
+   立绘缩小、收紧，背景图与遮罩本就 cover/inset:0 会自适应。让任何内容都不溢出。 */
+@media (max-width:680px){
+  .chat-root{position:relative}
+  .chat-col{min-width:0}
+  /* 面板浮在对话之上，占满宽度，可滚动 */
+  .chat-root>.vsplit{display:none}
+  .chat-root>.panel{
+    position:absolute; inset:0; left:auto; width:min(380px,100%);
+    z-index:20; box-shadow:0 0 0 1px var(--hairline-2),-12px 0 40px rgba(10,30,50,.18);
+  }
+  .stream-inner{padding:0 16px}
+  /* 立绘在窄屏上收小，避免压住对话 */
+  .chat-sprite img{height:54%; max-width:48%}
+  /* 聊天头部在窄屏上收紧间距，标签可横向滚动而非溢出换行 */
+  .chat-head{padding:0 10px; gap:7px}
+  .chat-tabs{overflow-x:auto; -webkit-overflow-scrolling:touch; flex:none}
+}
+
 /* 看板 ⋯ 菜单（浮动小面板） */
 .palette{
   position:absolute; bottom:64px; left:50%; transform:translateX(-50%); width:430px; max-width:92%;

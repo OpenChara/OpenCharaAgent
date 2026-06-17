@@ -103,7 +103,7 @@ class Settings:
     # NOTE: there is deliberately no `lang` setting. Language is not a user choice —
     # it is a property of the active character card (a .zh card speaks zh, a .en card
     # speaks en). The engine and tools are language-agnostic.
-    py_backend: str = "sandbox"  # local (dir-level) | sandbox (OS jail, default) | docker
+    py_backend: str = "sandbox"  # sandbox (OS jail, default) | admin (no jail, trusted operator)
     # SillyTavern-compatible persona. Empty character_path => built-in default persona.
     # The card is the ONE external file: its embedded character_book is the world.
     character_path: str = ""

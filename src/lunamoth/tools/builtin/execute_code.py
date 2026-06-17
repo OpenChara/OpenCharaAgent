@@ -3,15 +3,14 @@
 onto LunaMoth's one-process-one-chara runtime.
 
 The model writes a Python script that runs in a *child process inside the chara
-isolation* (``ctx.run_terminal`` → dir/sandbox/docker) and calls a whitelisted
+isolation* (``ctx.run_terminal`` → sandbox/admin) and calls a whitelisted
 subset of the chara's real tools over a local RPC channel. Only the script's
 STDOUT returns to the model — intermediate tool results never enter the context
 window. This collapses multi-step tool chains into one inference turn.
 
 Divergences from hermes (documented honestly, never a fake success):
   * Transport: hermes' default is a Unix-domain socket; under macOS
-    ``sandbox-exec`` with ``(deny network*)`` a UDS connect can be refused, and
-    docker isolation puts the child in another namespace. So we use hermes'
+    ``sandbox-exec`` with ``(deny network*)`` a UDS connect can be refused. So we use hermes'
     *file-based RPC* transport (its own remote-backend path): request/response
     files under the chara workspace, which every isolation can always read/write
     and which needs no network permission. The RPC server polls in a parent
@@ -392,9 +391,9 @@ def execute_code(args: dict, ctx) -> str:
     rpc_thread = None
 
     try:
-        # The child references the rpc dir by an in-isolation path. Under dir/
-        # sandbox isolation the workspace path is shared verbatim; the stub bakes
-        # in the absolute path of rpc_dir.
+        # The child references the rpc dir by an in-isolation path. Under
+        # admin/sandbox isolation the workspace path is shared verbatim; the stub
+        # bakes in the absolute path of rpc_dir.
         tools_src = generate_tools_module(list(sandbox_tools), str(rpc_dir))
         (stage_dir / "hermes_tools.py").write_text(tools_src, encoding="utf-8")
         (stage_dir / "lunamoth_tools.py").write_text(tools_src, encoding="utf-8")
@@ -414,11 +413,11 @@ def execute_code(args: dict, ctx) -> str:
         # resolve. We force UTF-8 + no bytecode, exactly like hermes (:1225-1244).
         # Run from the workspace (the default cwd) and `cd` into the stage dir by
         # its workspace-relative name. Do NOT pass workdir=stage_dir: that makes
-        # run_terminal set the real cwd to stage_dir under sandbox-darwin/dir
+        # run_terminal set the real cwd to stage_dir under sandbox-darwin/admin
         # isolation, so this `cd {rel}` would double-apply (stage_dir/.execute_code_*
         # → "No such file or directory", script never runs, yet status=success).
-        # With cwd=workspace for every isolation (docker/bwrap chdir to workspace
-        # themselves), `cd {rel}` resolves to the stage dir uniformly.
+        # With cwd=workspace for every isolation (bwrap chdir to workspace
+        # itself), `cd {rel}` resolves to the stage dir uniformly.
         rel = stage_dir.name
         command = (
             f"cd {_q(rel)} && "

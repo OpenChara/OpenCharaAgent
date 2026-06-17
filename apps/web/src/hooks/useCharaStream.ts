@@ -41,6 +41,12 @@ export interface Snapshot {
   rest_until?: number;
   sandbox_root?: string;
   workspace_root?: string;
+  /** Inline avatar data-URI (no fetch needed) — render directly as <img src>. */
+  avatar_uri?: string;
+  /** `/asset?p=…` URLs — wrap with assetUrl() to append the auth token. */
+  sprite_url?: string;
+  bg_url?: string;
+  keyvisual_url?: string;
   [k: string]: unknown;
 }
 

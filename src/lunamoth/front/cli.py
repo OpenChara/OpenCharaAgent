@@ -1,7 +1,7 @@
 """The `lunamoth` command — a roster of persistent agents, not throwaway sessions.
 
     lunamoth                 open the roster (resume-first launcher)
-    lunamoth new NAME        create an agent (--isolation dir|sandbox|docker)
+    lunamoth new NAME        create an agent (--isolation sandbox|admin)
     lunamoth ls              list agents and their status
     lunamoth attach NAME     open an agent in the TUI (adopts its background loop)
     lunamoth start [NAME]    run an agent in the background; --all / `start-all`
@@ -85,12 +85,12 @@ def _live_daemon_rpc(method: str, params: dict | None = None, timeout: float = 1
     return None
 
 # session isolation level -> python tool execution backend
-_ISOLATION_TO_BACKEND = {"dir": "local", "sandbox": "sandbox", "docker": "docker"}
+_ISOLATION_TO_BACKEND = {"sandbox": "sandbox", "admin": "admin"}
 
 
 def _activate(meta: S.SessionMeta) -> None:
     os.environ.update(meta.env())
-    os.environ.setdefault("LUNAMOTH_PY_BACKEND", _ISOLATION_TO_BACKEND[meta.isolation])
+    os.environ.setdefault("LUNAMOTH_PY_BACKEND", _ISOLATION_TO_BACKEND.get(meta.isolation, "sandbox"))
 
 
 def _needs_setup(meta: S.SessionMeta) -> bool:
@@ -109,7 +109,7 @@ def _start_daemon(meta: S.SessionMeta, patience: float | None = None) -> bool:
     if not meta.is_configured():
         return False
     env = {**os.environ, **meta.env()}
-    env.setdefault("LUNAMOTH_PY_BACKEND", _ISOLATION_TO_BACKEND[meta.isolation])
+    env.setdefault("LUNAMOTH_PY_BACKEND", _ISOLATION_TO_BACKEND.get(meta.isolation, "sandbox"))
     log = meta.daemon_log.open("ab")
     argv = [sys.executable, "-m", "lunamoth.front.terminal"]
     if patience is not None:
@@ -655,7 +655,7 @@ def cmd_setup_browser(args: argparse.Namespace) -> int:
     The 12 browser tools stay hidden (check_fn-gated) until BOTH the CLI and a
     Chromium build are present. A real Chromium will NOT launch under the default
     `sandbox` isolation (sandbox-exec/bwrap block namespaces, /dev/shm, sockets)
-    — the browser toolpack needs `dir` or `docker` isolation, plus --no-sandbox
+    — the browser toolpack needs `admin` isolation, plus --no-sandbox
     (the driver injects that automatically as root / under AppArmor userns)."""
     from ..protocol.api import browser_driver_status
 
@@ -668,7 +668,7 @@ def cmd_setup_browser(args: argparse.Namespace) -> int:
 
     if cli and chromium:
         print("\nBrowser driver is ready. Enable the browser toolpack on a chara")
-        print("running under `dir` or `docker` isolation (a real Chromium will not")
+        print("running under `admin` isolation (a real Chromium will not")
         print("launch under the default `sandbox` isolation).")
         return 0
 
@@ -686,7 +686,7 @@ def cmd_setup_browser(args: argparse.Namespace) -> int:
     print("  1. npm install -g agent-browser     # the automation CLI")
     print("  2. agent-browser install            # downloads its Chromium")
     print("\nIsolation caveat: enable the browser toolpack only on a chara running")
-    print("under `dir` or `docker` isolation, with --no-sandbox (Chromium will not")
+    print("under `admin` isolation, with --no-sandbox (Chromium will not")
     print("start under the default sandbox-exec/bwrap jail).")
 
     if check:
@@ -776,7 +776,6 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
         line("sandbox-exec (simple sandbox)", bool(shutil.which("sandbox-exec")))
     else:
         line("bubblewrap (simple sandbox)", bool(shutil.which("bwrap")), "install: apt/dnf install bubblewrap")
-    line("docker (optional)", bool(shutil.which("docker")))
     # Optional browser_* tool driver (hidden until installed; `lunamoth setup browser`).
     try:
         from ..protocol.api import browser_driver_status

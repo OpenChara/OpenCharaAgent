@@ -1034,7 +1034,7 @@ def test_gateway_config_error_exits_fatal_not_retried(tmp_path, monkeypatch):
     from lunamoth.server.supervisor import GATEWAY_FATAL_EXIT
     from lunamoth.session import sessions as S
 
-    meta = S.create_session("gw", isolation="dir")
+    meta = S.create_session("gw", isolation="admin")
     (meta.root / "config.json").write_text(
         _json.dumps({"provider": "mock", "model": "m", "character_path": ""}), encoding="utf-8")
     ns = argparse.Namespace(name="gw", patience=600, debug=False)

@@ -28,7 +28,15 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-ISOLATION_LEVELS = ("dir", "sandbox", "docker")  # dir < sandbox (OS-level) < docker
+ISOLATION_LEVELS = ("sandbox", "admin")  # sandbox (OS jail) | admin (no jail, trusted operator)
+
+# Legacy isolation values mapped on read so old session configs keep working.
+_LEGACY_ISOLATION = {"dir": "admin", "local": "admin", "docker": "admin"}
+
+
+def normalize_isolation(value: str) -> str:
+    """Map legacy isolation values to the current two-mode set (sandbox|admin)."""
+    return _LEGACY_ISOLATION.get((value or "").strip().lower(), value)
 
 
 def lunamoth_home() -> Path:
@@ -49,7 +57,7 @@ def valid_name(name: str) -> bool:
 @dataclass
 class SessionMeta:
     name: str
-    isolation: str = "sandbox"  # dir | sandbox | docker
+    isolation: str = "sandbox"  # sandbox | admin
     created_at: float = field(default_factory=time.time)
     last_active: float = 0.0
     note: str = ""
@@ -163,12 +171,15 @@ def load_session(name: str) -> SessionMeta | None:
     except (json.JSONDecodeError, OSError):
         return None
     known = {f for f in SessionMeta.__dataclass_fields__}
-    return SessionMeta(**{k: v for k, v in data.items() if k in known})
+    meta = SessionMeta(**{k: v for k, v in data.items() if k in known})
+    meta.isolation = normalize_isolation(meta.isolation)  # legacy dir/local/docker → admin
+    return meta
 
 
 def create_session(name: str, isolation: str = "sandbox", note: str = "") -> SessionMeta:
     if not valid_name(name):
         raise ValueError(f"invalid session name: {name!r} (use letters/digits/._-)")
+    isolation = normalize_isolation(isolation)  # accept legacy dir/local/docker → admin
     if isolation not in ISOLATION_LEVELS:
         raise ValueError(f"isolation must be one of {ISOLATION_LEVELS}")
     if load_session(name) is not None:

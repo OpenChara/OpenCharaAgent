@@ -29,7 +29,7 @@ FOREGROUND_MAX_TIMEOUT = 600
 DEFAULT_TIMEOUT = 180
 
 # workdir injection allowlist (hermes terminal_tool.py:270 _WORKDIR_SAFE_RE).
-# LunaMoth's `dir` isolation runs with full user privileges, so guard the
+# LunaMoth's `admin` isolation runs with full user privileges, so guard the
 # model-supplied workdir before it reaches the shell.
 _WORKDIR_SAFE_RE = re.compile(r"^[A-Za-z0-9/\\:_\-.~ +@=,]+$")
 

@@ -52,7 +52,7 @@ def test_setup_browser_guides_when_node_present_driver_absent(monkeypatch, capsy
     assert "npm install -g agent-browser" in out
     assert "agent-browser install" in out
     # Honest about the isolation caveat.
-    assert "dir" in out and "docker" in out
+    assert "admin" in out
 
 
 def test_setup_browser_honest_when_node_missing(monkeypatch, capsys):

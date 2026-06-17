@@ -6,19 +6,19 @@ from lunamoth.tools.runner import os_sandbox_available, run_terminal, strip_ansi
 
 def test_dir_runs_any_command(tmp_path):
     ws = tmp_path / "workspace"
-    out = run_terminal("echo hello && echo world", ws, isolation="dir", timeout=10)
+    out = run_terminal("echo hello && echo world", ws, isolation="admin", timeout=10)
     assert "hello" in out and "world" in out and "exit=0" in out
 
 
 def test_dir_writes_into_workspace(tmp_path):
     ws = tmp_path / "workspace"
-    run_terminal("printf moth > art.txt", ws, isolation="dir", timeout=10)
+    run_terminal("printf moth > art.txt", ws, isolation="admin", timeout=10)
     assert (ws / "art.txt").read_text() == "moth"
 
 
 def test_timeout(tmp_path):
     ws = tmp_path / "workspace"
-    out = run_terminal("sleep 5", ws, isolation="dir", timeout=1)
+    out = run_terminal("sleep 5", ws, isolation="admin", timeout=1)
     assert "timed out" in out
 
 
@@ -33,7 +33,7 @@ def test_timeout_with_pipe_holding_grandchild_returns_and_kills_group(tmp_path):
     ws = tmp_path / "workspace"
     marker = "47.1359"  # an unusual sleep duration we can pgrep for
     t0 = time.monotonic()
-    out = run_terminal(f"sleep {marker} & sleep 60", ws, isolation="dir", timeout=1)
+    out = run_terminal(f"sleep {marker} & sleep 60", ws, isolation="admin", timeout=1)
     assert time.monotonic() - t0 < 6  # bounded — not wedged on the held pipe
     assert "timed out after 1s" in out
     # The whole GROUP died, not just the leader: the background sleep is gone.
@@ -50,27 +50,27 @@ def test_timeout_with_pipe_holding_grandchild_returns_and_kills_group(tmp_path):
 def test_huge_timeout_is_clamped_with_a_note(tmp_path):
     # Audit #17: timeout=999999 must not be able to wedge an unattended cycle.
     ws = tmp_path / "workspace"
-    out = run_terminal("echo ok", ws, isolation="dir", timeout=999999)
+    out = run_terminal("echo ok", ws, isolation="admin", timeout=999999)
     assert "ok" in out and "exit=0" in out
     assert "timeout clamped to 600s (requested 999999s" in out
 
 
 def test_tiny_timeout_is_clamped_up_with_a_note(tmp_path):
     ws = tmp_path / "workspace"
-    out = run_terminal("sleep 30", ws, isolation="dir", timeout=-5)
+    out = run_terminal("sleep 30", ws, isolation="admin", timeout=-5)
     assert "timed out after 1s" in out                    # clamped to the 1 s floor
     assert "timeout clamped to 1s (requested -5s" in out  # and the model is told
 
 
 def test_in_range_timeout_gets_no_note(tmp_path):
     ws = tmp_path / "workspace"
-    out = run_terminal("echo ok", ws, isolation="dir", timeout=30)
+    out = run_terminal("echo ok", ws, isolation="admin", timeout=30)
     assert "clamped" not in out
 
 
 def test_timeout_keeps_partial_output(tmp_path):
     ws = tmp_path / "workspace"
-    out = run_terminal("echo 早期输出; echo oops >&2; sleep 60", ws, isolation="dir", timeout=1)
+    out = run_terminal("echo 早期输出; echo oops >&2; sleep 60", ws, isolation="admin", timeout=1)
     assert "timed out after 1s" in out
     assert "早期输出" in out  # what the command printed before the cut survives
     assert "oops" in out
@@ -97,7 +97,7 @@ def test_long_output_truncated_head_and_tail(tmp_path):
     ws = tmp_path / "workspace"
     out = run_terminal(
         "python3 -c \"print('HEADMARK' + 'x'*30000 + 'TAILMARK')\"",
-        ws, isolation="dir", timeout=15,
+        ws, isolation="admin", timeout=15,
     )
     assert "HEADMARK" in out                  # the head is no longer thrown away
     assert "TAILMARK" in out
@@ -127,7 +127,7 @@ def test_strip_ansi_fast_path_returns_same_object():
 
 def test_terminal_output_reaches_model_ansi_free(tmp_path):
     ws = tmp_path / "workspace"
-    out = run_terminal("printf '\\033[1;32mGREEN\\033[0m\\n\\033]0;title\\007BODY\\n'", ws, isolation="dir", timeout=10)
+    out = run_terminal("printf '\\033[1;32mGREEN\\033[0m\\n\\033]0;title\\007BODY\\n'", ws, isolation="admin", timeout=10)
     assert "GREEN" in out and "BODY" in out
     assert "\x1b" not in out and "title" not in out
 
@@ -137,7 +137,7 @@ def test_grep_no_match_exit1_is_annotated(tmp_path):
     ws = tmp_path / "workspace"
     ws.mkdir(parents=True, exist_ok=True)
     (ws / "hay.txt").write_text("haystack\n")
-    out = run_terminal("grep needle hay.txt", ws, isolation="dir", timeout=10)
+    out = run_terminal("grep needle hay.txt", ws, isolation="admin", timeout=10)
     assert "exit=1" in out
     assert "no match found — not a failure" in out
 
@@ -147,7 +147,7 @@ def test_diff_differs_exit1_is_annotated(tmp_path):
     ws.mkdir(parents=True, exist_ok=True)
     (ws / "a.txt").write_text("a\n")
     (ws / "b.txt").write_text("b\n")
-    out = run_terminal("diff a.txt b.txt", ws, isolation="dir", timeout=10)
+    out = run_terminal("diff a.txt b.txt", ws, isolation="admin", timeout=10)
     assert "exit=1" in out
     assert "the inputs differ — not a failure" in out
 
@@ -155,20 +155,20 @@ def test_diff_differs_exit1_is_annotated(tmp_path):
 def test_grep_real_error_is_not_annotated(tmp_path):
     # exit 2 + stderr (missing file) is a REAL failure: no soothing note.
     ws = tmp_path / "workspace"
-    out = run_terminal("grep needle /nonexistent-file-xyz", ws, isolation="dir", timeout=10)
+    out = run_terminal("grep needle /nonexistent-file-xyz", ws, isolation="admin", timeout=10)
     assert "not a failure" not in out
 
 
 def test_other_commands_exit1_is_not_annotated(tmp_path):
     ws = tmp_path / "workspace"
-    out = run_terminal("false", ws, isolation="dir", timeout=10)
+    out = run_terminal("false", ws, isolation="admin", timeout=10)
     assert "exit=1" in out and "not a failure" not in out
 
 
 def test_credentials_are_stripped(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
     ws = tmp_path / "workspace"
-    out = run_terminal('echo "key=$OPENAI_API_KEY"', ws, isolation="dir", timeout=10)
+    out = run_terminal('echo "key=$OPENAI_API_KEY"', ws, isolation="admin", timeout=10)
     assert "sk-secret" not in out
 
 

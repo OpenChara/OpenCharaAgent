@@ -28,7 +28,7 @@ class _FakeState:
             "tool_access": list(self._access),
             "network_access": False,
             "writable_paths": [],
-            "isolation": "dir",
+            "isolation": "admin",
         }
 
 
@@ -382,7 +382,7 @@ def test_subagent_toolsets_excludes_delegation_and_code():
 
 def test_execute_code_runs_from_workspace_not_double_cd(tmp_path):
     """Regression: execute_code must NOT pass workdir=stage_dir. Doing so made the
-    real cwd the stage dir under sandbox-darwin/dir isolation, so the command's own
+    real cwd the stage dir under sandbox-darwin/admin isolation, so the command's own
     `cd {rel}` double-applied (stage_dir/.execute_code_* → not found): the script
     never ran yet status=success. cwd must default to the workspace, with a single
     relative cd into the stage dir."""

@@ -16,10 +16,8 @@ collapses. What stays is the self-contained, stdlib-only core:
     the whole process group) — the group-kill hermes reaches for psutil to fake.
   * LRU prune (MAX_PROCESSES=64) + 30-min finished TTL.
 
-Spawn reuses the same isolation builders as ``runner.run_terminal`` (dir /
-sandbox / docker), so a background command is jailed identically to a foreground
-one. Background docker tracks the ``docker run`` host Popen directly (it blocks
-in the foreground process), so no persistent-container / log-poll path is needed.
+Spawn reuses the same isolation builders as ``runner.run_terminal`` (sandbox /
+admin), so a background command is jailed identically to a foreground one.
 
 Watch-pattern + completion events are placed on ``completion_queue`` as plain
 dicts and exposed via ``drain_notifications()`` — NO protocol coupling here; the
@@ -30,7 +28,6 @@ notes" requirement).
 from __future__ import annotations
 
 import queue as _queue_mod
-import shutil
 import subprocess
 import sys
 import threading
@@ -42,7 +39,6 @@ from typing import List, Optional
 
 from ...session.isolation import (
     _base_env,
-    _docker,
     _linux_jail,
     _macos_jail,
     backend,
@@ -107,10 +103,6 @@ def _build_isolation_cmd(
     isolation: str,
     allow_network: bool,
     writable: list[Path],
-    *,
-    image: str = "python:3.11-slim",
-    memory_mb: int = 2048,
-    cpus: float = 2,
 ) -> tuple[list[str], Optional[str], str]:
     """argv / run_cwd / note for a background command under the session jail.
 
@@ -120,19 +112,16 @@ def _build_isolation_cmd(
     escape — same contract as the foreground runner).
     """
     isolation = (isolation or backend()).lower()
+    if isolation in {"dir", "local", "docker"}:  # legacy values → admin (no jail)
+        isolation = "admin"
     note = ""
-    if isolation == "docker" and shutil.which("docker"):
-        # docker run blocks in the foreground host process, so the host Popen IS
-        # the tracked handle — no persistent-container / log-poll path needed.
-        cmd = _docker(command, workspace, allow_network, image, memory_mb, cpus)
-        run_cwd = None
-    elif isolation == "sandbox" and os_sandbox_available():
+    if isolation == "sandbox" and os_sandbox_available():
         cmd = (_macos_jail if sys.platform == "darwin" else _linux_jail)(
             command, workspace, allow_network, writable
         )
         run_cwd = str(workspace) if sys.platform == "darwin" else None
     else:
-        if isolation != "dir":
+        if isolation != "admin":
             note = f"\n[lunamoth: '{isolation}' jail unavailable, ran with directory trust]"
         cmd = ["/bin/bash", "-c", command]
         run_cwd = str(workspace)
@@ -185,8 +174,8 @@ class ProcessRegistry:
         cmd, run_cwd, _note = _build_isolation_cmd(
             command, workspace, isolation, allow_network, writable
         )
-        # For the dir / fallback path, honor an explicit cwd; jailed paths chdir
-        # themselves (bwrap --chdir, docker -w, macOS sandbox via run_cwd).
+        # For the admin / fallback path, honor an explicit cwd; jailed paths
+        # chdir themselves (bwrap --chdir, macOS sandbox via run_cwd).
         if run_cwd is not None and cwd is not None:
             run_cwd = run_cwd_default
 

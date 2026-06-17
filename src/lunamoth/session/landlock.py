@@ -1,6 +1,7 @@
 """Landlock LSM filesystem confinement (Linux ≥ 5.13), stdlib-only via ctypes.
 
-The Docker / no-userns tier of the isolation ladder (see ``session/isolation.py``).
+The no-userns fallback tier of the ``sandbox`` isolation ladder (see
+``session/isolation.py``) — e.g. inside a hardened deploy container.
 ``bwrap`` needs a user namespace, which a hardened container forbids
 (Docker seccomp + no-new-privileges → ``unshare(CLONE_NEWUSER)`` = EPERM, even
 when the *host* allows it). Landlock instead lets an **unprivileged** process

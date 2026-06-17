@@ -44,7 +44,7 @@ from .dispatch import RpcError, error_response, ok_response, _normalize_request
 _log = logging.getLogger("lunamoth.server.hub")
 
 # session isolation level -> python tool execution backend (mirror of front/cli.py)
-_ISOLATION_TO_BACKEND = {"dir": "local", "sandbox": "sandbox", "docker": "docker"}
+_ISOLATION_TO_BACKEND = {"sandbox": "sandbox", "admin": "admin"}
 
 # Models with a reputation for prose ("书写 ★"); heuristic, substring match.
 _WRITING_STAR = ("claude", "deepseek-v4", "gpt-5", "gemini-2", "kimi", "grok-4", "qwen3-max")
@@ -1810,7 +1810,8 @@ def wake(card_path: str, name: str = "", isolation: str = "sandbox",
     while S.load_session(session_name) is not None:
         session_name = f"{base}-{n}"
         n += 1
-    meta = S.create_session(session_name, isolation=isolation if isolation in S.ISOLATION_LEVELS else "sandbox")
+    iso = S.normalize_isolation(isolation)  # legacy dir/local/docker → admin
+    meta = S.create_session(session_name, isolation=iso if iso in S.ISOLATION_LEVELS else "sandbox")
 
     frozen = meta.root / "card.json"
     src = Path(card_path)
@@ -1879,7 +1880,7 @@ def start_daemon(meta: S.SessionMeta, patience: float | None = None) -> bool:
     if not meta.is_configured():
         return False
     env = {**os.environ, **meta.env()}
-    env.setdefault("LUNAMOTH_PY_BACKEND", _ISOLATION_TO_BACKEND[meta.isolation])
+    env.setdefault("LUNAMOTH_PY_BACKEND", _ISOLATION_TO_BACKEND.get(meta.isolation, "sandbox"))
     log = meta.daemon_log.open("ab")
     argv = [sys.executable, "-m", "lunamoth.front.terminal"]
     if patience is not None:

@@ -16,7 +16,7 @@ HAS_RG = shutil.which("rg") is not None
 
 
 class FakeCtx:
-    """Minimal ToolContext stub: real shell via runner in 'dir' isolation."""
+    """Minimal ToolContext stub: real shell via runner in 'admin' isolation."""
 
     def __init__(self, workspace: Path):
         self._workspace = workspace.resolve()
@@ -31,7 +31,7 @@ class FakeCtx:
 
     def run_terminal(self, command: str, *, timeout: int = 60, workdir=None) -> str:
         from lunamoth.tools.runner import run_terminal as _run
-        return _run(command, self._workspace, isolation="dir",
+        return _run(command, self._workspace, isolation="admin",
                     allow_network=False, writable_paths=self._writable,
                     timeout=timeout)
 

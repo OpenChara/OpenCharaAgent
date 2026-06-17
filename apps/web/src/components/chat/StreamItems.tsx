@@ -25,8 +25,16 @@ import {
   type ClarifyItem,
 } from "./streamModel";
 
-/** A small avatar glyph for the chara's messages (no deck card in this MVP). */
-function Avatar({ name }: { name: string }) {
+/** A small avatar for the chara's messages: the snapshot's inline avatar data-URI
+ *  when present, falling back to the palette+letter glyph when absent. */
+function Avatar({ name, avatarUri }: { name: string; avatarUri?: string }) {
+  if (avatarUri) {
+    return (
+      <div className="avatar-s">
+        <img src={avatarUri} alt="" />
+      </div>
+    );
+  }
   return (
     <div className={`avatar-s ${paletteClass(name)}`}>
       <span className="glyph-txt">{glyphOf(name)}</span>
@@ -39,13 +47,23 @@ function Markdown({ text }: { text: string }) {
   return <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>;
 }
 
-function SayMessage({ item, charName, superReadTs }: { item: TextItem; charName: string; superReadTs: number }) {
+function SayMessage({
+  item,
+  charName,
+  superReadTs,
+  avatarUri,
+}: {
+  item: TextItem;
+  charName: string;
+  superReadTs: number;
+  avatarUri?: string;
+}) {
   const t = useT();
   const isSuper = item.kind === "super";
   const read = isSuper && item.ts !== undefined && item.ts <= superReadTs;
   return (
     <div className={`char-msg${isSuper ? " super-chat" : ""}${read ? " read" : ""}`}>
-      <Avatar name={charName} />
+      <Avatar name={charName} avatarUri={avatarUri} />
       <div className="body">
         <div className="name">
           {charName}
@@ -143,7 +161,7 @@ function ToolChipRow({ chip, technical }: { chip: ToolGroupItem["chips"][number]
   );
 }
 
-function AttachmentCard({ item, charName }: { item: AttachmentItem; charName: string }) {
+function AttachmentCard({ item, charName, avatarUri }: { item: AttachmentItem; charName: string; avatarUri?: string }) {
   const t = useT();
   const [broken, setBroken] = useState(false);
   const isImage = (item.mime || "").startsWith("image/");
@@ -184,7 +202,7 @@ function AttachmentCard({ item, charName }: { item: AttachmentItem; charName: st
   }
   return (
     <div className="char-msg">
-      <Avatar name={charName} />
+      <Avatar name={charName} avatarUri={avatarUri} />
       <div className="body">
         <div className="name">{charName}</div>
         {media}
@@ -293,6 +311,7 @@ export function StreamItemView({
   charName,
   superReadTs,
   technical,
+  avatarUri,
   onPermission,
   onClarify,
 }: {
@@ -300,6 +319,8 @@ export function StreamItemView({
   charName: string;
   superReadTs: number;
   technical: boolean;
+  /** the chara's inline avatar data-URI (snapshot.avatar_uri); glyph fallback when absent. */
+  avatarUri?: string;
   onPermission: (id: string, granted: boolean) => void;
   onClarify: (id: string, answer: string) => void;
 }) {
@@ -309,7 +330,7 @@ export function StreamItemView({
       return <UserMessage item={item} t={t} />;
     case "say":
     case "super":
-      return <SayMessage item={item} charName={charName} superReadTs={superReadTs} />;
+      return <SayMessage item={item} charName={charName} superReadTs={superReadTs} avatarUri={avatarUri} />;
     case "muse":
       return <MuseMessage item={item} />;
     case "think":
@@ -317,7 +338,7 @@ export function StreamItemView({
     case "tool-group":
       return <ToolGroup item={item} technical={technical} />;
     case "attachment":
-      return <AttachmentCard item={item} charName={charName} />;
+      return <AttachmentCard item={item} charName={charName} avatarUri={avatarUri} />;
     case "system":
       return <SystemLine item={item} />;
     case "permission":

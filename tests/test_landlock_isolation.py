@@ -1,7 +1,7 @@
 """The isolation ladder: native jail → Landlock → refuse (never directory trust).
 
 These cover the 2026-06-17 hardening: a chara's `terminal` must not silently run
-unconfined when the OS jail is unavailable (the Docker/no-userns case), and when
+unconfined when the OS jail is unavailable (the no-userns case), and when
 Landlock IS available it must confine reads to workspace+assets.
 """
 import lunamoth.tools.runner as R
@@ -27,17 +27,16 @@ def test_sandbox_refuses_when_no_jail_available(tmp_path, monkeypatch):
     assert "SHOULD_NOT_RUN" not in out
 
 
-def test_docker_refuses_without_docker_cli(tmp_path, monkeypatch):
-    monkeypatch.setattr("lunamoth.tools.runner.shutil.which", lambda _x: None)
-    out = run_terminal("echo SHOULD_NOT_RUN", tmp_path / "ws", isolation="docker", timeout=10)
-    assert "refused" in out.lower()
-    assert "SHOULD_NOT_RUN" not in out
+def test_admin_still_runs_unconfined_when_explicit(tmp_path):
+    """`admin` is an explicit opt-out — it must still run (not refuse)."""
+    out = run_terminal("echo explicit-admin", tmp_path / "ws", isolation="admin", timeout=10)
+    assert "explicit-admin" in out
 
 
-def test_dir_still_runs_unconfined_when_explicit(tmp_path):
-    """`dir` is an explicit opt-out — it must still run (not refuse)."""
-    out = run_terminal("echo explicit-dir", tmp_path / "ws", isolation="dir", timeout=10)
-    assert "explicit-dir" in out
+def test_legacy_docker_value_maps_to_admin_and_runs(tmp_path):
+    """Old `docker` isolation value normalizes to admin (no jail) and runs."""
+    out = run_terminal("echo legacy-docker", tmp_path / "ws", isolation="docker", timeout=10)
+    assert "legacy-docker" in out
 
 
 @pytest.mark.skipif(not landlock.available(), reason="no Landlock (kernel <5.13 / not Linux)")

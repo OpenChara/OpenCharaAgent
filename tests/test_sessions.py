@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 
@@ -13,12 +14,24 @@ def temp_home(tmp_path, monkeypatch):
 
 
 def test_create_list_delete():
-    meta = S.create_session("alpha", isolation="dir", note="x")
+    meta = S.create_session("alpha", isolation="admin", note="x")
     assert meta.sandbox_dir.is_dir()
-    assert S.load_session("alpha").isolation == "dir"
+    assert S.load_session("alpha").isolation == "admin"
     assert [m.name for m in S.list_sessions()] == ["alpha"]
     S.delete_session("alpha")
     assert S.list_sessions() == []
+
+
+def test_legacy_isolation_maps_to_admin():
+    # Old session configs carrying dir/local/docker must read back as admin.
+    meta = S.create_session("legacy", isolation="dir")  # accepted, normalized
+    assert meta.isolation == "admin"
+    assert S.load_session("legacy").isolation == "admin"
+    # A session.json hand-written with a retired value also maps on read.
+    raw = json.loads(meta.meta_path.read_text(encoding="utf-8"))
+    raw["isolation"] = "docker"
+    meta.meta_path.write_text(json.dumps(raw), encoding="utf-8")
+    assert S.load_session("legacy").isolation == "admin"
 
 
 def test_invalid_names_and_dupes():
@@ -66,10 +79,10 @@ def test_cli_new_ls_rm(temp_home):
             env={"PATH": "/usr/bin:/bin", "LUNAMOTH_HOME": str(temp_home), "PYTHONPATH": "src"},
         )
 
-    out = run("new", "beta", "--isolation", "docker")
+    out = run("new", "beta", "--isolation", "admin")
     assert out.returncode == 0 and "created session 'beta'" in out.stdout
     out = run("ls")
-    assert "beta" in out.stdout and "docker" in out.stdout
+    assert "beta" in out.stdout and "admin" in out.stdout
     out = run("rm", "beta", "-y")
     assert out.returncode == 0
     out = run("ls")
