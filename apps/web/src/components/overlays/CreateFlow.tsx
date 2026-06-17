@@ -66,10 +66,18 @@ export function CreateFlow({ onClose }: { onClose: () => void }) {
   const [step, setStep] = useState<Step>("tell");
   const [origin, setOrigin] = useState("");
   const draftRef = useRef<NormalizedDraft | null>(null);
+  const dirty = useRef(false);
+
+  // Dirty-guard: typing the telling or any shape-step edit flags dirty, so a stray
+  // Esc/backdrop/Cancel can't silently throw away a half-built character.
+  const guardedClose = () => {
+    if (dirty.current && !confirm(t("discard-edits-q"))) return;
+    onClose();
+  };
 
   return (
-    <DeckModal open variant="wide" onClose={onClose}>
-      <div className="flow">
+    <DeckModal open variant="wide" onClose={guardedClose}>
+      <div className="flow" onInput={() => (dirty.current = true)} onChange={() => (dirty.current = true)}>
         {step === "tell" ? (
           <TellStep
             t={t}
@@ -77,7 +85,7 @@ export function CreateFlow({ onClose }: { onClose: () => void }) {
             setOrigin={setOrigin}
             hadDraft={!!draftRef.current}
             defaultModel={String(defaults.model || "")}
-            onClose={onClose}
+            onClose={guardedClose}
             generate={async () => {
               const raw = await hub.call("cards.draft", { inspiration: origin.trim() }, 240000);
               draftRef.current = normalizeDraft(raw as Record<string, unknown>);

@@ -49,6 +49,7 @@ export function WakeSheet({ card, onClose }: { card: DeckCard; onClose: () => vo
   // step-1 content fields (uncontrolled, read on wake)
   const rawRef = useRef<{ name?: string; data?: Record<string, unknown> }>({ data: {} });
   const charNameRef = useRef(card.name);
+  const dirty = useRef(false);
   const fName = useRef<FieldHandle>(null);
   const fUserName = useRef<FieldHandle>(null);
   const fUserPersona = useRef<FieldHandle>(null);
@@ -187,14 +188,22 @@ export function WakeSheet({ card, onClose }: { card: DeckCard; onClose: () => vo
   const charName = charNameRef.current;
   const modelInfo = models.find((m) => m.id === model.trim());
 
+  // Dirty-guard: edits bubble to onInput/onChange; never close mid-wake, and warn
+  // before discarding unsaved edits on a stray Esc/backdrop/Cancel.
+  const guardedClose = () => {
+    if (waking) return;
+    if (dirty.current && !confirm(t("discard-edits-q"))) return;
+    onClose();
+  };
+
   return (
-    <DeckModal open variant="wide" onClose={onClose}>
+    <DeckModal open variant="wide" onClose={guardedClose}>
       {!loaded ? (
         <div className="wake-loading">
           <span className="spin" /> {t("thinking-live")}
         </div>
       ) : (
-        <div>
+        <div onInput={() => (dirty.current = true)} onChange={() => (dirty.current = true)}>
           <div className="wake-steps">
             <i className={step === 1 ? "on" : "done"} />
             <i className={step === 2 ? "on" : ""} />
@@ -230,7 +239,7 @@ export function WakeSheet({ card, onClose }: { card: DeckCard; onClose: () => vo
                   field={<CardField ref={fOnDetach} editable initial={initial.on_detach} placeholder={t("cve-presence-ph")} />} />
               </div>
               <div className="acts" style={{ marginTop: 18 }}>
-                <button className="btn text" onClick={onClose}>{t("cancel")}</button>
+                <button className="btn text" onClick={guardedClose}>{t("cancel")}</button>
                 <div className="grow" />
                 <button className="btn primary big" onClick={() => setStep(2)}>{t("wake-continue")}</button>
               </div>

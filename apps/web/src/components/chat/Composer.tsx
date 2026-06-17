@@ -6,7 +6,7 @@
  * stage as chips and are read to raw base64 on pick.
  */
 
-import { useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useT } from "../../i18n";
 import type { StagedAttachment } from "../../hooks/useCharaStream";
 import { readAttachment, humanSize, ATTACH_MAX_BYTES, ATTACH_ACCEPT_ALL } from "./attachments";
@@ -32,8 +32,33 @@ export function Composer({
   onError: (msg: string) => void;
 }) {
   const t = useT();
-  const [text, setText] = useState("");
+  // Persist the unsent text draft per-chara so leaving the chat (back, a tab, a
+  // sidebar click) doesn't silently throw away a half-typed message — it's restored
+  // on return. (Attachments are blobs and aren't persisted; only the text.)
+  const draftKey = (n: string) => `lm-composer-draft:${n}`;
+  const readDraft = (n: string): string => {
+    try {
+      return localStorage.getItem(draftKey(n)) || "";
+    } catch {
+      return "";
+    }
+  };
+  const [text, setText] = useState(() => readDraft(charName));
   const [staged, setStaged] = useState<StagedAttachment[]>([]);
+  // Reload when switching chara (same Composer instance, new charName).
+  useEffect(() => {
+    setText(readDraft(charName));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [charName]);
+  // Write-through on every change; clears the key when the draft is empty (e.g. sent).
+  useEffect(() => {
+    try {
+      if (text) localStorage.setItem(draftKey(charName), text);
+      else localStorage.removeItem(draftKey(charName));
+    } catch {
+      /* private mode — ignore */
+    }
+  }, [text, charName]);
   const [stopping, setStopping] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);

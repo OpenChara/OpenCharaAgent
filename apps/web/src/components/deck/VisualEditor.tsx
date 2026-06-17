@@ -382,7 +382,8 @@ function VisualSlot({
   };
 
   const onDelete = async () => {
-    setWorking("");
+    if (!confirm(t("vis-del-q"))) return;
+    setWorking(t("vis-deleting"));
     try {
       await hubCall("card.asset_delete", { path: cardPath, kind }, 20000);
       setCurSrc("");

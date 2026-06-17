@@ -1307,14 +1307,57 @@ def store_upload(name: str, body: bytes) -> dict[str, Any]:
     return {"path": str(target), "kind": kind}
 
 
+def _trash_cards_dir() -> Path:
+    d = S.lunamoth_home() / ".trash" / "cards"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def delete_card(path: str) -> dict[str, Any]:
+    """SOFT delete: move the card file into ~/.lunamoth/.trash/cards/<id>/ (with an
+    origin manifest) instead of unlinking, so it's recoverable via card.restore.
+    Returns the trash_id the UI uses for an Undo affordance."""
     p = Path(path)
     if user_cards_dir() not in p.parents:
         raise RpcError(-32031, "built-in cards cannot be deleted")
     if _card_sources().get(str(p)):
         raise RpcError(-32032, "this card is referenced by a living chara")
-    p.unlink(missing_ok=True)
-    return {"ok": True}
+    if not p.exists():
+        return {"ok": True, "trash_id": None}
+    tid = os.urandom(6).hex()
+    dest_dir = _trash_cards_dir() / tid
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    p.replace(dest_dir / p.name)
+    (dest_dir / "origin.json").write_text(
+        json.dumps({"path": str(p), "name": p.name, "ts": int(time.time())}),
+        encoding="utf-8",
+    )
+    return {"ok": True, "trash_id": tid}
+
+
+def restore_card(trash_id: str) -> dict[str, Any]:
+    """Undo a soft delete: move the trashed card file back to its original path."""
+    tid = (trash_id or "").strip()
+    # guard against path traversal — trash_id is an opaque hex token
+    if not tid or not re.fullmatch(r"[0-9a-f]{1,32}", tid):
+        raise RpcError(-32033, "unknown trash id")
+    dest_dir = _trash_cards_dir() / tid
+    manifest = dest_dir / "origin.json"
+    if not manifest.exists():
+        raise RpcError(-32033, "nothing to restore")
+    info = json.loads(manifest.read_text(encoding="utf-8"))
+    orig = Path(str(info.get("path") or ""))
+    src = dest_dir / str(info.get("name") or "")
+    if not src.exists() or user_cards_dir() not in orig.parents:
+        raise RpcError(-32033, "trashed card cannot be restored")
+    orig.parent.mkdir(parents=True, exist_ok=True)
+    src.replace(orig)
+    manifest.unlink(missing_ok=True)
+    try:
+        dest_dir.rmdir()
+    except OSError:
+        pass
+    return {"ok": True, "path": str(orig)}
 
 
 # ---- sessions / charas -----------------------------------------------------------
@@ -2525,6 +2568,8 @@ class HubDispatcher:
             return save_card(p.get("data"), path=str(p.get("path") or ""))
         if method == "card.delete":
             return delete_card(str(p.get("path") or ""))
+        if method == "card.restore":
+            return restore_card(str(p.get("trash_id") or ""))
         if method == "card.duplicate":
             return duplicate_card(str(p.get("path") or ""))
         if method == "card.rewrite_field":

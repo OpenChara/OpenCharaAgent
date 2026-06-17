@@ -9,9 +9,10 @@ describe("I18N strings map", () => {
   // SVG-avatar-gen + dual-theme pipeline (AvatarControls/AvatarEditor) removed 18
   // (av-ai*, av-color*, av-title, av-image, av-png-note, av-builtin-note,
   // sec-visual, visual-after-wake) → 479; the rejoin-gap notice (visible
-  // reconnect-gap) added 1 → 480.
-  it("preserves the full key set from the source dict (480 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(480);
+  // reconnect-gap) added 1 → 480; the safety batch (card-deleted, undo, restored,
+  // discard-edits-q, vis-del-q, vis-deleting) added 6 → 486.
+  it("preserves the full key set from the source dict (486 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(486);
   });
 
   it("every value is a [zh, en] string tuple", () => {

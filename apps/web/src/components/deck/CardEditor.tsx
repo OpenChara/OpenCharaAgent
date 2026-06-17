@@ -18,7 +18,7 @@ import { sectionText, serializeCardFields, type NormalizedDraft, type CardData }
 import { CardField, CardBlock, cardCtxString, type FieldHandle } from "./CardField";
 import { Avatar, avatarSrc, themeOf, themeStyle } from "./visual";
 import { VisualEditor } from "./VisualEditor";
-import { deckToast } from "../ui/deckToast";
+import { deckToast, deckToastAction } from "../ui/deckToast";
 import { DeckModal } from "../ui/DeckModal";
 import type { DeckCard, FullCard, CardExtLunamoth, WorldBookEntry } from "./types";
 
@@ -54,6 +54,7 @@ export function CardEditor({
   const fWorld = useRef<FieldHandle>(null);
   const fOnAttach = useRef<FieldHandle>(null);
   const fOnDetach = useRef<FieldHandle>(null);
+  const dirty = useRef(false);
 
   useEffect(() => {
     let alive = true;
@@ -160,11 +161,23 @@ export function CardEditor({
   };
 
   const doDelete = async () => {
-    if (!confirm(t("deck-delete-q"))) return;
+    if (!confirm(t("deck-delete-q", { name: charName }))) return;
     try {
-      await hub.call("card.delete", { path: card.path }, 10000);
+      // Soft delete → the card moves to trash and is restorable; offer an Undo.
+      const r = await hub.call<{ trash_id?: string }>("card.delete", { path: card.path }, 10000);
       onClose();
       onChanged();
+      if (r.trash_id) {
+        deckToastAction(t("card-deleted", { name: charName }), t("undo"), () => {
+          void hub
+            .call("card.restore", { trash_id: r.trash_id }, 10000)
+            .then(() => {
+              onChanged();
+              deckToast(t("restored"));
+            })
+            .catch((e) => deckToast(rpcErrText(t, e as { message?: string }), true));
+        });
+      }
     } catch (e) {
       deckToast(rpcErrText(t, e as { message?: string }), true);
     }
@@ -197,9 +210,18 @@ export function CardEditor({
   // SVG-gen + dual-theme AvatarEditor overlay was retired — VisualEditor replaces it.
   const goVisual = () => setTab("vis");
 
+  // Dirty-guard: any contenteditable/input edit bubbles to the container's onInput/
+  // onChange and flags dirty, so a stray Esc/backdrop/Cancel can't silently drop a
+  // long card edit. A successful save/delete closes via the raw onClose (no guard).
+  const guardedClose = () => {
+    if (saving || dupBusy) return; // never close mid-operation
+    if (dirty.current && !confirm(t("discard-edits-q"))) return;
+    onClose();
+  };
+
   return (
-    <DeckModal open variant="cardview" onClose={onClose} style={themeStyle(card)}>
-      <div className="cardview">
+    <DeckModal open variant="cardview" onClose={guardedClose} style={themeStyle(card)}>
+      <div className="cardview" onInput={() => (dirty.current = true)} onChange={() => (dirty.current = true)}>
         {note && (
           <div className="cv-note cv-note-top">
             {note === "av-frozen-note" ? t(note, { names: (card.used_by || []).join("、") }) : t(note)}
@@ -357,7 +379,7 @@ export function CardEditor({
         </div>
 
         <div className="cv-foot">
-          <button className="btn text" onClick={onClose}>{t("cancel")}</button>
+          <button className="btn text" onClick={guardedClose}>{t("cancel")}</button>
           <div className="grow" />
           {!card.builtin && !card.frozen && (
             <button className="btn soft" onClick={() => void doDelete()}>{t("menu-delete")}</button>

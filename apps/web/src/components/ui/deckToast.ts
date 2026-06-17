@@ -24,6 +24,33 @@ export function deckToast(msg: string, isErr = false): void {
   setTimeout(() => node.remove(), isErr ? 5200 : 3200);
 }
 
+/** A toast carrying ONE action button (e.g. Undo after a soft-delete). The action
+ *  fires at most once and dismisses the toast; the toast also auto-dismisses. Use
+ *  for reversible destructive actions so a regret is one click away. */
+export function deckToastAction(
+  msg: string,
+  actionLabel: string,
+  onAction: () => void,
+  ms = 6500,
+): void {
+  const node = document.createElement("div");
+  node.className = "toast";
+  node.appendChild(document.createTextNode(msg + " "));
+  const btn = document.createElement("button");
+  btn.className = "toast-action";
+  btn.textContent = actionLabel;
+  let used = false;
+  btn.onclick = () => {
+    if (used) return;
+    used = true;
+    onAction();
+    node.remove();
+  };
+  node.appendChild(btn);
+  host().appendChild(node);
+  setTimeout(() => node.remove(), ms);
+}
+
 /** A sticky spinner toast for a slow call (app.js:117 workingToast). Returns a
  *  dismiss fn — call it the instant the call resolves so the wait is never
  *  silent. */
