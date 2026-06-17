@@ -62,7 +62,7 @@ export function Chat({ name, sub }: { name: string; sub: ChatSub }) {
             </button>
             <div className={`avatar-s avatar-btn ${avatarUri ? "" : paletteClass(stream.charName)}`} title="">
               {avatarUri ? (
-                <img src={avatarUri} alt="" />
+                <img src={avatarUri} alt="" loading="lazy" decoding="async" />
               ) : (
                 <span className="glyph-txt">{glyphOf(stream.charName)}</span>
               )}
@@ -221,7 +221,7 @@ function ChatStreamPage({
       )}
       {spriteUrl && (
         <div className={`chat-sprite pos-${prefs.spritePos}`} aria-hidden="true">
-          <img src={spriteUrl} alt="" />
+          <img src={spriteUrl} alt="" loading="lazy" decoding="async" />
         </div>
       )}
       <div className="stream" id="stream" ref={scrollRef}>
@@ -229,7 +229,7 @@ function ChatStreamPage({
           <div className="chat-empty">
             <div className={`avatar-s ${avatarUri ? "" : paletteClass(stream.charName)}`}>
               {avatarUri ? (
-                <img src={avatarUri} alt="" />
+                <img src={avatarUri} alt="" loading="lazy" decoding="async" />
               ) : (
                 <span className="glyph-txt">{glyphOf(stream.charName)}</span>
               )}

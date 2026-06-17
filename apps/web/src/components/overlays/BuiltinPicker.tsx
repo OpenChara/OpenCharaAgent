@@ -53,7 +53,7 @@ function BuiltinTile({ name, card, onSelect }: { name: string; card: DeckCard; o
       }}
     >
       <div className={"bp-avatar" + (avSrc ? "" : " " + paletteClass(card.name))} style={theme}>
-        {avSrc ? <img src={avSrc} alt="" /> : glyphOf(card.name)}
+        {avSrc ? <img src={avSrc} alt="" loading="lazy" decoding="async" /> : glyphOf(card.name)}
       </div>
       <div className={"bp-tile" + (bgSrc ? "" : " bp-flat")}>
         {bgSrc && <div className="bp-bg" style={{ backgroundImage: `url("${assetUrl(bgSrc)}")` }} />}

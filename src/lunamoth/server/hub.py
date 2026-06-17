@@ -36,6 +36,7 @@ from typing import Any, Callable
 from .. import __version__
 from ..config import ROOT, content_dir
 from ..content.cards import CharacterCard, detect_language, looks_like_world_book, merge_world_into_card
+from ..content.imaging import CAP_ART, avatar_thumb_data_uri, compress_image_bytes
 from ..content.knobs import normalize_embodiment
 from ..session import sessions as S
 from ..session.settings import PRESETS, Settings
@@ -728,7 +729,9 @@ def _writable_card_path(path: str) -> Path:
 
 
 def _avatar_data_uri(card_path: Path, card: "CharacterCard") -> str:
-    """Resolve a card's avatar to a data-URI: sidecar first, inline SVG fallback, else ''."""
+    """Resolve a card's avatar to a FULL-res data-URI: sidecar first, inline SVG
+    fallback, else ''. This is the `card.avatar_read` path — the heavy one a
+    caller asks for explicitly. The board list uses `_avatar_thumb_uri`."""
     sidecar = card.avatar_path()
     if sidecar is not None:
         ext = sidecar.suffix.lower().lstrip(".")
@@ -741,6 +744,20 @@ def _avatar_data_uri(card_path: Path, card: "CharacterCard") -> str:
         if svg:
             return "data:image/svg+xml;charset=utf-8," + urllib.parse.quote(svg)
     return ""
+
+
+def _avatar_thumb_uri(card_path: Path, card: "CharacterCard") -> str:
+    """The SMALL inline avatar for list_cards (sent in every hub.state): a
+    downscaled WEBP thumbnail (~5–15KB) of the raster sidecar, the inline SVG
+    fallback otherwise. The full-res sidecar still rides /asset & avatar_read."""
+    sidecar = card.avatar_path()
+    if sidecar is not None and sidecar.suffix.lower().lstrip(".") != "svg":
+        thumb = avatar_thumb_data_uri(sidecar)
+        if thumb:
+            return thumb
+        # Undecodable raster: fall back to the full-res embed rather than nothing.
+        return _avatar_data_uri(card_path, card)
+    return _avatar_data_uri(card_path, card)
 
 
 def _asset_url(p: Path | None) -> str | None:
@@ -881,6 +898,10 @@ def asset_save(path: str, kind: str, data_b64: str, ext: str) -> dict[str, Any]:
     if not _looks_like(raw, ext):
         raise HubRpcError(-32602, f"the file does not look like a .{ext} image",
                           {"kind": "asset_type", "detail": "magic-byte mismatch"})
+    # Compress on save (cap long side, preserve format+alpha) so user uploads
+    # don't reintroduce huge files. Best-effort: a non-shrinkable image is kept
+    # as-is, so the already-validated bytes are never lost.
+    raw = compress_image_bytes(raw, ext, CAP_ART)
     keep = _art_sidecar_path(target, kind, ext).name
     for old in _ART_EXTS:
         sc = _art_sidecar_path(target, kind, old)
@@ -1028,7 +1049,7 @@ def _card_entry(path: Path, builtin: bool, refs: dict[str, list[str]]) -> dict[s
     tagline = ""
     embodiment = ""
     theme = card.theme_colors()
-    avatar_uri = _avatar_data_uri(path, card)
+    avatar_uri = _avatar_thumb_uri(path, card)
     if isinstance(ext, dict):
         theme_color = theme.get("primary", "")
         avatar_svg = _sanitize_avatar_svg(ext.get("avatar_svg"))[0]

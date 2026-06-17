@@ -664,7 +664,13 @@ Owner blessed free refactoring; no back-compat with old cards/tavern/contexts.
 - **[TODO] #1b in-session bg/sprite (立绘) EDIT control** (a ChatPanel tab calling
   card.save_asset / card.asset_delete / card.visual_generate against the active
   chara's frozen session card path) — RENDER done, EDIT control still to build.
-- **[TODO] #3 Image assets: compress quality + progressive load** (compressed first).
+- **[DONE] #3 Image compression + progressive load.** Inline avatar data-URI → ≤160px
+  WEBP thumbnail (157KB→8KB; board total 1248KB→70KB, −94%) with an mtime-keyed cache;
+  full-res still via /asset + card.avatar_read. Bundled cards/ re-compressed in place
+  (16MB→4.4MB, −72%; .png→.webp where photographic, card.json refs updated). asset_save
+  compresses uploads. Frontend imgs get loading=lazy/decoding=async. pillow moved to core
+  deps. New content/imaging.py. (LOW: imaging.py's one-off file helpers are unused in src;
+  animated-webp upload flattens to 1 frame — both non-blocking.)
 - **[TODO] #4 Matte models: let the user install BiRefNet's two models from web/electron;
   delete the other two; shareable across instances; default to the stronger one.**
 - **[DONE] #5 Unified key management.** One "Keys/密钥" pane (KeysPane) hosts BOTH the

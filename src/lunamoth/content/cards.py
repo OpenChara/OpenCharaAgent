@@ -388,10 +388,27 @@ def _asset_url(p: "Path | None") -> str:
 
 
 def card_avatar_data_uri(card: "CharacterCard") -> str:
-    """A card's avatar as a data-URI: sidecar file first, inline SVG fallback, else ''."""
+    """A card's avatar as a SMALL inline data-URI: a downscaled WEBP thumbnail of
+    the raster sidecar (≤160px, q80) first, inline SVG fallback, else ''.
+
+    This is the INLINE path (board list + StateSnapshot) — it must stay tiny
+    (~5–15KB), so a raster sidecar is thumbnailed, not embedded whole. The
+    FULL-res sidecar is still reachable via /asset or `card.avatar_read`."""
     sidecar = card.avatar_path()
     if sidecar is not None:
         ext = sidecar.suffix.lower().lstrip(".")
+        if ext == "svg":
+            # Vector avatar: tiny already, embed as-is (text data-URI).
+            try:
+                return f"data:image/svg+xml;base64,{base64.b64encode(sidecar.read_bytes()).decode('ascii')}"
+            except OSError:
+                return ""
+        from .imaging import avatar_thumb_data_uri
+
+        thumb = avatar_thumb_data_uri(sidecar)
+        if thumb:
+            return thumb
+        # Thumbnail failed (undecodable): fall back to embedding the raw bytes.
         mime = _AVATAR_MIME.get(ext, "application/octet-stream")
         try:
             data = base64.b64encode(sidecar.read_bytes()).decode("ascii")

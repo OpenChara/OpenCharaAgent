@@ -203,7 +203,7 @@ function WorkPreview({
         </div>
         {body.type === "image" && (
           <div className="wp-img">
-            <img src={body.src} alt={work.name} />
+            <img src={body.src} alt={work.name} loading="lazy" decoding="async" />
           </div>
         )}
         {body.type === "text" && (

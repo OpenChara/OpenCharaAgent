@@ -71,7 +71,7 @@ export function Avatar({
       onClick={onClick}
       title={title}
     >
-      {src ? <img src={src} alt="" /> : glyphOf(name)}
+      {src ? <img src={src} alt="" loading="lazy" decoding="async" /> : glyphOf(name)}
     </div>
   );
 }
@@ -102,7 +102,7 @@ export function CardFace({
         </>
       )}
       {src ? (
-        <img className="avatar-svg" src={src} alt="" />
+        <img className="avatar-svg" src={src} alt="" loading="lazy" decoding="async" />
       ) : (
         <div className="glyph">{glyphOf(card.name)}</div>
       )}

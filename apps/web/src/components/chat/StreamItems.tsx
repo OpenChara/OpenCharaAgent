@@ -31,7 +31,7 @@ function Avatar({ name, avatarUri }: { name: string; avatarUri?: string }) {
   if (avatarUri) {
     return (
       <div className="avatar-s">
-        <img src={avatarUri} alt="" />
+        <img src={avatarUri} alt="" loading="lazy" decoding="async" />
       </div>
     );
   }
@@ -171,7 +171,7 @@ function AttachmentCard({ item, charName, avatarUri }: { item: AttachmentItem; c
       <div className="att-missing">{t("att-img-missing")}</div>
     ) : (
       <div className="wp-img">
-        <img alt={name} loading="lazy" src={assetUrl(item.url)} onError={() => setBroken(true)} />
+        <img alt={name} loading="lazy" decoding="async" src={assetUrl(item.url)} onError={() => setBroken(true)} />
       </div>
     )
   ) : (
@@ -223,7 +223,7 @@ function UserMessage({ item, t }: { item: UserItem; t: TFn }) {
         <div className="att-row">
           {item.atts.map((a, i) =>
             a.isImage ? (
-              <img key={i} className="att-thumb" src={a.url} alt={a.name} />
+              <img key={i} className="att-thumb" src={a.url} alt={a.name} loading="lazy" decoding="async" />
             ) : (
               <div key={i} className="att-file">
                 📄 {a.name}

@@ -243,6 +243,66 @@ def test_avatar_read_falls_back_to_inline_svg():
     assert read["data_uri"].startswith("data:image/svg+xml")
 
 
+# ---- inline-avatar thumbnail (board payload shrink) + upload compression ----------
+
+def _big_png(px=512):
+    """A non-trivial PNG that compresses (gradient-ish), base64-encoded."""
+    import base64
+    import io
+
+    from PIL import Image
+    im = Image.new("RGBA", (px, px))
+    im.putdata([((x * 7) % 256, (y * 5) % 256, (x + y) % 256, 255)
+                for y in range(px) for x in range(px)])
+    buf = io.BytesIO()
+    im.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def test_list_cards_inline_avatar_is_small_thumbnail():
+    """The board list embeds a TINY webp thumbnail, not the full sidecar — the
+    full-res avatar still rides /asset & avatar_read."""
+    import base64
+
+    set_defaults()
+    path = _make_user_card("ThumbCard")
+    png_b64 = _big_png(512)
+    result("card.avatar_upload", {"path": path, "data_b64": png_b64, "ext": "png"})
+    cards = result("cards.list") if False else H.list_cards()
+    entry = next(c for c in cards if c["path"] == path)
+    uri = entry["avatar_uri"]
+    assert uri.startswith("data:image/webp;base64,")
+    inline_bytes = len(base64.b64decode(uri.split(",", 1)[1]))
+    assert inline_bytes < 30_000          # tiny inline avatar
+    # The full-res read is unchanged (still PNG, much larger than the thumb).
+    full = result("card.avatar_read", {"path": path})["data_uri"]
+    assert full.startswith("data:image/png;base64,")
+
+
+def test_asset_save_compresses_large_upload():
+    """A large uploaded sprite is re-compressed on save (cap + webp q82),
+    without breaking the magic-byte validation."""
+    set_defaults()
+    path = _make_user_card("SpriteCard")
+    import base64
+    import io
+
+    from PIL import Image
+    im = Image.new("RGB", (3000, 1500))
+    im.putdata([((x) % 256, (y) % 256, (x * y) % 256)
+                for y in range(1500) for x in range(3000)])
+    buf = io.BytesIO()
+    im.save(buf, format="WEBP", quality=98)
+    raw = buf.getvalue()
+    out = result("card.asset_save", {"path": path, "kind": "sprite",
+                                      "data_b64": base64.b64encode(raw).decode("ascii"),
+                                      "ext": "webp"})
+    sidecar = Path(os.path.dirname(path)) / out["file"]
+    assert sidecar.stat().st_size < len(raw)   # shrank on save
+    with Image.open(sidecar) as got:
+        assert max(got.size) <= H.CAP_ART      # capped long side
+
+
 # ---- weixin.qr / weixin.qr_status --------------------------------------------------
 
 class FakeWeixinAPI:

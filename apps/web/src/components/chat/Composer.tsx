@@ -130,7 +130,7 @@ export function Composer({
           {staged.map((att, i) =>
             att.isImage ? (
               <div key={i} className="attach-chip" title={att.name}>
-                <img className="thumb" src={att.url} alt={att.name} />
+                <img className="thumb" src={att.url} alt={att.name} loading="lazy" decoding="async" />
                 <button className="rm" title={t("attach-remove")} onClick={() => unstage(att)}>
                   ×
                 </button>
