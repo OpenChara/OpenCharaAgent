@@ -13,8 +13,8 @@
 import { useMemo, useState } from "react";
 import { useT } from "../i18n";
 import { useHub } from "../state/hub";
+import { useEnsureModel } from "../components/overlays/useEnsureModel";
 import { useOverlay } from "../state/overlay";
-import { useNavigate } from "../hooks/useHashRoute";
 import { paletteClass } from "../lib/format";
 import { rpcErrText } from "../lib/status";
 import { CardFace } from "../components/deck/visual";
@@ -27,7 +27,6 @@ type Filter = "unwoken" | "woken";
 
 export function Deck() {
   const t = useT();
-  const nav = useNavigate();
   const overlay = useOverlay();
   const { hub, snapshot, refresh } = useHub();
   const [filter, setFilter] = useState<Filter>("unwoken");
@@ -40,7 +39,6 @@ export function Deck() {
     () => (snapshot?.cards as DeckCard[] | undefined) || [],
     [snapshot?.cards],
   );
-  const defaults = (snapshot?.defaults as { has_key?: boolean; base_url?: string }) || {};
 
   const cards = useMemo(() => {
     const q = query.toLowerCase();
@@ -58,15 +56,9 @@ export function Deck() {
       return next;
     });
 
-  // A wake needs a configured model; without a key, route to settings (the SPA's
-  // stand-in for app.js's ensureModel → first-run model setup overlay).
-  const ensureModel = (action: () => void) => {
-    if (defaults.has_key && defaults.base_url) action();
-    else {
-      deckToast(t("go-settings"));
-      nav("#/settings");
-    }
-  };
+  // A wake/create needs a configured model; the shared hook opens the in-flow
+  // ModelGate (and RESUMES the action on key save) instead of ejecting to Settings.
+  const ensureModel = useEnsureModel();
 
   const duplicate = async (c: DeckCard) => {
     setBusyKey("dup:" + c.path, true);

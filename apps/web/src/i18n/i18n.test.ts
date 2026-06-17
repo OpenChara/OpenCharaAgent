@@ -11,9 +11,10 @@ describe("I18N strings map", () => {
   // sec-visual, visual-after-wake) → 479; the rejoin-gap notice (visible
   // reconnect-gap) added 1 → 480; the safety batch (card-deleted, undo, restored,
   // discard-edits-q, vis-del-q, vis-deleting) added 6 → 486; the interaction batch
-  // (save-failed, resetting, reset-done, open-failed) added 4 → 490.
-  it("preserves the full key set from the source dict (490 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(490);
+  // (save-failed, resetting, reset-done, open-failed) added 4 → 490; the in-flow
+  // model gate (gate-title/sub/key-ph/openrouter-note/advanced/continue) added 6 → 496.
+  it("preserves the full key set from the source dict (496 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(496);
   });
 
   it("every value is a [zh, en] string tuple", () => {

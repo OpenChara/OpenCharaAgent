@@ -1,28 +1,24 @@
 /* useEnsureModel — the model gate shared by the create/builtin/wake entry points,
- * mirroring app.js ensureModel(). In the vanilla app a missing key reused the
- * first-run overlay's model-setup step; the SPA's stand-in (matching Deck.tsx's
- * existing ensureModel) routes to Settings with a toast rather than failing
- * silently — the model lives in the Settings model pane. */
+ * mirroring app.js ensureModel(). If a text key is set, the action runs straight
+ * away. If not, instead of EJECTING to Settings and discarding what the user
+ * wanted (the old behaviour), it opens the in-flow ModelGate overlay, which asks
+ * for the key and RESUMES the action via onReady — keeping the inspiration→living-
+ * chara path unbroken for a brand-new user. */
 
 import { useCallback } from "react";
-import { useT } from "../../i18n";
-import { useHub } from "../../state/hub";
-import { useNavigate } from "../../hooks/useHashRoute";
-import { deckToast } from "../ui/deckToast";
+import { useHubState } from "../../state/hub";
+import { useOverlay } from "../../state/overlay";
 
 export function useEnsureModel(): (action: () => void) => void {
-  const t = useT();
-  const nav = useNavigate();
-  const { snapshot } = useHub();
+  const { snapshot } = useHubState();
+  const overlay = useOverlay();
   const defaults = (snapshot?.defaults as { has_key?: boolean; base_url?: string }) || {};
+  const ready = !!(defaults.has_key && defaults.base_url);
   return useCallback(
     (action: () => void) => {
-      if (defaults.has_key && defaults.base_url) action();
-      else {
-        deckToast(t("go-settings"));
-        nav("#/settings");
-      }
+      if (ready) action();
+      else overlay.open({ kind: "model-gate", onReady: action });
     },
-    [defaults.has_key, defaults.base_url, t, nav],
+    [ready, overlay],
   );
 }
