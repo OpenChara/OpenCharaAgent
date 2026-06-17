@@ -12,7 +12,6 @@ import { useEffect, useRef, useState } from "react";
 import { assetUrl } from "../../rpc";
 import { useT, type TKey } from "../../i18n";
 import { useHub } from "../../state/hub";
-import { useOverlay } from "../../state/overlay";
 import { rpcErrText } from "../../lib/status";
 import { glyphOf, paletteClass } from "../../lib/format";
 import { sectionText, putSection, type NormalizedDraft } from "../../lib/cards";
@@ -38,7 +37,6 @@ export function CardEditor({
 }) {
   const t = useT();
   const { hub } = useHub();
-  const overlay = useOverlay();
   const [full, setFull] = useState<FullCard | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("set");
@@ -210,13 +208,10 @@ export function CardEditor({
   const cardForVisual: DeckCard = card;
   const th = themeOf(card);
   const hasAnyArt = !!(card.sprite_url || card.keyvisual_url || card.bg_url || avatarSrc(card));
-  // The avatar/theme editor edits presentation only (sidecar avatar + dual theme),
-  // soul untouched; it surfaces its own read-only notes for builtin/PNG/locked cards
-  // (app.js viewCard wires it on the header avatar + the avatar art tile).
-  const openAvatar = () => {
-    onClose();
-    overlay.open({ kind: "avatar", card });
-  };
+  // Clicking the avatar jumps to the 视觉 tab, where the R9 VisualEditor owns the
+  // whole visual set (generate / upload / replace / delete per kind). The old
+  // SVG-gen + dual-theme AvatarEditor overlay was retired — VisualEditor replaces it.
+  const goVisual = () => setTab("vis");
 
   return (
     <DeckModal open variant="cardview" onClose={onClose} style={themeStyle(card)}>
@@ -227,7 +222,7 @@ export function CardEditor({
           </div>
         )}
         <div className="cv-header">
-          <Avatar name={charName} card={card} cls="avatar-s" onClick={openAvatar} title={t("av-title")} />
+          <Avatar name={charName} card={card} cls="avatar-s" onClick={goVisual} title={t("cv-tab-vis")} />
           <div className="cv-id">
             <CardField ref={fName} editable={editable} initial={full.name || ""} className="cve-name" />
             {(editable || taglineValue) && (
@@ -311,7 +306,7 @@ export function CardEditor({
                   <ArtTile labelKey="cv-art-sprite" url={cardForVisual.sprite_url} name={charName} />
                   <ArtTile labelKey="cv-art-keyvisual" url={cardForVisual.keyvisual_url} name={charName} />
                   <ArtTile labelKey="cv-art-bg" url={cardForVisual.bg_url} name={charName} sq />
-                  <ArtTile labelKey="cv-art-avatar" url={avatarSrc(card)} name={charName} sq onClick={openAvatar} title={t("av-title")} />
+                  <ArtTile labelKey="cv-art-avatar" url={avatarSrc(card)} name={charName} sq />
                 </div>
               ) : (
                 <div className="cv-empty">

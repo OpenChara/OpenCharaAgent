@@ -25,7 +25,6 @@ import {
 import { CardField, CardBlock, cardCtxString, type FieldHandle } from "../deck/CardField";
 import { DeckModal } from "../ui/DeckModal";
 import { deckToast } from "../ui/deckToast";
-import { AvatarControls, type AvatarWork } from "./AvatarControls";
 import type { DeckCard, ModelInfo } from "../deck/types";
 import type { TKey } from "../../i18n";
 
@@ -124,23 +123,16 @@ export function CreateFlow({ onClose }: { onClose: () => void }) {
   );
 }
 
-/* user_name / user_persona ride extensions.lunamoth + a pending raster avatar
-   becomes the sidecar once the card exists (app.js injectUserFields /
-   injectPendingAvatar). Best-effort: the card itself is already saved. */
+/* user_name / user_persona ride extensions.lunamoth (app.js injectUserFields).
+   Best-effort: the card itself is already saved. Visuals (avatar/sprite/background)
+   are no longer set here — they're done after the card lands, in the card editor's
+   视觉 tab (the R9 VisualEditor). */
 async function injectExtras(
   hub: ReturnType<typeof useHub>["hub"],
   draft: NormalizedDraft,
   path: string | undefined,
 ): Promise<void> {
   if (!path) return;
-  const pa = draft.pending_avatar as { data_b64?: string; ext?: string } | null;
-  if (pa && pa.data_b64) {
-    try {
-      await hub.call("card.avatar_upload", { path, data_b64: pa.data_b64, ext: pa.ext }, 30000);
-    } catch {
-      /* best-effort */
-    }
-  }
   if (!draft.user_name && !draft.user_persona) return;
   try {
     const full = await hub.call<{ raw?: { data?: Record<string, unknown> } }>("card.read", { path }, 20000);
@@ -291,15 +283,6 @@ function ShapeStep({
     Object.fromEntries(SECTION_DEFS.map(([k]) => [k, { current: null } as React.RefObject<FieldHandle | null>])),
   );
 
-  // The shared avatar/theme editor (mirrors live edits onto the draft).
-  const avRef = useRef<AvatarWork>({
-    name: draft.name,
-    avatar_uri: "",
-    avatar_svg: draft.avatar_svg || "",
-    pending_avatar: (draft.pending_avatar as AvatarWork["pending_avatar"]) || null,
-    theme: { primary: draft.theme.primary || "#5B9FD4", secondary: draft.theme.secondary || "" },
-  });
-
   const collect = (): NormalizedDraft => {
     const data: NormalizedDraft = { ...draft };
     data.name = (fName.current?.value() ?? "").trim();
@@ -309,10 +292,6 @@ function ShapeStep({
       const text = secRefs.current[key].current?.value() ?? "";
       putSection(data, key, text);
     }
-    const av = avRef.current;
-    data.avatar_svg = av.avatar_svg || "";
-    data.pending_avatar = av.pending_avatar || null;
-    data.theme = { primary: av.theme.primary || "", secondary: av.theme.secondary || "" };
     data.embodiment = emb;
     return data;
   };
@@ -402,11 +381,6 @@ function ShapeStep({
             />
           </div>
         ))}
-
-        <div className="sec visual-sec">
-          <h3>{t("sec-visual")}</h3>
-          <AvatarControls work={avRef.current} hub={hub} />
-        </div>
 
         <div className="sec embodiment-sec">
           <h3>{t("sec-embodiment")}</h3>

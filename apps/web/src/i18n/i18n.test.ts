@@ -5,9 +5,12 @@ import { translate, normalizeLang, detectInitialLang, type Lang } from "./index"
 describe("I18N strings map", () => {
   // Pin the count: the source dict (front/web/i18n.js) had 445 keys; the password-
   // login overlay (§4b) added 8 (login-*) → 453; the merged R9/R10/R11 features
-  // (visuals/keys+image/matte, from origin/main) added 44 → 497.
-  it("preserves the full key set from the source dict (497 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(497);
+  // (visuals/keys+image/matte, from origin/main) added 44 → 497; retiring the old
+  // SVG-avatar-gen + dual-theme pipeline (AvatarControls/AvatarEditor) removed 18
+  // (av-ai*, av-color*, av-title, av-image, av-png-note, av-builtin-note,
+  // sec-visual, visual-after-wake) → 479.
+  it("preserves the full key set from the source dict (479 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(479);
   });
 
   it("every value is a [zh, en] string tuple", () => {

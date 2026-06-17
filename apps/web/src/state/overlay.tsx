@@ -25,7 +25,6 @@ export type OverlayState =
   | { kind: "create" }
   | { kind: "builtin" }
   | { kind: "import" }
-  | { kind: "avatar"; card: DeckCard }
   // The 2-step wake sheet lives in components/deck but is opened as an overlay so
   // create-flow / builtin picker can hand off to it (app.js openWakeSheet).
   | { kind: "wake"; card: DeckCard }

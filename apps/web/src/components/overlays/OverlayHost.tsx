@@ -2,18 +2,15 @@
  * once in App.tsx so any view can open an overlay via useOverlay().open(...). One
  * at a time (the vanilla app's overlays were mutually exclusive fixed layers). */
 
-import { useHub } from "../../state/hub";
 import { useOverlay } from "../../state/overlay";
 import { WakeSheet } from "../deck/WakeSheet";
 import { FirstRun } from "./FirstRun";
 import { CreateFlow } from "./CreateFlow";
 import { BuiltinPicker } from "./BuiltinPicker";
-import { AvatarEditor } from "./AvatarEditor";
 import { Import } from "./Import";
 
 export function OverlayHost() {
   const { state, close } = useOverlay();
-  const { refresh } = useHub();
   if (!state) return null;
   switch (state.kind) {
     case "firstrun":
@@ -24,8 +21,6 @@ export function OverlayHost() {
       return <BuiltinPicker onClose={close} />;
     case "import":
       return <Import onClose={close} />;
-    case "avatar":
-      return <AvatarEditor card={state.card} onClose={close} onChanged={() => void refresh()} />;
     case "wake":
       return <WakeSheet card={state.card} onClose={close} />;
   }
