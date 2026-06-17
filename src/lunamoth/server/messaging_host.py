@@ -35,11 +35,18 @@ from ..messaging.gateway import (
 from ..messaging.filters import is_silence_narration
 from ..messaging.text import split_text
 from ..protocol import SAY, TextDelta
+from .dispatch import RpcError
 
 _log = logging.getLogger("lunamoth.server.messaging_host")
 
 # One bounded retry for a failed adapter.send() (mirrors the standalone gateway).
 _SEND_RETRY_DELAY = 3.0
+
+# When an inbound turn can't start because another turn (the desktop app) is
+# mid-flight, WAIT and retry instead of dropping the message (the -32011 collision
+# that silently lost WeChat messages). ~3s total, then an honest "still busy" note.
+_TURN_WAIT_DELAY = 0.3
+_TURN_WAIT_ATTEMPTS = 10
 
 
 class MessagingHost:
@@ -77,6 +84,12 @@ class MessagingHost:
             self._ack = (f"{name}收到，思考/工作中，请稍等…" if zh
                          else f"{name} got it — thinking, one moment…")
         return self._ack
+
+    def _busy_text(self) -> str:
+        """Honest note when an inbound turn couldn't get the shared agent within
+        the wait window (a long desktop turn held it) — never silent."""
+        zh = self._ack is not None and "收到" in self._ack
+        return "（还在忙，稍后回复你）" if zh else "(still busy — I'll get back to you shortly)"
 
     # ---- control ------------------------------------------------------------
 
@@ -231,15 +244,31 @@ class MessagingHost:
             # Pass attachments through to the agent's ingest path; keep the
             # legacy single-arg call when there are none so existing handles
             # (and stubs) that take only `text` still work.
-            self._dispatcher.run_stream_sync(
-                "wechat",
-                (
-                    (lambda: self._dispatcher.handle.stream_user(text, attachments=attachments))
-                    if attachments
-                    else (lambda: self._dispatcher.handle.stream_user(text))
-                ),
-                collect,
+            make = (
+                (lambda: self._dispatcher.handle.stream_user(text, attachments=attachments))
+                if attachments
+                else (lambda: self._dispatcher.handle.stream_user(text))
             )
+            # A concurrent desktop turn (run_stream_sync supersedes IDLE, but a
+            # human 'send' raises -32011): wait for it and retry rather than
+            # dropping this WeChat message. Only if it's still busy after the
+            # window do we surface an honest "busy" note — never silence.
+            ran = False
+            for attempt in range(_TURN_WAIT_ATTEMPTS):
+                try:
+                    self._dispatcher.run_stream_sync("wechat", make, collect)
+                    ran = True
+                    break
+                except RpcError as e:
+                    if getattr(e, "code", None) == -32011 and not self._stop.is_set():
+                        if attempt < _TURN_WAIT_ATTEMPTS - 1:
+                            time.sleep(_TURN_WAIT_DELAY)
+                            continue
+                        break  # window exhausted → fall through to the honest busy note
+                    raise
+            if not ran:
+                self._send(adapter, self._busy_text())
+                return
             say = "".join(chunks).strip()
             if say:
                 self._send(adapter, say)

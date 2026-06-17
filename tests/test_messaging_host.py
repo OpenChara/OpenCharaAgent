@@ -162,3 +162,59 @@ def test_host_skips_login_pending_adapter_and_reports_needs_login(tmp_path, monk
     host._process(adapter, msg)
     host._process(adapter, msg)  # platform redelivery
     assert handle.user_calls == ["hi"]      # only one turn
+
+
+# ---- ③ no-drop on collision + honest receipt ---------------------------------
+
+class _BusyDispatch:
+    """A dispatcher stub whose run_stream_sync raises -32011 (a desktop turn is
+    mid-flight) the first `fail` times, then runs the turn."""
+
+    def __init__(self, fail: int):
+        self._fail = fail
+        self.calls = 0
+
+    class handle:
+        @staticmethod
+        def stream_user(text, **kw):
+            from lunamoth.protocol import SAY, TextDelta
+            yield TextDelta("reply", SAY)
+
+        @staticmethod
+        def snapshot():
+            raise RuntimeError("no snapshot in this stub")
+
+    def emit_peer_message(self, *a, **k):
+        pass
+
+    def run_stream_sync(self, kind, make, on_event):
+        from lunamoth.server.dispatch import RpcError
+        self.calls += 1
+        if self.calls <= self._fail:
+            raise RpcError(-32011, "a stream is already in flight")
+        for ev in make():
+            on_event(ev)
+
+
+def test_inbound_waits_and_retries_when_agent_busy(monkeypatch):
+    import lunamoth.server.messaging_host as mh
+    monkeypatch.setattr(mh.time, "sleep", lambda *_: None)  # no real waiting
+    dispatch = _BusyDispatch(fail=2)
+    adapter = _Adapter()
+    host = MessagingHost(dispatch, "/tmp/x.json")
+    host._allowed = {"u1"}
+    host._process(adapter, InboundMessage("u1", "Alice", "hi"))
+    assert dispatch.calls == 3                       # retried twice, then ran
+    assert any("reply" in s for s in adapter.sent)   # message NOT dropped
+
+
+def test_inbound_busy_note_when_agent_never_frees(monkeypatch):
+    import lunamoth.server.messaging_host as mh
+    monkeypatch.setattr(mh.time, "sleep", lambda *_: None)
+    dispatch = _BusyDispatch(fail=999)               # never frees
+    adapter = _Adapter()
+    host = MessagingHost(dispatch, "/tmp/x.json")
+    host._allowed = {"u1"}
+    host._process(adapter, InboundMessage("u1", "Alice", "hi"))
+    # ack + an honest "still busy" note — never silent ack-then-nothing
+    assert any("busy" in s.lower() or "还在忙" in s for s in adapter.sent)
