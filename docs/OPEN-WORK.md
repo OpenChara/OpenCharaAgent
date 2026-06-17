@@ -537,20 +537,23 @@ DONE + pushed:
   intent (no more eject-to-Settings); de-tavern'd the import framing (our format is
   ST-compatible — reframed the label + made create-flow tavern-absorb a natural line).
 
-STILL OPEN (next pass — owner wants "全部完成"):
-- Onboarding delight: after a card lands, a gentle image-gen invite ("give them a
-  face?" → Settings·生图; VisualEditor should read has_image_key and prompt instead
-  of erroring); a warm CHAT LANDING (surface first_mes / "{name} is here — say hi"
-  instead of a blank stream — the wasted "it's alive!" moment).
-- THE VISUAL TOKEN PASS (Batch 4, the big mechanical one): the audit found tokens
-  under-enforced — 20 hardcoded radii (vs the single `--radius`), 26 font-sizes
-  incl. six .5px, 8 weights, 4 input styles (3 fill colors, raw #FAFBFC the file's
-  own header forbids), 5 near-identical "selectable tile" pickers, buttons+inputs
-  with no shared height, ~24 inline marginTop literals, a few dark-parity gaps
-  (.cv-st.kw #E9F8EF, .goal-badge.done, .key-badge.warn). Fix = a scale-token layer
-  (--r-*/--fs-*/--fw-*/--space-*/--field-*/--control-h) + migrate the field/button/
-  selectable/card/overlay families onto it. Mechanical, broad, screenshot-verifiable;
-  preserves the (cohesive, well-liked) visual character.
+DONE (second wave, pushed): onboarding delight — image-gen INVITE (VisualEditor
+reads has_image_key, shows a "give them a face? → Settings·生图" banner + gates
+generate, instead of a raw error) and a warm CHAT LANDING ("Say hello to {name} ✦"
+on a fresh wake, not a blank stream). Token pass CORE — the field family unified
+onto --field-bg (killed the raw #FAFBFC across 3 input rules), the scale-token layer
+added to :root (--r-sm/--r-lg/--r-pill/--field-radius/--control-h/--fw-*), and the
+three dark-parity badges fixed. Screenshot-verified light+dark.
+
+STILL OPEN — the token pass LONG TAIL (do per-surface with screenshot checks, NOT
+blind-bulk — the rendered look is good and must be preserved):
+- collapse the 26 font-sizes onto a ~7-step --fs-* scale (six are .5px); 8 weights → 4.
+- migrate the 20 hardcoded radii onto --r-sm/--radius/--r-lg (esp. the 5 "card" radii
+  13/14/15 → --r-lg).
+- one `.selectable` base for the 5 near-identical tile pickers (iso-seg / pack-option
+  / emb-option / provider / gw-plats) — the wake sheet stacks 3 of them slightly off.
+- give .btn + the field base a shared --control-h so rows stop wobbling.
+- replace the ~24 inline style={{marginTop:N}} literals with rhythm utilities.
 
 ---
 
