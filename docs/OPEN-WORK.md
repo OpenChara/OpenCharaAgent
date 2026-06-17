@@ -516,6 +516,42 @@ Other audit findings still open (lower value): useAsync/useBusySet hooks to fold
 the repeated alive-flag load + Set busy-tracker (~10 files); per-pane file split of
 ChatPanel's 6 bundled panes; React.memo on the markdown items (measure first).
 
+## UX/design pass (2026-06-17, second wave) — multi-reviewer audit + live screenshots
+
+Grounded in a 4-lens reviewer panel (visual harmony / interaction feedback /
+onboarding / safety) + the design skills (frontend-design, design-md,
+popular-web-designs), VERIFIED with a live screenshot harness (real desktop server
++ Chromium driving the hash routes — at /tmp/lm-shots, server on :8780).
+
+DONE + pushed:
+- Safety: card SOFT-DELETE + Undo (backend `.trash/` + `card.restore`, traversal-
+  guarded; deckToastAction); dirty-guards on CardEditor/WakeSheet/CreateFlow (no
+  lost edits on stray Esc/backdrop); per-chara composer draft persistence; confirm
+  on visual-asset delete.
+- Interaction: optimistic net switch (was a dead+silent click); NumField feedback/
+  revert; `/reset` working-state; ChatWorks swallowed errors → toasts.
+- Visual: board/deck empty states CENTERED (killed the top-heavy void — the biggest
+  visible harmony issue; only findable by rendering); FirstRun close affordance;
+  filled the empty second-CTA subtitle.
+- Onboarding: the model-gate ELECTION → an in-flow ModelGate overlay that resumes
+  intent (no more eject-to-Settings); de-tavern'd the import framing (our format is
+  ST-compatible — reframed the label + made create-flow tavern-absorb a natural line).
+
+STILL OPEN (next pass — owner wants "全部完成"):
+- Onboarding delight: after a card lands, a gentle image-gen invite ("give them a
+  face?" → Settings·生图; VisualEditor should read has_image_key and prompt instead
+  of erroring); a warm CHAT LANDING (surface first_mes / "{name} is here — say hi"
+  instead of a blank stream — the wasted "it's alive!" moment).
+- THE VISUAL TOKEN PASS (Batch 4, the big mechanical one): the audit found tokens
+  under-enforced — 20 hardcoded radii (vs the single `--radius`), 26 font-sizes
+  incl. six .5px, 8 weights, 4 input styles (3 fill colors, raw #FAFBFC the file's
+  own header forbids), 5 near-identical "selectable tile" pickers, buttons+inputs
+  with no shared height, ~24 inline marginTop literals, a few dark-parity gaps
+  (.cv-st.kw #E9F8EF, .goal-badge.done, .key-badge.warn). Fix = a scale-token layer
+  (--r-*/--fs-*/--fw-*/--space-*/--field-*/--control-h) + migrate the field/button/
+  selectable/card/overlay families onto it. Mechanical, broad, screenshot-verifiable;
+  preserves the (cohesive, well-liked) visual character.
+
 ---
 
 # Appendix A — client + deploy architecture reference
