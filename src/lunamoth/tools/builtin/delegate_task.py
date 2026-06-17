@@ -32,12 +32,10 @@ from ..registry import registry, tool_error
 logger = logging.getLogger("lunamoth.tools.delegate_task")
 
 # Tools a child must never reach (hermes DELEGATE_BLOCKED_TOOLS, :45-53),
-# adapted to LunaMoth's tool names. No recursive delegation, no clarify (no
-# user interaction), no memory writes, no execute_code, no speak/messaging
-# side-effects from a scoped worker.
+# adapted to LunaMoth's tool names. No recursive delegation, no memory writes,
+# no execute_code, no speak/messaging side-effects from a scoped worker.
 DELEGATE_BLOCKED_TOOLS = frozenset([
     "delegate_task",
-    "clarify",
     "memory",
     "execute_code",
     "speak",

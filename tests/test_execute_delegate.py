@@ -371,7 +371,7 @@ def test_delegate_allowed_tool_dispatches(tmp_path):
 
 def test_delegate_blocked_tools_constant():
     # The blocked set is preserved (hermes parity + LunaMoth chara-life tools).
-    assert {"delegate_task", "clarify", "memory", "execute_code"} <= dt_mod.DELEGATE_BLOCKED_TOOLS
+    assert {"delegate_task", "memory", "execute_code", "speak"} <= dt_mod.DELEGATE_BLOCKED_TOOLS
 
 
 def test_subagent_toolsets_excludes_delegation_and_code():

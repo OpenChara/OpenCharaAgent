@@ -1,7 +1,11 @@
-"""Tests for the ported general tools: todo, session_search, clarify.
+"""Tests for the ported general tools: todo, session_search.
 
 Each tool is exercised against a tmp workspace with a minimal fake ToolContext
 (only the touchpoints each tool reaches). No network / LLM / external drivers.
+
+The clarify TOOL was retired (the model no longer gets a "give the user options"
+shortcut); the terminal-side interactive-question hook (`_stdin_clarify_hook`)
+remains as dormant generic plumbing and keeps its unit coverage below.
 """
 from __future__ import annotations
 
@@ -12,7 +16,6 @@ from typing import Any, Callable, Optional
 
 import pytest
 
-from lunamoth.tools.builtin import clarify as clarify_mod
 from lunamoth.tools.builtin import session_search as ss_mod
 from lunamoth.tools.builtin import todo as todo_mod
 from lunamoth.tools.registry import registry, discover_builtin_tools
@@ -45,10 +48,12 @@ class FakeCtx:
 def test_tools_register_and_discover():
     discover_builtin_tools()
     names = registry.get_all_tool_names()
-    for n in ("todo", "session_search", "clarify"):
+    for n in ("todo", "session_search"):
         assert n in names, f"{n} not discovered"
+    # the retired clarify tool must NOT be discoverable any more
+    assert "clarify" not in names
     # schema description + params are present (model is post-trained on shape)
-    for n in ("todo", "session_search", "clarify"):
+    for n in ("todo", "session_search"):
         schema = registry.get_schema(n)
         assert schema and "description" in schema and "parameters" in schema
 
@@ -121,64 +126,8 @@ def test_todo_format_for_injection():
 
 
 # --------------------------------------------------------------------------- #
-# clarify
-# --------------------------------------------------------------------------- #
-
-def test_clarify_empty_question():
-    ctx = FakeCtx(state=FakeState({"user_present": True}))
-    out = json.loads(clarify_mod.clarify({"question": "  "}, ctx))
-    assert "error" in out and "required" in out["error"].lower()
-
-
-def test_clarify_away_is_rejected():
-    ctx = FakeCtx(state=FakeState({"user_present": False}),
-                  clarify_hook=lambda q, c: "x")
-    out = json.loads(clarify_mod.clarify({"question": "ok?"}, ctx))
-    assert "error" in out and "away" in out["error"].lower()
-
-
-def test_clarify_no_hook_present():
-    ctx = FakeCtx(state=FakeState({"user_present": True}), clarify_hook=None)
-    out = json.loads(clarify_mod.clarify({"question": "ok?"}, ctx))
-    assert "error" in out and "not available" in out["error"].lower()
-
-
-def test_clarify_routes_and_trims_choices():
-    seen = {}
-
-    def hook(question, choices):
-        seen["question"] = question
-        seen["choices"] = choices
-        return "  picked B  "
-
-    ctx = FakeCtx(state=FakeState({"user_present": True}), clarify_hook=hook)
-    out = json.loads(clarify_mod.clarify(
-        {"question": " choose ", "choices": ["A", "B", "C", "D", "E"]}, ctx))
-    assert out["user_response"] == "picked B"
-    assert out["question"] == "choose"
-    assert out["choices_offered"] == ["A", "B", "C", "D"]  # capped at 4
-    assert seen["choices"] == ["A", "B", "C", "D"]
-
-
-def test_clarify_empty_choices_open_ended():
-    ctx = FakeCtx(state=FakeState({"user_present": True}),
-                  clarify_hook=lambda q, c: "free text")
-    out = json.loads(clarify_mod.clarify({"question": "q", "choices": []}, ctx))
-    assert out["choices_offered"] is None
-    assert out["user_response"] == "free text"
-
-
-def test_clarify_hook_exception():
-    def boom(q, c):
-        raise RuntimeError("frontend down")
-
-    ctx = FakeCtx(state=FakeState({"user_present": True}), clarify_hook=boom)
-    out = json.loads(clarify_mod.clarify({"question": "q"}, ctx))
-    assert "error" in out and "frontend down" in out["error"]
-
-
-# --------------------------------------------------------------------------- #
-# terminal clarify hook (front/terminal.py)
+# terminal clarify hook (front/terminal.py) — dormant interactive-question
+# plumbing kept after the clarify tool was retired; its parsing still has tests.
 # --------------------------------------------------------------------------- #
 
 def _wire_stdin(monkeypatch, lines):
@@ -212,15 +161,6 @@ def test_terminal_clarify_out_of_range_is_free_text(monkeypatch):
 def test_terminal_clarify_empty_line_returns_blank(monkeypatch):
     term = _wire_stdin(monkeypatch, [""])
     assert term._stdin_clarify_hook("q", ["a"]) == ""
-
-
-def test_terminal_clarify_drives_the_tool(monkeypatch):
-    # End-to-end: the terminal hook feeds clarify a real answer.
-    term = _wire_stdin(monkeypatch, ["1"])
-    hook = term._stdin_clarify_hook
-    ctx = FakeCtx(state=FakeState({"user_present": True}), clarify_hook=hook)
-    out = json.loads(clarify_mod.clarify({"question": "go?", "choices": ["yes", "no"]}, ctx))
-    assert out["user_response"] == "yes"
 
 
 # --------------------------------------------------------------------------- #
