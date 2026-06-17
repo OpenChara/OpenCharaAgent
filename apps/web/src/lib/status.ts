@@ -37,6 +37,11 @@ export interface StatusLine {
   cls: "" | "err" | "msg";
 }
 
+/** Raw error → message string (the un-translated variant; for system lines etc.). */
+export function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 /** Error kind → human reason. app.js:207 errText. */
 export function errText(t: TFn, err: { kind?: string } | null | undefined): string {
   const kind = err && err.kind ? err.kind : "provider";

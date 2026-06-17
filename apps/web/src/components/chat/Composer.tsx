@@ -8,6 +8,7 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useT } from "../../i18n";
+import { errMsg } from "../../lib/status";
 import type { StagedAttachment } from "../../hooks/useCharaStream";
 import { readAttachment, humanSize, ATTACH_MAX_BYTES, ATTACH_ACCEPT_ALL } from "./attachments";
 
@@ -75,7 +76,7 @@ export function Composer({
         const att = await readAttachment(f);
         setStaged((prev) => [...prev, att]);
       } catch (e) {
-        onError(e instanceof Error ? e.message : String(e));
+        onError(errMsg(e));
       }
     }
   };

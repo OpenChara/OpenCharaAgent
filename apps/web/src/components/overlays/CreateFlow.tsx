@@ -23,6 +23,7 @@ import {
   type NormalizedDraft,
 } from "../../lib/cards";
 import { CardField, CardBlock, cardCtxString, type FieldHandle } from "../deck/CardField";
+import { useDirtyGuard } from "../../hooks/useDirtyGuard";
 import { DeckModal } from "../ui/DeckModal";
 import { deckToast } from "../ui/deckToast";
 import type { DeckCard, ModelInfo } from "../deck/types";
@@ -66,18 +67,14 @@ export function CreateFlow({ onClose }: { onClose: () => void }) {
   const [step, setStep] = useState<Step>("tell");
   const [origin, setOrigin] = useState("");
   const draftRef = useRef<NormalizedDraft | null>(null);
-  const dirty = useRef(false);
 
-  // Dirty-guard: typing the telling or any shape-step edit flags dirty, so a stray
-  // Esc/backdrop/Cancel can't silently throw away a half-built character.
-  const guardedClose = () => {
-    if (dirty.current && !confirm(t("discard-edits-q"))) return;
-    onClose();
-  };
+  // Dirty-guard (shared hook): typing the telling or any shape-step edit flags
+  // dirty, so a stray Esc/backdrop/Cancel can't throw away a half-built character.
+  const { guardedClose, dirtyProps } = useDirtyGuard(onClose);
 
   return (
     <DeckModal open variant="wide" onClose={guardedClose}>
-      <div className="flow" onInput={() => (dirty.current = true)} onChange={() => (dirty.current = true)}>
+      <div className="flow" {...dirtyProps}>
         {step === "tell" ? (
           <TellStep
             t={t}

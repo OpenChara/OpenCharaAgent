@@ -13,7 +13,7 @@
 import { CharaClient } from "../rpc";
 import type { ProtocolEvent } from "../protocol";
 import type { TFn } from "../i18n";
-import type { LifeSnapshot } from "../lib/status";
+import { errMsg, type LifeSnapshot } from "../lib/status";
 import { StreamModel, type RestoredMessage } from "../components/chat/streamModel";
 
 export interface AttachInfo {
@@ -223,8 +223,4 @@ async function handleOpening(
   } else if (info.opening === "probe" && text) {
     await deps.runStream(() => client.send(text));
   }
-}
-
-export function errMsg(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
 }

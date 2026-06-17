@@ -16,9 +16,9 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { CharaClient } from "../rpc";
 import type { ProtocolEvent } from "../protocol";
 import { useT, type TFn } from "../i18n";
-import { lifeWord, type LifeSnapshot } from "../lib/status";
+import { errMsg, lifeWord, type LifeSnapshot } from "../lib/status";
 import { StreamModel, type StreamItem, type UserAttachment } from "../components/chat/streamModel";
-import { ChatSession, errMsg } from "./chatSession";
+import { ChatSession } from "./chatSession";
 
 /** A staged/sent attachment: local preview + the raw-base64 wire payload. */
 export interface StagedAttachment extends UserAttachment {

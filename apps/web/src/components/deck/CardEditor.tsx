@@ -16,6 +16,7 @@ import { rpcErrText } from "../../lib/status";
 import { glyphOf, paletteClass } from "../../lib/format";
 import { sectionText, serializeCardFields, type NormalizedDraft, type CardData } from "../../lib/cards";
 import { CardField, CardBlock, cardCtxString, type FieldHandle } from "./CardField";
+import { useDirtyGuard } from "../../hooks/useDirtyGuard";
 import { Avatar, avatarSrc, themeOf, themeStyle } from "./visual";
 import { VisualEditor } from "./VisualEditor";
 import { deckToast, deckToastAction } from "../ui/deckToast";
@@ -54,7 +55,11 @@ export function CardEditor({
   const fWorld = useRef<FieldHandle>(null);
   const fOnAttach = useRef<FieldHandle>(null);
   const fOnDetach = useRef<FieldHandle>(null);
-  const dirty = useRef(false);
+
+  // Dirty-guard (shared hook) — declared with the other hooks, before any early
+  // return. A stray Esc/backdrop/Cancel can't silently drop a long card edit; never
+  // closes mid save/duplicate. A successful save/delete closes via the raw onClose.
+  const { guardedClose, dirtyProps } = useDirtyGuard(onClose, () => saving || dupBusy);
 
   useEffect(() => {
     let alive = true;
@@ -210,18 +215,9 @@ export function CardEditor({
   // SVG-gen + dual-theme AvatarEditor overlay was retired — VisualEditor replaces it.
   const goVisual = () => setTab("vis");
 
-  // Dirty-guard: any contenteditable/input edit bubbles to the container's onInput/
-  // onChange and flags dirty, so a stray Esc/backdrop/Cancel can't silently drop a
-  // long card edit. A successful save/delete closes via the raw onClose (no guard).
-  const guardedClose = () => {
-    if (saving || dupBusy) return; // never close mid-operation
-    if (dirty.current && !confirm(t("discard-edits-q"))) return;
-    onClose();
-  };
-
   return (
     <DeckModal open variant="cardview" onClose={guardedClose} style={themeStyle(card)}>
-      <div className="cardview" onInput={() => (dirty.current = true)} onChange={() => (dirty.current = true)}>
+      <div className="cardview" {...dirtyProps}>
         {note && (
           <div className="cv-note cv-note-top">
             {note === "av-frozen-note" ? t(note, { names: (card.used_by || []).join("、") }) : t(note)}
@@ -406,30 +402,18 @@ function ArtTile({
   url,
   name,
   sq,
-  onClick,
-  title,
 }: {
   labelKey: TKey;
   url?: string;
   name: string;
   sq?: boolean;
-  onClick?: () => void;
-  title?: string;
 }) {
   const t = useT();
   return (
     <div className={"cv-tile" + (sq ? " sq" : "")}>
       <div
         className={"cv-art" + (url ? "" : " empty " + paletteClass(name))}
-        style={
-          url
-            ? { backgroundImage: `url("${assetUrl(String(url)).replace(/"/g, "%22")}")`, ...(onClick ? { cursor: "pointer" } : {}) }
-            : onClick
-              ? { cursor: "pointer" }
-              : undefined
-        }
-        onClick={onClick}
-        title={onClick ? title : undefined}
+        style={url ? { backgroundImage: `url("${assetUrl(String(url)).replace(/"/g, "%22")}")` } : undefined}
       >
         {!url && <div className="cv-art-glyph">{glyphOf(name)}</div>}
       </div>

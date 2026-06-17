@@ -14,6 +14,7 @@ import { useNavigate } from "../../hooks/useHashRoute";
 import { rpcErrText } from "../../lib/status";
 import { sectionText, serializeCardFields, type NormalizedDraft, type CardData } from "../../lib/cards";
 import { CardField, CardBlock, cardCtxString, type FieldHandle } from "./CardField";
+import { useDirtyGuard } from "../../hooks/useDirtyGuard";
 import { Caps } from "./Caps";
 import { deckToast } from "../ui/deckToast";
 import { DeckModal } from "../ui/DeckModal";
@@ -49,7 +50,6 @@ export function WakeSheet({ card, onClose }: { card: DeckCard; onClose: () => vo
   // step-1 content fields (uncontrolled, read on wake)
   const rawRef = useRef<{ name?: string; data?: Record<string, unknown> }>({ data: {} });
   const charNameRef = useRef(card.name);
-  const dirty = useRef(false);
   const fName = useRef<FieldHandle>(null);
   const fUserName = useRef<FieldHandle>(null);
   const fUserPersona = useRef<FieldHandle>(null);
@@ -188,13 +188,8 @@ export function WakeSheet({ card, onClose }: { card: DeckCard; onClose: () => vo
   const charName = charNameRef.current;
   const modelInfo = models.find((m) => m.id === model.trim());
 
-  // Dirty-guard: edits bubble to onInput/onChange; never close mid-wake, and warn
-  // before discarding unsaved edits on a stray Esc/backdrop/Cancel.
-  const guardedClose = () => {
-    if (waking) return;
-    if (dirty.current && !confirm(t("discard-edits-q"))) return;
-    onClose();
-  };
+  // Dirty-guard (shared hook): never close mid-wake; warn before discarding edits.
+  const { guardedClose, dirtyProps } = useDirtyGuard(onClose, () => waking);
 
   return (
     <DeckModal open variant="wide" onClose={guardedClose}>
@@ -203,7 +198,7 @@ export function WakeSheet({ card, onClose }: { card: DeckCard; onClose: () => vo
           <span className="spin" /> {t("thinking-live")}
         </div>
       ) : (
-        <div onInput={() => (dirty.current = true)} onChange={() => (dirty.current = true)}>
+        <div {...dirtyProps}>
           <div className="wake-steps">
             <i className={step === 1 ? "on" : "done"} />
             <i className={step === 2 ? "on" : ""} />
