@@ -11,7 +11,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useT } from "../i18n";
 import { useNavigate, type ChatSub } from "../hooks/useHashRoute";
-import { useHub } from "../state/hub";
+import { useHubApi } from "../state/hub";
 import { glyphOf, paletteClass } from "../lib/format";
 import { useCharaStream, type Snapshot } from "../hooks/useCharaStream";
 import { StreamItemView } from "../components/chat/StreamItems";
@@ -121,7 +121,7 @@ export function Chat({ name, sub }: { name: string; sub: ChatSub }) {
    scrollDown's near-bottom guard). */
 function ChatStreamPage({ stream }: { stream: ReturnType<typeof useCharaStream> }) {
   const t = useT();
-  const { hub } = useHub();
+  const { hub } = useHubApi();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [superReadTs, setSuperReadTs] = useState(0);
   const technical = false; // the "technical" display mode toggle (default off)

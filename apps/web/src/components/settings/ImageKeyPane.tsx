@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useT } from "../../i18n";
-import { useHub } from "../../state/hub";
+import { useHubApi } from "../../state/hub";
 import { rpcErrText } from "../../lib/status";
 import { deckToast } from "../ui/deckToast";
 
@@ -16,7 +16,7 @@ interface ImageDefaults {
 
 export function ImageKeyPane() {
   const t = useT();
-  const { hub } = useHub();
+  const { hub } = useHubApi();
   const [has, setHas] = useState(false);
   const [model, setModel] = useState("");
   const [key, setKey] = useState("");

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useT } from "../../i18n";
-import { useHub } from "../../state/hub";
+import { useHubApi } from "../../state/hub";
 import { rpcErrText } from "../../lib/status";
 import { deckToast } from "../ui/deckToast";
 
@@ -20,7 +20,7 @@ interface KeyRow {
 
 export function KeysPane() {
   const t = useT();
-  const { hub } = useHub();
+  const { hub } = useHubApi();
   const [rows, setRows] = useState<KeyRow[] | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [adding, setAdding] = useState(false);

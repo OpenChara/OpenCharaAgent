@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import { useT, type TKey } from "../../i18n";
-import { useHub } from "../../state/hub";
+import { useHubApi } from "../../state/hub";
 import { rpcErrText } from "../../lib/status";
 import { deckToast } from "../ui/deckToast";
 import {
@@ -36,7 +36,7 @@ const PLAT_KEYS = Object.keys(GW_PLATFORMS);
 
 export function GatewayPane({ name }: { name: string }) {
   const t = useT();
-  const { hub } = useHub();
+  const { hub } = useHubApi();
 
   const [cfg, setCfg] = useState<MessagingConfig | null>(null);
   const [status, setStatus] = useState<GatewayStatus>({ state: "stopped", platform: "", detail: "" });
@@ -277,7 +277,7 @@ type QrState =
 
 function QrSection({ name, onConfirmed }: { name: string; onConfirmed: () => void }) {
   const t = useT();
-  const { hub } = useHub();
+  const { hub } = useHubApi();
   const [s, setS] = useState<QrState>({ phase: "idle", refetch: false });
   const aliveRef = useRef(true);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);

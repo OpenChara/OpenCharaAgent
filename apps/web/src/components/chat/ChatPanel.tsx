@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from "react";
 import { useT } from "../../i18n";
-import { useHub } from "../../state/hub";
+import { useHubApi } from "../../state/hub";
 import { GatewayPane } from "./GatewayPane";
 import type { CharaStream, Snapshot } from "../../hooks/useCharaStream";
 
@@ -163,7 +163,7 @@ function StatusPane({ stream, onTab }: { stream: CharaStream; onTab: (t: PanelTa
 
 function SkillsPane({ stream, name }: { stream: CharaStream; name: string }) {
   const t = useT();
-  const { hub } = useHub();
+  const { hub } = useHubApi();
   const [pack, setPack] = useState("");
   const [skills, setSkills] = useState<string | null>(null);
   useEffect(() => {
@@ -216,7 +216,7 @@ interface Extras {
 
 function WishesPane({ name }: { name: string }) {
   const t = useT();
-  const { hub } = useHub();
+  const { hub } = useHubApi();
   const [goals, setGoals] = useState<{ text: string; status: string }[] | null>(null);
   useEffect(() => {
     let on = true;
@@ -262,7 +262,7 @@ function WishesPane({ name }: { name: string }) {
 
 function MemoryPane({ name }: { name: string }) {
   const t = useT();
-  const { hub } = useHub();
+  const { hub } = useHubApi();
   const [ex, setEx] = useState<Extras | null>(null);
   useEffect(() => {
     let on = true;

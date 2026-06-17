@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { I18nProvider } from "./i18n";
-import { HubProvider, useHub } from "./state/hub";
+import { HubProvider, useHubState } from "./state/hub";
 import { OverlayProvider } from "./state/overlay";
 import { useHashRoute } from "./hooks/useHashRoute";
 import { Sidebar } from "./components/Sidebar";
@@ -17,9 +17,16 @@ import { Chat } from "./views/Chat";
    switches the main pane; the chara page is a full-bleed view without the board
    chrome. Views land per Track C against this contract (see Board.tsx). */
 
+/* The connection dot is the ONLY part of the shell that reads live hub state, so
+   it's its own leaf: that keeps every ~1/sec life.state push from re-rendering
+   Shell (and with it Sidebar + the whole routed view tree). */
+function ConnDot() {
+  const { connected } = useHubState();
+  return <i id="conn-dot" className={connected ? "ok" : ""} />;
+}
+
 function Shell() {
   const route = useHashRoute();
-  const { connected } = useHub();
 
   return (
     <div id="app">
@@ -33,7 +40,7 @@ function Shell() {
       </div>
       <div id="statusbar">
         <span className="grow" />
-        <i id="conn-dot" className={connected ? "ok" : ""} />
+        <ConnDot />
       </div>
       <OverlayHost />
     </div>

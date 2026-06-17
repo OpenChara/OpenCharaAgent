@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useT } from "../../i18n";
-import { useHub } from "../../state/hub";
+import { useHubApi } from "../../state/hub";
 import { fmtSize } from "../../lib/format";
 
 interface Work {
@@ -28,7 +28,7 @@ const ICONS: Record<string, string> = { image: "▣", web: "❖", audio: "♪", 
 
 export function ChatWorks({ name, sandboxRoot }: { name: string; sandboxRoot?: string }) {
   const t = useT();
-  const { hub } = useHub();
+  const { hub } = useHubApi();
   const [works, setWorks] = useState<Work[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
   const [preview, setPreview] = useState<{ work: Work; body: PreviewBody } | null>(null);
@@ -118,7 +118,7 @@ function WorksList({
 }: {
   works: Work[];
   t: ReturnType<typeof useT>;
-  hub: ReturnType<typeof useHub>["hub"];
+  hub: ReturnType<typeof useHubApi>["hub"];
   onOpen: (w: Work) => void;
 }) {
   const rows: React.ReactNode[] = [];
@@ -186,7 +186,7 @@ function WorkPreview({
   onClose,
 }: {
   preview: { work: Work; body: PreviewBody };
-  hub: ReturnType<typeof useHub>["hub"];
+  hub: ReturnType<typeof useHubApi>["hub"];
   onClose: () => void;
 }) {
   const t = useT();

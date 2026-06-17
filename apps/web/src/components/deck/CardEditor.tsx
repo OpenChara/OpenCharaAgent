@@ -11,7 +11,7 @@
 import { useEffect, useRef, useState } from "react";
 import { assetUrl } from "../../rpc";
 import { useT, type TKey } from "../../i18n";
-import { useHub } from "../../state/hub";
+import { useHubApi } from "../../state/hub";
 import { rpcErrText } from "../../lib/status";
 import { glyphOf, paletteClass } from "../../lib/format";
 import { sectionText, serializeCardFields, type NormalizedDraft, type CardData } from "../../lib/cards";
@@ -36,7 +36,7 @@ export function CardEditor({
   onWake: (c: DeckCard) => void;
 }) {
   const t = useT();
-  const { hub } = useHub();
+  const { hub } = useHubApi();
   const [full, setFull] = useState<FullCard | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("set");

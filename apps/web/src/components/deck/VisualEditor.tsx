@@ -17,7 +17,7 @@
 import { useRef, useState } from "react";
 import { assetUrl } from "../../rpc";
 import { useT, type TFn } from "../../i18n";
-import { useHub } from "../../state/hub";
+import { useHubApi } from "../../state/hub";
 import { rpcErrText } from "../../lib/status";
 import { deckToast } from "../ui/deckToast";
 import { AVATAR_EXTS, AVATAR_UPLOAD_MAX } from "../overlays/avatar";
@@ -107,7 +107,7 @@ export function VisualEditor({
   onChanged: () => void;
 }) {
   const t = useT();
-  const { hub, refresh } = useHub();
+  const { hub, refresh } = useHubApi();
   const [refs, setRefs] = useState<Ref[]>([]);
   // The brief is built once via card.visual_brief and reused across the set so
   // "generate all" pays for ONE brief, not one per asset.

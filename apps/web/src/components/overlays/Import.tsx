@@ -8,7 +8,7 @@
 
 import { useRef, useState } from "react";
 import { useT } from "../../i18n";
-import { useHub } from "../../state/hub";
+import { useHubApi } from "../../state/hub";
 import { useNavigate } from "../../hooks/useHashRoute";
 import { DeckModal } from "../ui/DeckModal";
 import { deckToast } from "../ui/deckToast";
@@ -16,7 +16,7 @@ import { importCardFile, isCardFile } from "./importCard";
 
 export function Import({ onClose }: { onClose: () => void }) {
   const t = useT();
-  const { refresh } = useHub();
+  const { refresh } = useHubApi();
   const nav = useNavigate();
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);

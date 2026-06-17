@@ -9,7 +9,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useT, useLang } from "../../i18n";
-import { useHub } from "../../state/hub";
+import { useHub, useHubApi } from "../../state/hub";
 import { errText, rpcErrText } from "../../lib/status";
 import { Caps } from "../deck/Caps";
 import { DeckModal } from "../ui/DeckModal";
@@ -239,7 +239,7 @@ function ProviderRow({
    rendered as a modal. Optimistic per-row checkboxes; Apply shows a working state. */
 function KeyUpdatePrompt({ candidates, onClose }: { candidates: KeyCandidate[]; onClose: () => void }) {
   const t = useT();
-  const { hub, refresh } = useHub();
+  const { hub, refresh } = useHubApi();
   const [checked, setChecked] = useState<Set<string>>(() => new Set(candidates.map((c) => c.name)));
   const [applying, setApplying] = useState(false);
 

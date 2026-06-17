@@ -37,7 +37,21 @@ interface HubContextValue {
   refresh: () => Promise<void>;
 }
 
-const HubContext = createContext<HubContextValue | null>(null);
+/** The STABLE half — `hub` (one instance) + `refresh` (a stable callback). Its
+ *  value never changes after mount, so subscribing to it costs zero re-renders.
+ *  Components that only CALL the hub (the ~14 RPC-only consumers) use this. */
+interface HubApi {
+  hub: HubClient;
+  refresh: () => Promise<void>;
+}
+/** The CHANGING half — connection + roster snapshot, updated on every hub push. */
+interface HubStateValue {
+  connected: boolean;
+  snapshot: HubSnapshot | null;
+}
+
+const HubApiContext = createContext<HubApi | null>(null);
+const HubStateContext = createContext<HubStateValue | null>(null);
 
 export function HubProvider({ children }: { children: ReactNode }) {
   const hub = useMemo(() => new HubClient(), []);
@@ -95,15 +109,35 @@ export function HubProvider({ children }: { children: ReactNode }) {
     };
   }, [hub, refresh]);
 
-  const value = useMemo(
-    () => ({ hub, connected, snapshot, refresh }),
-    [hub, connected, snapshot, refresh],
+  // Stable: only changes if hub/refresh identity changes (they don't, post-mount).
+  const api = useMemo<HubApi>(() => ({ hub, refresh }), [hub, refresh]);
+  // Changing: a new object whenever connection or snapshot updates.
+  const state = useMemo<HubStateValue>(() => ({ connected, snapshot }), [connected, snapshot]);
+  return (
+    <HubApiContext.Provider value={api}>
+      <HubStateContext.Provider value={state}>{children}</HubStateContext.Provider>
+    </HubApiContext.Provider>
   );
-  return <HubContext.Provider value={value}>{children}</HubContext.Provider>;
 }
 
-export function useHub(): HubContextValue {
-  const ctx = useContext(HubContext);
-  if (!ctx) throw new Error("useHub must be used within a HubProvider");
+/** Subscribe to the STABLE hub API ({hub, refresh}) — no re-render on hub pushes.
+ *  Use this in components that only call the hub and never read the snapshot. */
+export function useHubApi(): HubApi {
+  const ctx = useContext(HubApiContext);
+  if (!ctx) throw new Error("useHubApi must be used within a HubProvider");
   return ctx;
+}
+
+/** Subscribe to the CHANGING hub state ({connected, snapshot}) — re-renders on
+ *  every push. Use this when you only need connection/snapshot, not the API. */
+export function useHubState(): HubStateValue {
+  const ctx = useContext(HubStateContext);
+  if (!ctx) throw new Error("useHubState must be used within a HubProvider");
+  return ctx;
+}
+
+/** The combined view ({hub, connected, snapshot, refresh}) for consumers that
+ *  need both the API and the snapshot. Re-renders on push (it reads state). */
+export function useHub(): HubContextValue {
+  return { ...useHubApi(), ...useHubState() };
 }
