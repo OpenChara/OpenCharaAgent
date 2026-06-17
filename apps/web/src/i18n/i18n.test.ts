@@ -8,9 +8,10 @@ describe("I18N strings map", () => {
   // (visuals/keys+image/matte, from origin/main) added 44 → 497; retiring the old
   // SVG-avatar-gen + dual-theme pipeline (AvatarControls/AvatarEditor) removed 18
   // (av-ai*, av-color*, av-title, av-image, av-png-note, av-builtin-note,
-  // sec-visual, visual-after-wake) → 479.
-  it("preserves the full key set from the source dict (479 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(479);
+  // sec-visual, visual-after-wake) → 479; the rejoin-gap notice (visible
+  // reconnect-gap) added 1 → 480.
+  it("preserves the full key set from the source dict (480 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(480);
   });
 
   it("every value is a [zh, en] string tuple", () => {

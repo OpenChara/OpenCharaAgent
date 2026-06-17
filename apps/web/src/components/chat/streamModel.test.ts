@@ -129,15 +129,16 @@ describe("StreamModel — super-chat (speak tool)", () => {
     expect(m.items.some((i) => i.kind === "say")).toBe(true);
   });
 
-  it("marks a super unread when its ts is past the read watermark", () => {
+  it("stamps a super bubble with a ts (the view derives read/unread from it)", () => {
     const m = new StreamModel();
-    m.superReadTs = 0;
     m.pushToolStart("speak", "", 0);
     m.pushToolEnd("speak", true, 0, "", 0);
     m.pushText("ping", "say");
     const sup = m.items.find((i) => i.kind === "super") as TextItem;
-    expect(sup.unread).toBe(true);
+    // read/unread is no longer stored on the item — only the ts the view compares
+    // against its own watermark (Chat.tsx superReadTs).
     expect(sup.ts).toBeGreaterThan(0);
+    expect("unread" in sup).toBe(false);
   });
 });
 

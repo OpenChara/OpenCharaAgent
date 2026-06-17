@@ -134,9 +134,13 @@ function ChatStreamPage({ stream }: { stream: ReturnType<typeof useCharaStream> 
     if (nearBottom) sc.scrollTop = sc.scrollHeight;
   }, [stream.items, stream.work]);
 
-  // Read the persisted super-chat read watermark once, then flush newly-seen
-  // super bubbles (chat.js flushSuperReads) when the turn settles + page visible.
+  // Read the persisted super-chat read watermark for the RESOLVED chara, then
+  // flush newly-seen super bubbles (chat.js flushSuperReads) when the turn settles
+  // + page visible. Keyed on charName because it resolves AFTER attach
+  // (info.char_name) — an empty-deps mount read would fetch the pre-attach name's
+  // watermark and never refetch for the real one.
   useEffect(() => {
+    if (!stream.charName) return;
     let on = true;
     hub
       .call<{ read_ts?: number }>("superchat.read", { name: stream.charName, ts: 0 }, 10000)
@@ -145,8 +149,7 @@ function ChatStreamPage({ stream }: { stream: ReturnType<typeof useCharaStream> 
     return () => {
       on = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [stream.charName, hub]);
 
   useEffect(() => {
     if (stream.streaming || document.visibilityState !== "visible") return;

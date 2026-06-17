@@ -20,8 +20,8 @@
  *    calls). finalize() collapses any streaming think blocks.
  *
  * Subtle behaviors interpreted from chat.js, documented here:
- *  - super-chat read/unread is a CSS class applied later by the view from
- *    superReadTs; the model only records the `ts` + the `unread` bit at creation.
+ *  - super-chat read/unread is a CSS class applied later by the view from its own
+ *    read watermark (Chat.tsx superReadTs); the model only records the super's `ts`.
  *  - closeCurrent only markdown-renders say|super (muse/think stay plain text) —
  *    we mirror that by tagging the item with `rendered` so the view picks the
  *    renderer. think text is never markdown.
@@ -67,9 +67,9 @@ export interface TextItem {
   id: string;
   kind: "say" | "super" | "muse";
   raw: string;
-  /** super-chat only: the speak timestamp (epoch s) + whether it's still unread. */
+  /** super-chat only: the speak timestamp (epoch s). Read/unread is derived in the
+   *  view from its own watermark (Chat.tsx superReadTs) — NOT stored on the item. */
   ts?: number;
-  unread?: boolean;
 }
 
 export interface ThinkItem {
@@ -194,11 +194,6 @@ interface Cursor {
   item: TextItem | ThinkItem | null;
 }
 
-let _seq = 0;
-function nextId(): string {
-  return `i${++_seq}`;
-}
-
 /* The stream model: feed protocol events (already decoded), read `items`. It
    intentionally mirrors chat.js's imperative cursor rather than a pure reducer,
    because the in-place text accumulation is the load-bearing behavior. */
@@ -209,8 +204,14 @@ export class StreamModel {
   private turnThink: ThinkItem | null = null;
   private activeTools = new Map<string, ToolChip>();
   private pendingSuper = false;
-  /** the read watermark — super items at/under this ts render as "read". */
-  superReadTs = 0;
+  // Item-id counter, INSTANCE-scoped (not module-global): each model numbers from
+  // 0, so replaying identical restored history yields identical ids — stable React
+  // keys keep a restored ThinkBlock/ToolGroup's local open/scroll state across
+  // re-renders, and tests don't leak ids into each other.
+  private seq = 0;
+  private nextId(): string {
+    return `i${++this.seq}`;
+  }
 
   reset(): void {
     this.items = [];
@@ -219,6 +220,7 @@ export class StreamModel {
     this.turnThink = null;
     this.activeTools.clear();
     this.pendingSuper = false;
+    this.seq = 0;
   }
 
   /* ---- the live event dispatch (chat.js onEvent) ---- */
@@ -274,13 +276,13 @@ export class StreamModel {
   pushAttachment(a: AttachmentItem): void {
     this.closeCurrent();
     this.breakToolGroup();
-    this.items.push({ ...a, id: nextId(), kind: "attachment" });
+    this.items.push({ ...a, id: this.nextId(), kind: "attachment" });
   }
 
   /* ---- user / peer / queued bubbles ---- */
   pushUser(text: string, atts: UserAttachment[], opts?: { queued?: boolean; via?: string }): string {
     this.closeCurrent();
-    const id = nextId();
+    const id = this.nextId();
     this.items.push({ id, kind: "user", text, atts, queued: opts?.queued, via: opts?.via });
     return id;
   }
@@ -291,10 +293,10 @@ export class StreamModel {
 
   /* ---- inline permission / clarify boxes ---- */
   pushPermission(askId: string, title: string, reason: string): void {
-    this.items.push({ id: nextId(), kind: "permission", askId, title, reason });
+    this.items.push({ id: this.nextId(), kind: "permission", askId, title, reason });
   }
   pushClarify(askId: string, question: string, choices: string[]): void {
-    this.items.push({ id: nextId(), kind: "clarify", askId, question, choices });
+    this.items.push({ id: this.nextId(), kind: "clarify", askId, question, choices });
   }
   resolveAsk(askId: string): void {
     this.items = this.items.filter(
@@ -308,7 +310,7 @@ export class StreamModel {
     if (!text) return;
     this.closeCurrent();
     this.breakToolGroup();
-    this.items.push({ id: nextId(), kind: "system", text: String(text).slice(0, 240), cls });
+    this.items.push({ id: this.nextId(), kind: "system", text: String(text).slice(0, 240), cls });
   }
 
   /* ---- finalize a turn (chat.js finalize) ---- */
@@ -332,8 +334,8 @@ export class StreamModel {
       const ts = tsOverride ?? Date.now() / 1000;
       const item: TextItem =
         kind === "super"
-          ? { id: nextId(), kind, raw: "", ts, unread: ts > this.superReadTs }
-          : { id: nextId(), kind, raw: "" };
+          ? { id: this.nextId(), kind, raw: "", ts }
+          : { id: this.nextId(), kind, raw: "" };
       this.items.push(item);
       this.cur = { kind, item };
     }
@@ -345,7 +347,7 @@ export class StreamModel {
     if (this.cur.kind !== "muse") {
       this.closeCurrent();
       this.breakToolGroup();
-      const item: TextItem = { id: nextId(), kind: "muse", raw: "" };
+      const item: TextItem = { id: this.nextId(), kind: "muse", raw: "" };
       this.items.push(item);
       this.cur = { kind: "muse", item };
     }
@@ -359,7 +361,7 @@ export class StreamModel {
       if (this.turnThink && this.items.includes(this.turnThink)) {
         this.cur = { kind: "think", item: this.turnThink };
       } else {
-        const item: ThinkItem = { id: nextId(), kind: "think", raw: "", tokens: 0, streaming: true };
+        const item: ThinkItem = { id: this.nextId(), kind: "think", raw: "", tokens: 0, streaming: true };
         this.items.push(item);
         this.turnThink = item;
         this.cur = { kind: "think", item };
@@ -380,7 +382,7 @@ export class StreamModel {
   private ensureToolGroup(): ToolGroupItem {
     if (this.toolGroup && this.items.includes(this.toolGroup)) return this.toolGroup;
     this.closeCurrent();
-    const group: ToolGroupItem = { id: nextId(), kind: "tool-group", chips: [], tally: {}, fails: 0 };
+    const group: ToolGroupItem = { id: this.nextId(), kind: "tool-group", chips: [], tally: {}, fails: 0 };
     this.items.push(group);
     this.toolGroup = group;
     return group;
@@ -425,7 +427,7 @@ export class StreamModel {
           this.closeCurrent();
           this.breakToolGroup();
           this.items.push({
-            id: nextId(),
+            id: this.nextId(),
             kind: "think",
             raw: reasoning,
             tokens: Math.max(1, estimateTokens(reasoning)),
@@ -463,7 +465,7 @@ export class StreamModel {
     const group = this.ensureToolGroup();
     this.tally(name);
     const chip: ToolChip = {
-      key: callId || nextId(),
+      key: callId || this.nextId(),
       name,
       preview: "",
       running: false,
@@ -484,7 +486,7 @@ export class StreamModel {
     }
     const group = this.ensureToolGroup();
     group.chips.push({
-      key: nextId(),
+      key: this.nextId(),
       name: "result",
       preview: "",
       running: false,

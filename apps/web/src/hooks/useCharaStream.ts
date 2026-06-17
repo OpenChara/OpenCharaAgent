@@ -385,7 +385,17 @@ export function useCharaStream(name: string): CharaStream {
           renderLifeState();
           if (!lifeTimer) lifeTimer = setInterval(renderLifeState, 1000);
         };
-        client.onRejoinGap = () => client.clearRejoin();
+        client.onRejoinGap = () => {
+          // We reconnected having missed events while disconnected — the live
+          // transcript is now incomplete. Surface that instead of swallowing it
+          // (a silent gap is exactly the failure the project's no-hidden-errors
+          // rule guards against); the restored history is intact on re-attach.
+          if (!disposedRef.current) {
+            model.systemLine(t("rejoin-gap"), "arrived");
+            bump();
+          }
+          client.clearRejoin();
+        };
         client.onClose = () => {
           if (!disposedRef.current) {
             setConnected(false);

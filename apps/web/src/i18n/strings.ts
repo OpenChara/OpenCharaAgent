@@ -436,6 +436,7 @@ export const I18N = {
   "imported": ["已导入 {name}", "Imported {name}"],
   "copied": ["副本已放进卡册", "Duplicate added to the deck"],
   "conn-lost": ["连接断开，正在重连…", "Connection lost — reconnecting…"],
+  "rejoin-gap": ["已重新连接——断线期间的部分消息可能未显示。", "Reconnected — some messages from while you were offline may be missing."],
   "login-title": ["登录 LunaMoth", "Sign in to LunaMoth"],
   "login-blurb": ["这是一个公开访问的实例，请输入密码继续。", "This instance is publicly reachable. Enter the password to continue."],
   "login-password": ["密码", "Password"],
