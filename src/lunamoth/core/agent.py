@@ -765,8 +765,8 @@ class LunaMothAgent:
                 }
                 out["display"] = f"🖼️ sent {Path(relp).name}"
             except Exception as exc:  # noqa: BLE001 - surface the failure, don't fake success
-                # The tool said delivered=True, but the file is gone: make the failure
-                # visible to the chara (no silent no-op) so it can react.
+                # The tool reported success (shown=True), but the file is gone: make
+                # the failure visible to the chara (no silent no-op) so it can react.
                 out["ok"] = False
                 out["display"] = f"⚙ send_file ✗ {_abbrev(str(exc), 120)}"
                 out["content"] = f"ERROR: could not send {relp!r}: {exc}"

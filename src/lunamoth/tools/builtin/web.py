@@ -164,18 +164,59 @@ def web_search(args, ctx) -> str:
     return tool_result({"success": True, "data": {"web": results[:limit]}})
 
 
+# DuckDuckGo serves a 202 JS-challenge page (zero parseable results) to the bare
+# library User-Agent; a realistic browser UA gets the real HTML. Still best-effort
+# — DDG can rate-limit/challenge at any time, which is why a configured backend
+# (SearXNG/Serper/Brave) is the reliable path.
+_BROWSER_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+
+
 def _search_duckduckgo(query: str, limit: int) -> list[dict]:
-    """Keyless web search via DuckDuckGo's HTML endpoint. Best-effort HTML parse
-    (no bs4 dep) — the default when no SearXNG/Serper/Brave backend is set."""
+    """Keyless web search via DuckDuckGo's HTML endpoints (no bs4 dep) — the
+    default when no SearXNG/Serper/Brave backend is set.
+
+    Tries the full HTML endpoint, then the lite endpoint. RAISES RuntimeError
+    when DDG is blocked/unparseable (HTTP 202 challenge, page-shape change, rate
+    limit) so the tool surfaces a VISIBLE error — never a misleading empty
+    'success'. Returns [] ONLY for a genuine zero-hit results page."""
     qs = urllib.parse.urlencode({"q": query})
-    status, body, _ = _http_get(f"https://html.duckduckgo.com/html/?{qs}")
-    html = body.decode("utf-8", errors="replace")
-    out: list[dict] = []
-    # Each result: <a ... class="result__a" href="LINK">TITLE</a> ... optionally
-    # a <a class="result__snippet">SNIPPET</a>. DDG wraps LINK in a /l/?uddg= redirect.
+    last_status = 0
+    for url, parse in (
+        (f"https://html.duckduckgo.com/html/?{qs}", _parse_ddg_html),
+        (f"https://lite.duckduckgo.com/lite/?{qs}", _parse_ddg_lite),
+    ):
+        try:
+            status, body, _ = _http_get(url, headers={"User-Agent": _BROWSER_UA})
+        except urllib.error.HTTPError as e:
+            last_status = e.code  # 429/403 on one endpoint — try the next, then raise
+            continue
+        last_status = status
+        if status != 200:
+            continue  # 202 challenge — try the next endpoint
+        html = body.decode("utf-8", errors="replace")
+        results = parse(html, limit)
+        if results:
+            return results
+        if _ddg_says_no_results(html):
+            return []  # genuine zero-result page, honestly empty
+        # HTTP 200 but nothing parseable and no "no results" marker → challenged
+        # or the page shape changed; fall through to the next endpoint, then raise.
+    raise RuntimeError(
+        f"DuckDuckGo returned no parseable results (last HTTP {last_status}) — it is "
+        "likely rate-limiting or challenging requests. Configure a search backend "
+        "(LUNAMOTH_SEARXNG_URL, SERPER_API_KEY, or BRAVE_API_KEY) for reliable search."
+    )
+
+
+def _parse_ddg_html(html: str, limit: int) -> list[dict]:
+    """Parse the full html.duckduckgo.com result markup (result__a / result__snippet)."""
     link_re = re.compile(r'<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', re.S)
     snip_re = re.compile(r'<a[^>]*class="result__snippet"[^>]*>(.*?)</a>', re.S)
     snippets = snip_re.findall(html)
+    out: list[dict] = []
     for i, (href, title) in enumerate(link_re.findall(html)):
         if i >= limit:
             break
@@ -186,6 +227,30 @@ def _search_duckduckgo(query: str, limit: int) -> list[dict]:
             "position": i + 1,
         })
     return out
+
+
+def _parse_ddg_lite(html: str, limit: int) -> list[dict]:
+    """Parse the lite.duckduckgo.com fallback markup (anchors with class result-link)."""
+    link_re = re.compile(r'<a[^>]*class=[\'"]result-link[\'"][^>]*href="([^"]+)"[^>]*>(.*?)</a>', re.S)
+    snip_re = re.compile(r'<td[^>]*class=[\'"]result-snippet[\'"][^>]*>(.*?)</td>', re.S)
+    snippets = snip_re.findall(html)
+    out: list[dict] = []
+    for i, (href, title) in enumerate(link_re.findall(html)):
+        if i >= limit:
+            break
+        out.append({
+            "title": _strip_html(title),
+            "url": _ddg_unwrap(href),
+            "description": _strip_html(snippets[i]) if i < len(snippets) else "",
+            "position": i + 1,
+        })
+    return out
+
+
+def _ddg_says_no_results(html: str) -> bool:
+    """True when DDG's page explicitly reports zero hits (vs a challenge/shape change)."""
+    low = html.lower()
+    return "no-results" in low or "no results." in low or "no results found" in low
 
 
 def _ddg_unwrap(href: str) -> str:

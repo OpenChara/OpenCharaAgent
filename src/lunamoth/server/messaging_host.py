@@ -24,6 +24,7 @@ from typing import Any
 
 from ..messaging.access import RefusalThrottle, sender_allowed
 from ..messaging.base import Adapter, DeliveryDeferred, InboundMessage
+from ..messaging.media import deliver_attachment
 from ..messaging.gateway import (
     DEFAULT_REFUSAL,
     MessageDeduplicator,
@@ -34,12 +35,19 @@ from ..messaging.gateway import (
 )
 from ..messaging.filters import is_silence_narration
 from ..messaging.text import split_text
-from ..protocol import SAY, TextDelta
+from ..protocol import SAY, Attachment, TextDelta
+from .dispatch import RpcError
 
 _log = logging.getLogger("lunamoth.server.messaging_host")
 
 # One bounded retry for a failed adapter.send() (mirrors the standalone gateway).
 _SEND_RETRY_DELAY = 3.0
+
+# When an inbound turn can't start because another turn (the desktop app) is
+# mid-flight, WAIT and retry instead of dropping the message (the -32011 collision
+# that silently lost WeChat messages). ~3s total, then an honest "still busy" note.
+_TURN_WAIT_DELAY = 0.3
+_TURN_WAIT_ATTEMPTS = 10
 
 
 class MessagingHost:
@@ -62,6 +70,12 @@ class MessagingHost:
         self._state = "stopped"
         self._detail = ""
         self._ack: str | None = None  # cached "got it" receipt (char name + lang)
+        # Proactive superchat buffer: a chara's idle/self-work `speak` (an idle
+        # turn the SUPERVISOR drives, never this host) is observed via the
+        # dispatcher's stream tap and pushed to the gateway at turn end — so a
+        # superchat reaches the user on WeChat too, not just the desktop window.
+        self._proactive_say: list[str] = []
+        self._proactive_atts: list[Attachment] = []
 
     def _ack_text(self) -> str:
         """A one-line receipt sent the moment an inbound message arrives, so the
@@ -77,6 +91,12 @@ class MessagingHost:
             self._ack = (f"{name}收到，思考/工作中，请稍等…" if zh
                          else f"{name} got it — thinking, one moment…")
         return self._ack
+
+    def _busy_text(self) -> str:
+        """Honest note when an inbound turn couldn't get the shared agent within
+        the wait window (a long desktop turn held it) — never silent."""
+        zh = self._ack is not None and "收到" in self._ack
+        return "（还在忙，稍后回复你）" if zh else "(still busy — I'll get back to you shortly)"
 
     # ---- control ------------------------------------------------------------
 
@@ -124,6 +144,10 @@ class MessagingHost:
                     target=self._relay_loop, name="lunamoth-messaging-relay", daemon=True,
                 )
                 self._relay.start()
+                # Observe the chara's PROACTIVE turns (supervisor idle/self-work)
+                # so a superchat reaches the gateway, not just the desktop window.
+                with contextlib.suppress(Exception):
+                    self._dispatcher.set_stream_observer(self._on_stream_event)
             if ready:
                 self._state = "running"
                 self._detail = (
@@ -143,6 +167,10 @@ class MessagingHost:
     def stop(self) -> dict[str, Any]:
         with self._lock:
             self._stop.set()
+            with contextlib.suppress(Exception):
+                self._dispatcher.set_stream_observer(None)
+            self._proactive_say.clear()
+            self._proactive_atts.clear()
             for adapter in self._adapters:
                 try:
                     adapter.close()
@@ -207,10 +235,13 @@ class MessagingHost:
                     self._send(adapter, reply.text)
                 return
             chunks: list[str] = []
+            atts: list[Attachment] = []
 
             def collect(ev: Any) -> None:
                 if isinstance(ev, TextDelta) and ev.channel == SAY:
                     chunks.append(ev.text)
+                elif isinstance(ev, Attachment) and ev.channel == SAY:
+                    atts.append(ev)  # a send_file — deliver it (or an honest note)
 
             # Show the incoming message in the app window first (an incoming
             # bubble), THEN stream the chara's reply — so the conversation reads
@@ -231,20 +262,85 @@ class MessagingHost:
             # Pass attachments through to the agent's ingest path; keep the
             # legacy single-arg call when there are none so existing handles
             # (and stubs) that take only `text` still work.
-            self._dispatcher.run_stream_sync(
-                "wechat",
-                (
-                    (lambda: self._dispatcher.handle.stream_user(text, attachments=attachments))
-                    if attachments
-                    else (lambda: self._dispatcher.handle.stream_user(text))
-                ),
-                collect,
+            make = (
+                (lambda: self._dispatcher.handle.stream_user(text, attachments=attachments))
+                if attachments
+                else (lambda: self._dispatcher.handle.stream_user(text))
             )
+            # A concurrent desktop turn (run_stream_sync supersedes IDLE, but a
+            # human 'send' raises -32011): wait for it and retry rather than
+            # dropping this WeChat message. Only if it's still busy after the
+            # window do we surface an honest "busy" note — never silence.
+            ran = False
+            for attempt in range(_TURN_WAIT_ATTEMPTS):
+                try:
+                    self._dispatcher.run_stream_sync("wechat", make, collect)
+                    ran = True
+                    break
+                except RpcError as e:
+                    if getattr(e, "code", None) == -32011 and not self._stop.is_set():
+                        if attempt < _TURN_WAIT_ATTEMPTS - 1:
+                            time.sleep(_TURN_WAIT_DELAY)
+                            continue
+                        break  # window exhausted → fall through to the honest busy note
+                    raise
+            if not ran:
+                self._send(adapter, self._busy_text())
+                return
             say = "".join(chunks).strip()
             if say:
                 self._send(adapter, say)
+            for att in atts:
+                self._send_attachment(adapter, att)
         finally:
             adapter.clear_reply_target()
+
+    def _send_attachment(self, adapter: Adapter, att: Attachment) -> None:
+        """Deliver a send_file attachment via the shared media helper (real upload
+        if the adapter supports it, else an honest 'file generated' note)."""
+        zh = self._ack is not None and "收到" in (self._ack or "")
+        deliver_attachment(adapter, att, lambda t: self._send(adapter, t), zh=zh)
+
+    def _on_stream_event(self, kind: str, ev: Any, turn_end: bool, interrupted: bool) -> None:
+        """Dispatcher stream tap. Only PROACTIVE self-work turns (kind=='idle',
+        driven by the supervisor — never this host's own 'wechat' turns) are
+        forwarded: buffer their say-channel output and, at turn end, push it to
+        the gateway as a superchat. The host's inbound replies are handled in
+        _process; desktop 'send' turns are operator-local and never pushed."""
+        if kind != "idle" or not self._adapters:
+            return
+        if turn_end:
+            if interrupted:
+                with self._lock:
+                    self._proactive_say.clear()
+                    self._proactive_atts.clear()
+                return
+            self._flush_proactive()
+            return
+        if isinstance(ev, TextDelta) and ev.channel == SAY:
+            with self._lock:
+                self._proactive_say.append(ev.text)
+        elif isinstance(ev, Attachment) and ev.channel == SAY:
+            with self._lock:
+                self._proactive_atts.append(ev)
+
+    def _flush_proactive(self) -> None:
+        """Push a completed idle turn's buffered superchat to every adapter (no
+        reply target → the adapter's default/last peer). Honest: an adapter with
+        no destination yet raises DeliveryDeferred, caught in _send."""
+        with self._lock:
+            text = "".join(self._proactive_say).strip()
+            atts = list(self._proactive_atts)
+            adapters = list(self._adapters)
+            self._proactive_say.clear()
+            self._proactive_atts.clear()
+        if not text and not atts:
+            return
+        for adapter in adapters:
+            if text:
+                self._send(adapter, text)
+            for att in atts:
+                self._send_attachment(adapter, att)
 
     def _send(self, adapter: Adapter, text: str) -> None:
         """Deliver one outbound message; a transient send error never crashes

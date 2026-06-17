@@ -62,6 +62,15 @@ class Adapter(abc.ABC):
     def send(self, text: str) -> None:
         raise NotImplementedError
 
+    def send_media(self, source: str, mime: str = "", caption: str = "") -> None:
+        """Send a file/image to the platform. `source` is a local filesystem path.
+
+        The DEFAULT raises :class:`DeliveryDeferred` — a platform that can't (yet)
+        upload media says so honestly, and the host falls back to a text note
+        rather than pretending the file was delivered (the send_file-over-gateway
+        bug). Override per platform with a real upload (iLink media, etc.)."""
+        raise DeliveryDeferred(f"{self.name} cannot send files on this channel yet")
+
     def set_reply_target(self, message: InboundMessage) -> None:
         """Select the destination for sends caused by one inbound message.
 

@@ -50,8 +50,13 @@ def send_file(args, ctx) -> str:
     if size > _MAX_SEND_BYTES:
         return tool_error(f"file is too large to send ({size} bytes; limit ~8MB)")
     mime, _ = mimetypes.guess_type(str(p))
+    # Honest result: the file is SURFACED into the conversation (the desktop
+    # renders it inline / as a download). It does NOT claim platform delivery —
+    # on a messaging channel, file upload is best-effort (the gateway sends it if
+    # the adapter supports media, else an honest "file generated" note). Never
+    # report `delivered` for a channel that may not be able to deliver it.
     return tool_result(ok=True, path=rel, mime=mime or "application/octet-stream",
-                       caption=str(args.get("caption") or ""), bytes=size, delivered=True)
+                       caption=str(args.get("caption") or ""), bytes=size, shown=True)
 
 
 registry.register(
@@ -61,7 +66,8 @@ registry.register(
             "Show the user a file from your workspace — an image you made or saved, a "
             "document, a sticker from assets/. Images appear inline in the conversation; "
             "other files are offered as a download. Give the workspace-relative `path` and "
-            "an optional `caption`. Like speak, it reaches the user even when they are away."
+            "an optional `caption`. Shown in the conversation; on a messaging channel like "
+            "WeChat, file delivery is best-effort (your text always gets through)."
         ),
         "parameters": {
             "type": "object",

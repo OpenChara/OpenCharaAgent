@@ -123,10 +123,30 @@ class JsonRpcDispatcher:
         self._closed = False
         self.should_close = False
         self._messaging_host: Any = None
+        self._stream_observer: Callable[[str, Any, bool, bool], None] | None = None
 
     def set_messaging_host(self, host: Any) -> None:
         """Bind the in-process messaging host so messaging.* RPCs can drive it."""
         self._messaging_host = host
+
+    def set_stream_observer(self, cb: Callable[[str, Any, bool, bool], None] | None) -> None:
+        """Register a passive tap on EVERY streamed turn — including ones this
+        dispatcher didn't initiate (the supervisor-driven idle/self-work turns).
+        Called as cb(kind, event, turn_end, interrupted): once per event with
+        turn_end=False, then once at the end with event=None, turn_end=True. The
+        messaging host uses it to push a chara's PROACTIVE superchat (an idle-turn
+        say) out to the gateway — the host's own _process never sees idle turns."""
+        self._stream_observer = cb
+
+    def _observe(self, kind: str, ev: Any = None, *, turn_end: bool = False,
+                 interrupted: bool = False) -> None:
+        cb = self._stream_observer
+        if cb is None:
+            return
+        try:
+            cb(kind, ev, turn_end, interrupted)
+        except Exception:  # noqa: BLE001 — an observer must never break the turn
+            _log.exception("stream observer failed")
 
     # ---- public dispatch -----------------------------------------------------
 
@@ -414,6 +434,7 @@ class JsonRpcDispatcher:
                     interrupted = True
                     self._stream_interrupt.set()
                     break
+                self._observe(kind, ev)
                 if on_event is not None:
                     try:
                         on_event(ev)
@@ -426,6 +447,7 @@ class JsonRpcDispatcher:
                     _log.exception("closing interrupted %s stream failed", kind)
         finally:
             self._emit("turn_end", {"kind": kind, "interrupted": interrupted})
+            self._observe(kind, turn_end=True, interrupted=interrupted)
             with self._lock:
                 if threading.current_thread() is self._stream_thread:
                     self._stream_thread = None
@@ -485,6 +507,7 @@ class JsonRpcDispatcher:
                     interrupted = True
                     self._stream_interrupt.set()
                     break
+                self._observe(kind, ev)
                 if self._stream_interrupt.is_set():
                     interrupted = True
                     break
@@ -505,6 +528,7 @@ class JsonRpcDispatcher:
             # window turns its "generating…" indicator ON from the event stream
             # but has no completion to turn it OFF without this signal.
             self._emit("turn_end", {"kind": kind, "interrupted": interrupted})
+            self._observe(kind, turn_end=True, interrupted=interrupted)
             with self._lock:
                 if threading.current_thread() is self._stream_thread:
                     self._stream_thread = None

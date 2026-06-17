@@ -103,6 +103,51 @@ def test_no_backend_configured_falls_back_to_duckduckgo(monkeypatch):
     assert hit["url"] == "https://example.com/a" and hit["title"] == "Example A"
 
 
+def test_ddg_challenge_is_visible_error_not_empty_success(monkeypatch):
+    # The core fix: a 202 anti-bot challenge (zero parseable results) must surface
+    # as a visible error, NOT a misleading {success:true, web:[]} — that empty
+    # 'success' was read by charas as "the tools are down" (operator: 你的tools挂了).
+    _clear_backend_env(monkeypatch)
+    monkeypatch.setattr(web, "_http_get", lambda *a, **k: (202, b"<html>challenge</html>", "text/html"))
+    out = parse(web.web_search({"query": "hi"}, make_ctx()))
+    assert "error" in out
+    assert "duckduckgo" in out["error"].lower() or "search backend" in out["error"].lower()
+
+
+def test_ddg_genuine_no_results_is_honest_empty(monkeypatch):
+    # A real zero-hit page (carries a no-results marker) is honestly empty success.
+    _clear_backend_env(monkeypatch)
+    monkeypatch.setattr(web, "_http_get",
+                        lambda *a, **k: (200, b'<div class="no-results">No results.</div>', "text/html"))
+    out = parse(web.web_search({"query": "zxqw"}, make_ctx()))
+    assert out["success"] is True and out["data"]["web"] == []
+
+
+def test_ddg_unparseable_200_is_error(monkeypatch):
+    # 200 but neither results nor a no-results marker → page shape changed/challenged.
+    _clear_backend_env(monkeypatch)
+    monkeypatch.setattr(web, "_http_get", lambda *a, **k: (200, b"<html><body>?</body></html>", "text/html"))
+    out = parse(web.web_search({"query": "hi"}, make_ctx()))
+    assert "error" in out
+
+
+def test_ddg_falls_back_to_lite_endpoint(monkeypatch):
+    # html endpoint challenged (202) → the lite endpoint's result-link markup parses.
+    _clear_backend_env(monkeypatch)
+    lite = ('<a class="result-link" href="https://example.org/x">Lite Hit</a>'
+            '<td class="result-snippet">snip</td>')
+
+    def fake_get(url, headers=None, timeout=0):
+        if "lite.duckduckgo" in url:
+            return (200, lite.encode(), "text/html")
+        return (202, b"challenge", "text/html")
+
+    monkeypatch.setattr(web, "_http_get", fake_get)
+    out = parse(web.web_search({"query": "hi"}, make_ctx()))
+    assert out["success"] is True
+    assert out["data"]["web"][0]["url"] == "https://example.org/x"
+
+
 def test_check_fn_true_when_searxng_set(monkeypatch):
     _clear_backend_env(monkeypatch)
     monkeypatch.setenv("LUNAMOTH_SEARXNG_URL", "https://searx.example")

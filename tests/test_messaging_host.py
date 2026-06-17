@@ -162,3 +162,146 @@ def test_host_skips_login_pending_adapter_and_reports_needs_login(tmp_path, monk
     host._process(adapter, msg)
     host._process(adapter, msg)  # platform redelivery
     assert handle.user_calls == ["hi"]      # only one turn
+
+
+# ---- ③ no-drop on collision + honest receipt ---------------------------------
+
+class _BusyDispatch:
+    """A dispatcher stub whose run_stream_sync raises -32011 (a desktop turn is
+    mid-flight) the first `fail` times, then runs the turn."""
+
+    def __init__(self, fail: int):
+        self._fail = fail
+        self.calls = 0
+
+    class handle:
+        @staticmethod
+        def stream_user(text, **kw):
+            from lunamoth.protocol import SAY, TextDelta
+            yield TextDelta("reply", SAY)
+
+        @staticmethod
+        def snapshot():
+            raise RuntimeError("no snapshot in this stub")
+
+    def emit_peer_message(self, *a, **k):
+        pass
+
+    def run_stream_sync(self, kind, make, on_event):
+        from lunamoth.server.dispatch import RpcError
+        self.calls += 1
+        if self.calls <= self._fail:
+            raise RpcError(-32011, "a stream is already in flight")
+        for ev in make():
+            on_event(ev)
+
+
+def test_inbound_waits_and_retries_when_agent_busy(monkeypatch):
+    import lunamoth.server.messaging_host as mh
+    monkeypatch.setattr(mh.time, "sleep", lambda *_: None)  # no real waiting
+    dispatch = _BusyDispatch(fail=2)
+    adapter = _Adapter()
+    host = MessagingHost(dispatch, "/tmp/x.json")
+    host._allowed = {"u1"}
+    host._process(adapter, InboundMessage("u1", "Alice", "hi"))
+    assert dispatch.calls == 3                       # retried twice, then ran
+    assert any("reply" in s for s in adapter.sent)   # message NOT dropped
+
+
+def test_inbound_busy_note_when_agent_never_frees(monkeypatch):
+    import lunamoth.server.messaging_host as mh
+    monkeypatch.setattr(mh.time, "sleep", lambda *_: None)
+    dispatch = _BusyDispatch(fail=999)               # never frees
+    adapter = _Adapter()
+    host = MessagingHost(dispatch, "/tmp/x.json")
+    host._allowed = {"u1"}
+    host._process(adapter, InboundMessage("u1", "Alice", "hi"))
+    # ack + an honest "still busy" note — never silent ack-then-nothing
+    assert any("busy" in s.lower() or "还在忙" in s for s in adapter.sent)
+
+
+# ---- ① send_file over the gateway: real media OR an honest note (never silent) ----
+
+from lunamoth.protocol import Attachment  # noqa: E402
+
+
+class _AttachHandle(_Handle):
+    def stream_user(self, text):
+        self.user_calls.append(text)
+        yield TextDelta("here it is", SAY)
+        yield Attachment(url="/asset?p=/tmp/foo.png", mime="image/png", name="foo.png", caption="a pic")
+
+
+class _MediaAdapter(_Adapter):
+    def __init__(self):
+        super().__init__()
+        self.media: list = []
+
+    def send_media(self, source, mime="", caption=""):
+        self.media.append((source, mime, caption))
+
+
+def test_send_file_falls_back_to_honest_note_when_channel_has_no_media():
+    handle = _AttachHandle()
+    adapter = _Adapter()  # default send_media raises DeliveryDeferred
+    dispatch, host = _host_with_adapter(handle, adapter, [])
+    host._process(adapter, InboundMessage("u1", "Alice", "show me"))
+    assert any("here it is" in s for s in adapter.sent)        # the say text
+    assert any("foo.png" in s for s in adapter.sent)            # honest 'file generated' note, NOT a silent drop
+
+
+def test_send_file_uses_send_media_when_the_adapter_supports_it():
+    handle = _AttachHandle()
+    adapter = _MediaAdapter()
+    dispatch, host = _host_with_adapter(handle, adapter, [])
+    host._process(adapter, InboundMessage("u1", "Alice", "show me"))
+    # resolved the /asset?p= URL to the real local path and uploaded it
+    assert adapter.media == [("/tmp/foo.png", "image/png", "a pic")]
+
+
+# ---- superchat → gateway: PROACTIVE idle-turn say is pushed to the platform ----
+
+def test_proactive_idle_superchat_pushed_to_gateway():
+    adapter = _Adapter()
+    host = MessagingHost(None, "/tmp/x.json")
+    host._adapters = [adapter]
+    host._on_stream_event("idle", TextDelta("hey — I made progress", SAY), False, False)
+    host._on_stream_event("idle", TextDelta(" still going", MUSE), False, False)  # muse skipped
+    host._on_stream_event("idle", None, True, False)  # turn end → flush
+    assert any("made progress" in s for s in adapter.sent)
+    assert not any("still going" in s for s in adapter.sent)  # panoramic muse never leaves
+
+
+def test_idle_superchat_not_pushed_when_interrupted():
+    adapter = _Adapter()
+    host = MessagingHost(None, "/tmp/x.json")
+    host._adapters = [adapter]
+    host._on_stream_event("idle", TextDelta("half a thought", SAY), False, False)
+    host._on_stream_event("idle", None, True, True)  # interrupted → discard
+    assert adapter.sent == []
+
+
+def test_non_idle_turns_are_not_pushed_proactively():
+    adapter = _Adapter()
+    host = MessagingHost(None, "/tmp/x.json")
+    host._adapters = [adapter]
+    # a desktop 'send' turn is operator-local — its reply must NOT go to WeChat
+    host._on_stream_event("send", TextDelta("desktop-only reply", SAY), False, False)
+    host._on_stream_event("send", None, True, False)
+    assert adapter.sent == []
+
+
+def test_dispatcher_observer_wires_idle_say_to_the_host():
+    # integration: the real dispatcher's stream tap drives the host push.
+    handle = _Handle()
+    adapter = _Adapter()
+    dispatch, host = _host_with_adapter(handle, adapter, [])
+    host._adapters = [adapter]
+    dispatch.set_stream_observer(host._on_stream_event)
+    dispatch.run_stream_sync(
+        "idle",
+        lambda: iter([TextDelta("a real superchat", SAY), TextDelta(" inner", MUSE)]),
+        None,
+    )
+    assert any("a real superchat" in s for s in adapter.sent)
+    assert not any("inner" in s for s in adapter.sent)

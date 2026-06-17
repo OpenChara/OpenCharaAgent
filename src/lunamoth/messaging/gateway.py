@@ -10,16 +10,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..protocol import SAY, TextDelta
+from ..protocol import SAY, Attachment, TextDelta
 from ..protocol.api import CharaHandle
 from .access import RefusalThrottle, sender_allowed
 from .base import Adapter, DeliveryDeferred, InboundMessage
 from .filters import is_silence_narration
+from .media import deliver_attachment
 from .qq import QQAdapter
 from .telegram import TelegramAdapter
 from .text import split_text
 from .weixin import WeixinAdapter
-from .weixinpad import WeixinPadAdapter
 
 _log = logging.getLogger("lunamoth.messaging.gateway")
 
@@ -103,8 +103,6 @@ def make_adapters(config: dict[str, Any]) -> list[Adapter]:
             raise ValueError(f"adapter {name!r} config must be an object")
         if name == "weixin":
             out.append(WeixinAdapter(adapter_config))
-        elif name == "weixinpad":
-            out.append(WeixinPadAdapter(adapter_config))
         elif name == "qq":
             out.append(QQAdapter(adapter_config))
         elif name == "telegram":
@@ -326,10 +324,13 @@ class MessagingGateway:
 
     def _collect_say_text(self, events, *, adapter: Adapter | None = None) -> str:
         chunks: list[str] = []
+        atts: list[Any] = []
         try:
             for ev in events:
                 if isinstance(ev, TextDelta) and ev.channel == SAY:
                     chunks.append(ev.text)
+                elif isinstance(ev, Attachment) and ev.channel == SAY:
+                    atts.append(ev)  # a send_file — deliver via the shared media helper
         except Exception as e:
             _log.exception("messaging turn failed")
             if adapter is not None:
@@ -338,6 +339,12 @@ class MessagingGateway:
                 for out in self.adapters:
                     self._send(out, f"[gateway error] {e}")
             return ""
+        # Deliver any attachments to the relevant adapter(s) — the inbound reply
+        # adapter, or all adapters for a broadcast (idle/self-work) turn.
+        targets = [adapter] if adapter is not None else list(self.adapters)
+        for att in atts:
+            for out in targets:
+                deliver_attachment(out, att, lambda t, _o=out: self._send(_o, t))
         return "".join(chunks).strip()
 
     def _send(self, adapter: Adapter, text: str) -> None:

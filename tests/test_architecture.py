@@ -97,3 +97,38 @@ def test_obs_imports_only_config():
             continue
         bad = [t for t in _internal_imports(path, package) if t not in {"obs", "config"}]
         assert not bad, f"{path} imports {bad} — obs/ is leaf infrastructure"
+
+
+# The gateway layer is decoupled from the agent internals AND its adapters are
+# islands of each other (owner principle, 2026-06-17): a channel must never reach
+# into core/ or tools/, and one platform adapter must never import a sibling.
+_SHARED_MSG_MODULES = {"gateway", "__init__", "base", "access", "filters", "text"}
+
+
+def test_messaging_is_isolated_from_core_and_tools():
+    """messaging/ talks to a chara ONLY through protocol/ (CharaHandle) — never
+    core/ or tools/ directly. So the gateway can evolve (or be dropped) without
+    touching the agent."""
+    for package, path in _modules():
+        if package != "messaging":
+            continue
+        bad = sorted(set(_internal_imports(path, package)) & {"core", "tools", "front"})
+        assert not bad, f"{path} imports {bad} — messaging/ stays decoupled from core/tools/front"
+
+
+def test_messaging_adapters_are_decoupled_from_each_other():
+    """Each platform adapter is an island: it may share base/access/filters/text,
+    but must not import a sibling adapter. gateway.py is the ONE composition root
+    that knows them all — so qq/telegram/weixin can be added or removed in isolation."""
+    msg_dir = SRC / "messaging"
+    adapters = {p.stem for p in msg_dir.glob("*.py")} - _SHARED_MSG_MODULES
+    for path in sorted(msg_dir.glob("*.py")):
+        if path.stem not in adapters:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.level == 1 and node.module:
+                imported = node.module.split(".")[0]
+                siblings = adapters - {path.stem}
+                assert imported not in siblings, (
+                    f"{path.name} imports sibling adapter '{node.module}' — adapters must stay decoupled")
