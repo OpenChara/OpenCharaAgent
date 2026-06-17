@@ -66,8 +66,12 @@ done
 
 # --- 2. build the wheel (carries webui/ + _bundled/ via package-data) --------
 cd "$ROOT"
-# Start clean so the assertion below picks the wheel we just built.
-rm -rf "$DIST_DIR"
+# Start clean. The egg-info SOURCES.txt + an old build/ tree make setuptools
+# resurrect files that have since been DELETED from the source — a stale build/
+# once re-bundled a removed module. Wipe all three so the wheel reflects only the
+# current tree.
+rm -rf "$DIST_DIR" "$ROOT/build"
+find "$ROOT/src" -name "*.egg-info" -type d -exec rm -rf {} + 2>/dev/null || true
 
 if command -v uv >/dev/null 2>&1; then
   say "building wheel with uv ..."
