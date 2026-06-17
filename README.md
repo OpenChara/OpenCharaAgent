@@ -47,7 +47,7 @@ The foundations are in place — SillyTavern-compatible cards & world books, com
 <tr><td><b>SillyTavern-compatible content</b></td><td>Import V2/V3 character cards (PNG or JSON) directly; standalone world books import via the desktop deck by merging into a card's embedded <code>character_book</code>. <code>{{char}}</code>/<code>{{user}}</code> macros, <code>first_mes</code>, and keyword-triggered lore entries all work.</td></tr>
 <tr><td><b>Native tool calling</b></td><td>Tools are exposed via the OpenAI tool-calling protocol; the agent loop streams text and executes tool calls mid-turn.</td></tr>
 <tr><td><b>Composable tool packs</b></td><td>Capability bundles (<code>toolpacks/*.json</code>) declare exactly which tools a character gets. No pack, no powers.</td></tr>
-<tr><td><b>Sandboxed execution</b></td><td>The <code>terminal</code> tool runs shell commands (any language) under a per-session jail — <code>sandbox-exec</code>/<code>bubblewrap</code> by default, Docker for a stronger boundary — with network off until you flip <code>/net on</code>.</td></tr>
+<tr><td><b>Sandboxed execution</b></td><td>The <code>terminal</code> tool runs shell commands (any language) under a per-session jail — <code>sandbox-exec</code> (macOS) / <code>bubblewrap</code> or <code>Landlock</code> (Linux) by default, Docker for a stronger boundary — confined to the workspace, and it refuses to run if no jail is available rather than degrade.</td></tr>
 <tr><td><b>Bounded, auditable memory</b></td><td>Durable memory is a token-capped file the character edits through tools, not an unbounded database; every tool call lands in <code>sandbox/logs/audit.jsonl</code>.</td></tr>
 <tr><td><b>Lives on its own</b></td><td>In <code>live</code> mode the character keeps thinking and creating between your messages, paced by its card/settings <code>patience</code>; in <code>chat</code> mode it attends to you only. A resident <code>lunamothd</code> supervisor owns desktop/background life.</td></tr>
 <tr><td><b>Terminal-first TUI</b></td><td>A single-terminal split interface (display stream + operator console) with gauges and hot-swappable settings.</td></tr>
@@ -87,6 +87,8 @@ A one-line installer with two channels:
 ## Run on a server (Docker / remote)
 
 LunaMoth can run on a box and be reached from any browser. The build is one SPA served by the same Python supervisor — locally over loopback, remotely over a bound host behind TLS.
+
+> **Recommended for servers: a system-level install** (`install.sh` / `lunamoth desktop`), not Docker. On a normal host the per-session `bwrap` jail confines each chara to its workspace + assets, so a chara can't read the instance's key. Docker is fully supported too — inside a container bwrap can't create a user namespace, so LunaMoth uses the **Landlock** LSM (kernel ≥5.13) for the same filesystem confinement, with the container as the outer boundary — but wrapping the whole runtime in a container is the heavier option.
 
 **One-click with Docker.** Build the wheel, then `docker compose up -d`:
 

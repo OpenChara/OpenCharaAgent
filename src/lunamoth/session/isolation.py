@@ -63,6 +63,27 @@ def os_sandbox_available() -> bool:
     return False
 
 
+def landlock_available() -> bool:
+    """True if the Landlock LSM (≥ ABI 1) can confine a child on this kernel.
+
+    The Linux fallback when bwrap can't run (hardened container: no user
+    namespaces). Filesystem-only confinement — see ``session/landlock.py``.
+    """
+    if sys.platform != "linux":
+        return False
+    try:
+        from . import landlock
+        return landlock.available()
+    except Exception:
+        return False
+
+
+def _lunamoth_home() -> Path:
+    """The dir holding the global key / login hash / all sessions — the thing a
+    jailed chara must NOT be able to read (only its own workspace+assets)."""
+    return Path(os.environ.get("LUNAMOTH_HOME", str(Path.home() / ".lunamoth"))).expanduser()
+
+
 def _base_env(workspace: Path) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items() if k not in _ENV_BLOCKLIST}
     env["TMPDIR"] = str(workspace)  # keep temp files inside the writable jail
@@ -73,6 +94,19 @@ def _base_env(workspace: Path) -> dict[str, str]:
 def _macos_profile(workspace: Path, allow_network: bool, writable: list[Path], *, interactive: bool = False) -> str:
     writes = "\n".join(f'(allow file-write* (subpath "{p}"))' for p in [workspace, *writable])
     net = "(allow network*)" if allow_network else "(deny network*)"
+    # Tighten reads: a shell needs to read system libs/binaries, so we keep the
+    # broad read allow — but DENY the LunaMoth home (the global key in
+    # desktop.json, the login hash in auth.json, every OTHER chara's session),
+    # then re-allow only THIS chara's own workspace + assets shelf (both sit
+    # under the home). Parity with the Linux jails, which never expose the home.
+    home = _lunamoth_home()
+    assets = workspace.parent / "assets"
+    reads = (
+        '(allow file-read*)\n'
+        f'(deny file-read* (subpath "{home}"))\n'
+        f'(allow file-read* (subpath "{workspace}"))\n'
+        f'(allow file-read* (subpath "{assets}"))'
+    )
     # An interactive shell sits on a pty SLAVE (/dev/ttysNN on macOS): job
     # control (TIOCSPGRP/TIOCGWINSZ) and termios need ioctl plus read/write on
     # that device node — the base profile only opens /dev/tty.
@@ -88,7 +122,7 @@ def _macos_profile(workspace: Path, allow_network: bool, writable: list[Path], *
 (allow signal (target self))
 (allow sysctl-read)
 (allow mach-lookup)
-(allow file-read*)
+{reads}
 (allow file-ioctl (literal "/dev/dtracehelper") (literal "/dev/tty"))
 {writes}
 (allow file-write* (literal "/dev/null") (literal "/dev/tty") (literal "/dev/stdout") (literal "/dev/stderr"))
@@ -123,6 +157,33 @@ def _linux_jail_argv(inner: list[str], workspace: Path, allow_network: bool, wri
 
 def _linux_jail(command: str, workspace: Path, allow_network: bool, writable: list[Path]) -> list[str]:
     return _linux_jail_argv(["/bin/bash", "-c", command], workspace, allow_network, writable)
+
+
+def _linux_landlock_argv(inner: list[str], workspace: Path, allow_network: bool, writable: list[Path]) -> list[str]:
+    """Run *inner* behind a Landlock allow-list — the no-userns Linux tier.
+
+    Same read/write surface as the bwrap jail (system paths + assets read-only,
+    workspace + writable read-write), built by re-exec'ing through
+    ``python -m lunamoth.session.landlock`` so the restriction is inherited.
+    NOTE: ABI v1 can't gate the network — ``allow_network`` is accepted for a
+    uniform signature but NOT enforced here (the caller surfaces that).
+    """
+    ws = str(workspace)
+    args = [sys.executable, "-m", "lunamoth.session.landlock"]
+    for ro in ("/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc", sys.prefix):
+        args += ["--ro", ro]
+    assets = workspace.parent / "assets"
+    if assets.is_dir():
+        args += ["--ro", str(assets)]
+    args += ["--rw", ws]
+    for p in writable:
+        args += ["--rw", str(p)]
+    args += ["--", *inner]
+    return args
+
+
+def _linux_landlock_jail(command: str, workspace: Path, allow_network: bool, writable: list[Path]) -> list[str]:
+    return _linux_landlock_argv(["/bin/bash", "-c", command], workspace, allow_network, writable)
 
 
 def _docker_argv(inner: list[str], workspace: Path, allow_network: bool, image: str,
@@ -181,13 +242,16 @@ def interactive_shell_argv(
         argv = _docker_argv(["sh"], workspace, allow_network, image, memory_mb, cpus, tty=True)
         return argv, str(workspace), env
     if isolation == "sandbox":
-        if not os_sandbox_available():
-            tool = "sandbox-exec" if sys.platform == "darwin" else "bwrap"
-            raise JailUnavailableError(f"sandbox isolation requested but {tool} is not available on this host")
         if sys.platform == "darwin":
+            if not os_sandbox_available():
+                raise JailUnavailableError("sandbox isolation requested but sandbox-exec is not available on this host")
             profile = _macos_profile(workspace, allow_network, writable, interactive=True)
             return ["sandbox-exec", "-p", profile, "/bin/bash", "-i"], str(workspace), env
-        return _linux_jail_argv(["/bin/bash", "-i"], workspace, allow_network, writable), str(workspace), env
+        if os_sandbox_available():  # Linux + bwrap (user namespaces available)
+            return _linux_jail_argv(["/bin/bash", "-i"], workspace, allow_network, writable), str(workspace), env
+        if landlock_available():    # hardened container (no userns) → Landlock fs confinement
+            return _linux_landlock_argv(["/bin/bash", "-i"], workspace, allow_network, writable), str(workspace), env
+        raise JailUnavailableError("sandbox isolation requested but neither bwrap nor Landlock is available on this host")
     raise JailUnavailableError(f"unknown isolation mechanism {isolation!r}")
 
 

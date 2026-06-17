@@ -354,9 +354,19 @@ into the session's card, key stripped.)
   runtime mood.
 - **Two output registers**: muse (its own life; panoramic frontends only) vs
   say (delivered everywhere — the `speak` tool is how it decides to reach you).
-- **Isolation** per chara: `dir` / `sandbox` (default; sandbox-exec/bwrap) /
-  `docker`; network is ON by default (`/net off` to disable; the operator can
-  re-enable with `/net on`).
+- **Isolation** per chara: `dir` / `sandbox` (default) / `docker`; network is ON
+  by default (`/net off` to disable; `/net on` re-enables). The `sandbox` jail is
+  an isolation LADDER (`session/isolation.py` + `tools/runner.py`): native OS jail
+  (sandbox-exec on macOS, bwrap on Linux) → **Landlock LSM** (Linux ≥5.13, the
+  no-userns fallback that works inside Docker, where bwrap can't create a user
+  namespace) → **refuse** (the `terminal` tool NEVER silently degrades to directory
+  trust — only an explicit `dir` runs unconfined). Confinement = read workspace+assets,
+  write workspace only; the chara can't read `~/.lunamoth` (the global key/login hash)
+  or `/proc/<pid>/environ`. **Servers: prefer a SYSTEM-LEVEL install** (install.sh /
+  `lunamoth desktop`) so bwrap gives the full jail; Docker is also supported (Landlock
+  confines the chara, the container is the outer boundary) but is the heavier option.
+  Verified on a Landlock kernel 2026-06-17; minor follow-ups (no `/proc` ergonomics,
+  PTY network-caveat) in `docs/OPEN-WORK.md`.
 - Three memory-ish things, distinct: context window (sliding) · transcript
   (SQLite, restore) · durable memory (frozen-snapshot two-store + `memory` tool).
 

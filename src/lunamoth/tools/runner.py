@@ -37,8 +37,10 @@ from ..session.isolation import (
     _base_env,
     _docker,
     _linux_jail,
+    _linux_landlock_jail,
     _macos_jail,
     backend,
+    landlock_available,
     os_sandbox_available,
 )
 
@@ -245,17 +247,39 @@ def run_terminal(
             cwd = cand
 
     note = clamp_note
-    if isolation == "docker" and shutil.which("docker"):
-        cmd: list[str] = _docker(command, workspace, allow_network, image, memory_mb, cpus)
-        run_cwd = None
-    elif isolation == "sandbox" and os_sandbox_available():
-        cmd = (_macos_jail if sys.platform == "darwin" else _linux_jail)(command, workspace, allow_network, writable)
-        run_cwd = str(cwd) if sys.platform == "darwin" else None  # bwrap sets its own chdir
-    else:
-        if isolation != "dir":
-            note += f"\n[lunamoth: '{isolation}' jail unavailable, ran with directory trust]"
+    cmd: list[str]
+    run_cwd: str | None
+    if isolation == "dir":
+        # Explicit opt-out of the jail (operator chose `dir`): directory trust.
         cmd = ["/bin/bash", "-c", command]
         run_cwd = str(cwd)
+    elif isolation == "docker":
+        if not shutil.which("docker"):
+            return ("[lunamoth: refused — 'docker' isolation requested but the docker CLI is "
+                    "unavailable. Not running unconfined.]" + note).strip()
+        cmd = _docker(command, workspace, allow_network, image, memory_mb, cpus)
+        run_cwd = None
+    elif isolation == "sandbox":
+        # Isolation ladder: native OS jail (bwrap/seatbelt) → Landlock → refuse.
+        # NEVER degrade to directory trust — under it the chara could read the
+        # whole container, incl. the global key in ~/.lunamoth (OPEN-WORK SEC-low).
+        if os_sandbox_available():
+            cmd = (_macos_jail if sys.platform == "darwin" else _linux_jail)(command, workspace, allow_network, writable)
+            run_cwd = str(cwd) if sys.platform == "darwin" else None  # bwrap sets its own chdir
+        elif landlock_available():
+            cmd = _linux_landlock_jail(command, workspace, allow_network, writable)
+            run_cwd = str(cwd)
+            if not allow_network:
+                # Honest: Landlock ABI v1 confines the filesystem only — it cannot
+                # gate the network, so `/net off` is NOT enforced under this tier.
+                note += "\n[lunamoth: Landlock jail — filesystem confined, but network not gated (ABI v1)]"
+        else:
+            return ("[lunamoth: refused — sandbox isolation requested but no jail is available "
+                    "(no bwrap user namespaces, no Landlock ≥5.13). Not running unconfined. "
+                    "Install bubblewrap, run on a Landlock-capable kernel, or set isolation=dir "
+                    "to explicitly opt out of the jail.]" + note).strip()
+    else:
+        return (f"[lunamoth: refused — unknown isolation {isolation!r}]" + note).strip()
 
     t0 = time.monotonic()
     try:

@@ -413,6 +413,58 @@ add a diagnosed problem here with a priority. Independent items run in parallel.
   so the chara's own terminal could `cat` its session config.json and read its provider
   api_key. Consider tightening reads, or not storing the key where the jailed shell reads it.
 
+### ✅ FIXED 2026-06-17 — terminal isolation ladder (Landlock); was: terminal reads the whole container
+
+Confirmed on the live box (Ubuntu 22.04 host, kernel 5.15, Docker, `no-new-privileges`):
+- The container **cannot create user namespaces** (`unshare --user` → EPERM; Docker's seccomp +
+  no-new-privileges block nested userns — even though the HOST allows them: `unprivileged_userns_clone=1`,
+  `unshare --user` OK on the host). So **bwrap cannot run in-container**, and `runner.py:251-256`
+  silently **degrades the `terminal` tool to directory trust** (runs as root, only a `[jail unavailable]` note).
+- Proved: a chara's `terminal` read `/root/.lunamoth/desktop.json` (the global LLM key) and `auth.json`
+  (the login PBKDF2 hash), and can read `/proc/1/environ`. So a chara — or a logged-in user who drives a
+  chara to run a command — can exfiltrate the instance's key/secret, **bypassing the web layer's "key value
+  never travels"** (`hub.list_keys` only returns `has_key`). The container boundary still protects the host
+  and other tenants; exposure is limited to *this* instance's own secrets. **Owner stance (2026-06-17):
+  acceptable for now — a Docker instance holds nothing else sensitive — but track for a better fix.**
+- NOT the OS version's fault: the host fully supports userns; the block is Docker's hardened defaults.
+  Upgrading Ubuntu (→24.04) would make it WORSE (`kernel.apparmor_restrict_unprivileged_userns=1`).
+  "Fix" by relaxing the container (`seccomp=unconfined` / drop no-new-privileges) = weakening the OUTER
+  jail to enable a redundant inner one → rejected.
+
+**Researched fix — an isolation LADDER (keeps macOS↔Linux parity; serves BOTH Docker and system installs):**
+1. **macOS** → `sandbox-exec`/Seatbelt (already used). Also tighten its global `file-read*` so the same
+   secret-read is closed on macOS too (the original SEC-low bullet above).
+2. **Linux + userns** (bare-metal / `lunamoth desktop` on host via install.sh) → **bwrap** as today
+   (full path jail + network gating; chara sees only workspace+assets). Strongest; unchanged.
+3. **Linux, no userns** (Docker) → **Landlock LSM** (ABI v1, kernel ≥5.13). **VERIFIED to work inside this
+   very container**: `landlock_create_ruleset(NULL,0,1)` → ABI 1, no EPERM (Docker's default seccomp permits
+   the landlock syscalls; host LSM list includes `landlock`). An unprivileged process confines its OWN fs
+   access to an allow-list (workspace rw + assets ro + the system paths bwrap binds, incl. procfs) — no
+   namespaces, no root. Closest namespace-free match to bwrap's semantics. Implementation: ~60 lines of
+   ctypes (`landlock_create_ruleset`/`add_rule`/`restrict_self`, syscalls 444/445/446) applied in the
+   terminal/exec child before exec; no new deps. (hermes/Codex don't hand-roll this — they lean on Codex's
+   own Seatbelt/Landlock or Modal containers — so it's ours to build.)
+4. **uid-drop** (`setpriv` to a dedicated low-priv user, per-chara; workspace chown'd to it, secrets root 600)
+   as a complementary/last fs layer when even Landlock is unavailable; otherwise **refuse to run** — honour
+   `isolation.py`'s "never degrade to directory trust" for the `terminal` tool too (today only
+   `interactive_shell_argv` honours it; `runner.run` does not).
+
+**✅ SHIPPED 2026-06-17** (`session/landlock.py` + `session/isolation.py` + `tools/runner.py`,
+`tests/test_landlock_isolation.py`; subagent-reviewed, no CRITICAL/HIGH). Implemented tiers 1-4 above:
+macOS read-deny of the home, bwrap unchanged, the Landlock tier (ctypes ABI v1), and refuse-not-degrade.
+LIVE-verified on `chat.lunamoth.ai` (kernel 5.15, Docker): `bwrap:False landlock:True`; a chara `terminal`
+runs normal commands but `cat ~/.lunamoth/desktop.json`, `auth.json`, `/proc/1/environ`, and `ls ~/.lunamoth`
+all return Permission denied. Full suite 891 passed. Servers now recommended to run system-level (bwrap);
+Docker supported via Landlock (README + CLAUDE.md updated).
+
+Remaining LOW follow-ups (clarity/ergonomics, NOT jail escape — from the 2026-06-17 review):
+- The Landlock tier grants no `/proc` (deliberate — `/proc/1/environ` leaks the supervisor token), so
+  `/proc`-dependent tools (`ps`, some interpreters) fail with a bare EACCES under Docker. Consider a clearer
+  message, or a procfs-hidepid mount if ever feasible.
+- `interactive_shell_argv`'s Landlock fallback doesn't surface "network not gated (ABI v1)" to the operator
+  PTY the way `runner.run_terminal` does — add the one-line notice for parity with the "fail visibly" contract.
+- Network gating under Landlock needs ABI v4 (kernel 6.7); until then `/net off` is fs-only under that tier.
+
 ## R5-followup (LOW) — card-view art editing + richer world/expressions
 R5 shipped the multi-page card view (display + 设定/世界 editing). Deferred:
 per-asset upload for 立绘/主视觉/背景 + stickers (need upload RPCs like avatar_upload);

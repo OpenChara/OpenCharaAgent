@@ -47,7 +47,7 @@
 <tr><td><b>兼容 SillyTavern 内容格式</b></td><td>直接导入 V2/V3 角色卡（PNG 或 JSON）；独立世界书经桌面卡册导入并并入某张卡的内嵌 <code>character_book</code>。<code>{{char}}</code>/<code>{{user}}</code> 宏、<code>first_mes</code> 开场白、按关键词触发的 lore 条目均可用。</td></tr>
 <tr><td><b>原生 tool calling</b></td><td>工具通过 OpenAI tool-calling 协议暴露；agent 循环边流式输出文本、边在回合中执行工具调用。</td></tr>
 <tr><td><b>可组合工具包</b></td><td>能力以 <code>toolpacks/*.json</code> 打包，精确声明角色能用哪些工具。没给包，就没有能力。</td></tr>
-<tr><td><b>沙盒执行</b></td><td><code>terminal</code> 工具在会话隔离下跑 shell 命令（任意语言）——默认 <code>sandbox-exec</code>/<code>bubblewrap</code> 牢笼，可切 Docker 获得更强边界；网络默认关闭，<code>/net on</code> 实时打开。</td></tr>
+<tr><td><b>沙盒执行</b></td><td><code>terminal</code> 工具在会话隔离下跑 shell 命令（任意语言）——默认 <code>sandbox-exec</code>（macOS）/ <code>bubblewrap</code> 或 <code>Landlock</code>（Linux）牢笼，可切 Docker 获得更强边界；限制在 workspace 内，没有可用牢笼时拒绝运行而非降级。</td></tr>
 <tr><td><b>有界、可审计的记忆</b></td><td>持久记忆是一个有 token 上限的文件，角色通过工具编辑它，而不是无限数据库；所有工具调用写入 <code>sandbox/logs/audit.jsonl</code>。</td></tr>
 <tr><td><b>自己生活</b></td><td><code>live</code> 模式下角色在你的消息间隙持续思考与创作，节奏由角色卡/设置中的 <code>patience</code> 控制；<code>chat</code> 模式下它只专心陪你。常驻 <code>lunamothd</code> 监督进程负责桌面端/后台生命。</td></tr>
 <tr><td><b>终端优先 TUI</b></td><td>单终端分屏界面（上方角色输出流 + 下方操作员控制台），支持状态仪表和热切换设置。</td></tr>
@@ -87,6 +87,8 @@ lunamoth        # 名册 / TUI
 ## 在服务器上运行（Docker / 远程）
 
 LunaMoth 可以跑在一台机器上、从任意浏览器访问。整个前端是一套 SPA，由同一个 Python 监督进程伺服——本地走回环，远程则绑定到主机并置于 TLS 之后。
+
+> **服务器推荐系统级安装**（`install.sh` / `lunamoth desktop`），而不是 Docker。普通主机上每个 chara 的 `bwrap` 牢笼会把它限制在自己的 workspace + assets 里，chara 读不到本实例的 key。Docker 也完全支持——容器内 bwrap 无法创建用户命名空间，于是 LunaMoth 改用 **Landlock** LSM（内核 ≥5.13）做同样的文件系统限制，容器本身是外层边界——但把整个运行时塞进容器是更重的方案。
 
 **Docker 一键部署。** 先构建 wheel，再 `docker compose up -d`：
 
