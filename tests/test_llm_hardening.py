@@ -169,7 +169,7 @@ def test_stream_text_and_reasoning_are_surrogate_free(monkeypatch):
         {"choices": [{"finish_reason": "stop", "delta": {}}]},
     ])
     out: list = []
-    events, (_tools, think, _finish) = _drive(_client()._stream_turn([], None, out))
+    events, (_tools, think, _finish, _rd) = _drive(_client()._stream_turn([], None, out))
     text = "".join(out)
     assert text == "ok😀!"                      # split pair came out whole
     assert think == "hm�m"                 # lone surrogate scrubbed from reasoning
@@ -197,7 +197,7 @@ def test_tool_args_surrogates_scrubbed(monkeypatch):
         ]}}]},
         {"choices": [{"finish_reason": "tool_calls", "delta": {}}]},
     ])
-    _events, (tool_calls, _think, _finish) = _drive(_client()._stream_turn([], None, []))
+    _events, (tool_calls, _think, _finish, _rd) = _drive(_client()._stream_turn([], None, []))
     args = tool_calls[0]["function"]["arguments"]
     json.dumps(args, ensure_ascii=False).encode("utf-8")  # must not raise
     assert json.loads(args) == {"text": "hi�"}
@@ -225,7 +225,7 @@ def test_stream_end_args_repair(monkeypatch):
         {"choices": [{"finish_reason": "tool_calls", "delta": {}}]},
     ])
     out: list = []
-    _events, (tool_calls, _think, finish) = _drive(_client()._stream_turn([], None, out))
+    _events, (tool_calls, _think, finish, _rd) = _drive(_client()._stream_turn([], None, out))
     assert finish == "tool_calls"
     assert json.loads(tool_calls[0]["function"]["arguments"]) == {"command": "ls"}
 
@@ -276,7 +276,7 @@ def _endless_tool_turns(monkeypatch):
     """Every fake turn calls a tool — the loop can only stop on max_steps."""
     def fake_stream_turn(self, messages, tools, text_out, reasoning=None, channel="say"):
         return ([{"id": "c", "type": "function",
-                  "function": {"name": "terminal", "arguments": "{}"}}], "", "tool_calls")
+                  "function": {"name": "terminal", "arguments": "{}"}}], "", "tool_calls", [])
         yield  # pragma: no cover — generator for `yield from`
 
     monkeypatch.setattr(LLMClient, "_stream_turn", fake_stream_turn)
@@ -307,7 +307,7 @@ def test_completed_turn_emits_no_budget_notice(monkeypatch):
 
     def one_turn(self, messages, tools, text_out, reasoning=None, channel="say"):
         text_out.append("done.")
-        return ([], "", "stop")
+        return ([], "", "stop", [])
         yield  # pragma: no cover
 
     monkeypatch.setattr(LLMClient, "_stream_turn", one_turn)

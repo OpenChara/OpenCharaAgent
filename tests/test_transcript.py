@@ -34,7 +34,8 @@ def test_structured_messages_roundtrip(tmp_path):
     t = TranscriptStore(tmp_path / "t.db")
     call = {"role": "assistant", "content": None, "tool_calls": [
         {"id": "c1", "type": "function", "function": {"name": "terminal", "arguments": "{\"command\": \"ls\"}"}}
-    ], "reasoning_content": "let me look around"}
+    ], "reasoning_content": "let me look around",
+        "reasoning_details": [{"type": "reasoning.encrypted", "signature": "sig-1"}]}
     t.append_message({"role": "user", "content": "run it"})
     t.append_message(call)
     t.append_message({"role": "tool", "tool_call_id": "c1", "content": "exit=0"})
@@ -43,6 +44,8 @@ def test_structured_messages_roundtrip(tmp_path):
     assert rows[0] == {"role": "user", "content": "run it"}
     assert rows[1]["tool_calls"][0]["function"]["name"] == "terminal"
     assert rows[1]["reasoning_content"] == "let me look around"
+    # reasoning_details (signature/continuity blocks) survives the round-trip intact.
+    assert rows[1]["reasoning_details"] == [{"type": "reasoning.encrypted", "signature": "sig-1"}]
     assert rows[2] == {"role": "tool", "tool_call_id": "c1", "content": "exit=0"}
     # Self-work / chat assistant turns load uniformly as ordinary messages
     # (no per-message classification — hermes-faithful).

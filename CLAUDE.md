@@ -38,6 +38,24 @@ with, not a clone on disk.)
   hermes's scars are the maturity we lack. Architecture stays ours; never
   inherit its fallback-model logic. Parity checklist:
   `docs/OPEN-WORK.md` (Part 1).
+  STRENGTHENED (owner, 2026-06-18): four subsystems are now **apple-to-apple
+  IDENTICAL** to hermes — copy the algorithm, the numbers, and the prompt text
+  verbatim, then run a comparison agent each pass until they match: (1) the
+  **compaction trigger** (threshold ratio, protect-first/last, anti-thrash
+  guard), (2) the **summary template** (the full structured `## Active Task…`
+  sections, the iterative-update framing, the REFERENCE-ONLY handoff prefix,
+  the deterministic static fallback), (3) **cache_control** (the
+  `system_and_3` breakpoint placement), (4) **reasoning replay**
+  (reasoning_content padding + `reasoning_details`/signature round-trip + the
+  per-provider echo tiers). The ONLY edit allowed while porting these is
+  de-branding the MODEL-FACING text: no literal "hermes"/"Hermes"/"the VM"/
+  "Linux environment" may appear in any string the model sees — system prompts,
+  tool descriptions, skill bodies, summary instructions (use neutral wording —
+  "this runtime", "your environment"). Source-code COMMENTS may still cite the
+  hermes counterpart as provenance (the codebase already does this everywhere).
+  The good general prompts (task-completion discipline, tool-use enforcement,
+  the SKILLS guidance) are migrated into `content/rules.py` the same way:
+  port the wording, strip the brand.
 - **AstrBot** — the maturity bar for the messaging gateway layer and adjacent
   infra (the `Adapter` seam, `obs/broker.py` LogBroker, `tools/goals.py`
   awakener all cite it).
@@ -134,13 +152,27 @@ zero internal deps; `obs/` imports only `config`.
     time sense (timestamp idle ticks, gap notes), card goal seeding.
   - `llm.py` — OpenAI-compatible streaming client + tool-calling loop. **Yields
     protocol events** (TextDelta say|muse /ThinkDelta/ToolStart/ToolEnd/Notice),
-    takes explicit (stable, volatile) zone lists. Retry 5s×5; reasoning policy
-    (OpenRouter-only unified param; echo-back for DeepSeek).
+    takes explicit (stable, volatile) zone lists. Retry 5s×5. **Reasoning =
+    apple-to-apple with hermes**: reasoning_content capture + single-space
+    padding for thinking-mode providers, `reasoning_details`/signature
+    round-trip (Anthropic thinking-block + Gemini thought_signature), the
+    per-provider echo tiers + cross-provider poison guard, and the unified
+    `reasoning` request param. `cache.py` carries the `system_and_3`
+    cache_control breakpoint placement (system + last 3 non-system), ported
+    verbatim.
   - `commands.py` — THE /command registry (one implementation for every frontend;
     Reply.verbose marks panel-worthy output; legacy aliases live here too).
-  - `context.py` — `ContextBuffer` (full message dicts; THINK_WINDOW pruning).
-  - `compaction.py` — Hermes-style summary compaction; summaries persist as
-    transcript `kind="summary"` rows; restore = latest summary + tail (no re-LLM).
+  - `context.py` — `ContextBuffer` (full OpenAI message dicts; length-bounded
+    ONLY — no per-message kind/category/tag, no class-based deletion; all
+    assistant turns, chat or self-work, are uniform history aged only by
+    trim/compaction, exactly as hermes does it).
+  - `compaction.py` — **apple-to-apple with hermes** `ContextCompressor`: the
+    same trigger (threshold ratio, protect-first/last, anti-thrash guard +
+    failure cooldown), the same structured summary template (`## Active Task …
+    ## Critical Context`, iterative-update framing, the REFERENCE-ONLY handoff
+    prefix, the deterministic static fallback), the cheap zero-LLM tool-output
+    pre-prune. Summaries persist as transcript `kind="summary"` rows; restore =
+    latest summary + tail (no re-LLM). De-branded: zero "hermes" strings.
   - `transcript.py` — per-chara SQLite log (WAL+fallback, epochs for /reset);
     `export_jsonl` writes the full epoch (prompts/tool calls/results/reasoning)
     hermes-style. `agent.py` also writes `sandbox/logs/requests.jsonl` — the
@@ -180,25 +212,31 @@ zero internal deps; `obs/` imports only `config`.
     audit trail, the #24 loop guardrails (warn@2/refuse@5/streak-block@8), the
     3-way gate (registered ∩ state.tool_access ∩ pack.tools), MCP dispatch, and the
     `{ok,data}` result the agent loop consumes. No tool bodies live here.
-  - `builtin/` — each tool is an island that self-registers at import. Hermes
-    surface: `file_tools.py` (read_file offset/limit, write_file syntax-diff,
-    patch = fuzzy replace + V4A multi-file), `search.py` (search_files grep+glob),
-    `terminal.py`+`process.py` (terminal +background, the process registry),
-    `web.py` (web_search/web_extract), `memory.py`, `skills.py` (skills_list/
-    skill_view/skill_manage), `todo.py`, `session_search.py`, `clarify.py`,
-    `execute_code.py`, `delegate_task.py`, `browser.py` (12 browser_*, check_fn-
-    gated on the agent-browser driver). LunaMoth's OWN chara-life tools:
-    `chara_life.py` — speak, rest, wish (the renamed goal — distinct from todo).
-    (The old inspect_env/write_log/request_permission tools were retired
-    2026-06-15: env facts already ride the volatile tail, the chara has memory
-    for notes, and network is on by default so the permission-ask was moot.)
-    Helpers are `_underscore.py` modules (not discovered).
-  - Supporting infra: `runner.py` (terminal under dir/sandbox/docker — shared by
+  - `builtin/` — each tool is an island that self-registers at import. The
+    general surface mirrors hermes: `file_tools.py` (read_file offset/limit,
+    write_file syntax-diff, patch = fuzzy replace + V4A multi-file), `search.py`
+    (search_files grep+glob), `terminal.py`+`process.py` (terminal +background,
+    the process registry), `memory.py`, `skills.py` (skills_list/skill_view/
+    skill_manage), `todo.py`, `session_search.py`, `execute_code.py`,
+    `delegate_task.py`, `browser.py` (12 browser_*, check_fn-gated on the
+    agent-browser driver). LunaMoth's OWN chara-life tools: `chara_life.py` —
+    speak, rest, wish (the renamed goal — distinct from todo).
+    DROPPED (owner, 2026-06-18): **web_search / web_extract are gone** — a web
+    round-trip burns extra tokens for a search backend we don't run; the chara
+    browses via `terminal` + `/net on` or an MCP fetch server instead. **The
+    standalone `send_file` tool is gone too** — like hermes, the model surfaces
+    a file by emitting its workspace path inline (a `MEDIA:<path>` marker the
+    frontends turn into an inline image / download), so a dedicated tool was
+    redundant. (The older inspect_env/write_log/request_permission/clarify tools
+    were already retired: env facts ride the volatile tail, the chara has memory
+    for notes, network is on by default.) Helpers are `_underscore.py` modules
+    (not discovered).
+  - Supporting infra: `runner.py` (terminal under admin/sandbox — shared by
     terminal/process/search/execute_code via ctx.run_terminal), `sandbox.py` (ONE
     working dir `workspace/`), `mcp.py` (stdio JSON-RPC; `schema_sanitizer.py`),
     `memory.py`/`skills.py`/`goals.py` stores (hermes-shaped, per-chara), `toolpacks.py`.
     Network is ON by default (`/net off` to disable); browser tools also need
-    dir/docker isolation + the installed driver.
+    admin isolation + the installed driver.
 - `obs/` — diagnostics (leaf infra): `log.py` (rotating sandbox/logs/lunamoth.log
   + errors.log, credential redaction, session tag, `--debug`), `broker.py`
   (in-memory ring → `/panel log`), `audit.py` (the SECURITY trail — separate
@@ -216,11 +254,14 @@ zero internal deps; `obs/` imports only `config`.
   `SessionMeta.env()` is the activation interface), `settings.py`, `cleanup.py`,
   `isolation.py` (stdlib-only OS jail builders — shared by tools/runner and the
   supervisor's PTY shell; `interactive_shell_argv` never degrades to dir trust).
-- `presence/` — attach/detach awareness + `/mode live|chat`: `state.py`
-  (`PresenceState` — the first-meeting flag + cross-process detach handoff file),
-  `prompts.py` (the live|chat mode semantics + `marker_text`: the neutral,
-  card-overridable enter/leave conversation fact — on_attach/on_detach override
-  the wording, never a reaction turn).
+- `presence/` — JUST the `/mode live|chat` normalizer now (`prompts.py:
+  normalize_mode`; `state.py`/`PresenceState`/`marker_text` were DELETED
+  2026-06-18). The chara's context is INDEPENDENT of whether a human is
+  attached: no presence fact, no enter/leave marker, no per-page greeting
+  gate, no reaction turn. The card's `first_mes` is the only opener, shown
+  once on an EMPTY transcript epoch and persisted by `attach()` before it
+  returns (so it survives a dropped socket); `/reset` re-seeds it. The first
+  meeting and detach handoff are gone.
 - `server/` — the remote/desktop gateway (imports protocol+session+content, never
   core/tools directly): `dispatch.py` (per-session JSON-RPC over CharaHandle),
   `stdio.py`/`ws.py` (transports for `lunamoth serve <name>`), `hub.py`
@@ -287,25 +328,27 @@ Every API request is assembled as **three zones**:
 1. **Stable prefix** — computed once per session and reused byte-identically until
    `make_session` / reconfigure / `/reset`: card identity (`render_system`,
    PHI-free), optional actor embodiment bridge + neutral Rules layer when tools
-   are enabled, the static tool-use nudge, toolpack note, frozen memory snapshot,
-   frozen SKILLS index, constant world-info entries.
+   are enabled. The Rules layer (`content/rules.py`) now carries the migrated,
+   de-branded hermes operating prompts — task-completion discipline ("the
+   deliverable is a real artifact, never fabricate"), tool-use enforcement
+   ("act through the tool now, don't describe it"), and the mandatory SKILLS
+   guidance ("scan + load before you act"). Then toolpack note, frozen memory
+   snapshot, frozen SKILLS index, constant world-info entries.
 2. **History** — the append-only `ContextBuffer` view. Compaction is the one
-   sanctioned rewrite: old head → one persisted summary + recent tail.
+   sanctioned rewrite: old head → one persisted structured summary + recent tail.
 3. **Volatile tail** — recomputed per turn, never persisted: live env facts
-   (isolation/network/operator/date), shallow-scanned keyword world info
-   (last ~4 messages, sticky 4 turns, ≤25% of the window), the mutable goals
-   block, then exactly one **post-history slot** as the final message:
-   card `post_history_instructions` > card `extensions.lunamoth.rules_closer`
-   > bundled rules closer (the latter two only when tools are enabled).
+   (isolation/network/date — NO operator token; context is attach-independent),
+   shallow-scanned keyword world info (last ~4 messages, sticky 4 turns, ≤25% of
+   the window), the mutable wishes block, then exactly one **post-history slot**
+   as the final message: card `post_history_instructions` >
+   card `extensions.lunamoth.rules_closer` > bundled rules closer (the latter
+   two only when tools are enabled).
 
-Card override hooks: `extensions.lunamoth.{rules,rules_closer,embodiment,
-embodiment_bridge,wishes,toolpack,memory_chars,on_attach,on_detach}`;
-global `~/.lunamoth/rules.md`. (`on_attach`/`on_detach` override the wording of
-the neutral enter/leave conversation MARKER — a passive fact line, NOT a reaction
-turn; empty = the bundled neutral default. They're an Advanced card-editor field;
-card generation never produces them. The old "reaction turn on attach/detach"
-meaning was removed — presence is a neutral fact, registered only when the
-operator speaks. See `presence.marker_text`.) (The old `world` path pointer is retired — it
+Card override hooks: `extensions.lunamoth.{rules,practice,tool_use,rules_closer,
+embodiment,embodiment_bridge,wishes,toolpack,memory_chars}`; global
+`~/.lunamoth/rules.md` overrides `rules`. (The `on_attach`/`on_detach` hooks were
+REMOVED 2026-06-18 along with the rest of presence — there is no enter/leave
+marker to override.) (The old `world` path pointer is retired — it
 violated one-file; the embedded `character_book` replaced it, and a session
 config still carrying `world_path` is migrated once at load: entries merged
 into the session's card, key stripped.)
@@ -354,13 +397,16 @@ into the session's card, key stripped.)
   runtime mood.
 - **Two output registers**: muse (its own life; panoramic frontends only) vs
   say (delivered everywhere — the `speak` tool is how it decides to reach you).
-- **Isolation** per chara: `dir` / `sandbox` (default) / `docker`; network is ON
-  by default (`/net off` to disable; `/net on` re-enables). The `sandbox` jail is
+- **Isolation** per chara: `admin` / `sandbox` (default) — two modes only (the
+  per-chara `docker` mode was DELETED 2026-06-18; legacy `dir`/`local`/`docker`
+  session values normalize to `admin`). `admin` (formerly `dir`) = no jail,
+  full-machine read/write at the user's privileges. Network is ON by default
+  (`/net off` to disable; `/net on` re-enables). The `sandbox` jail is
   an isolation LADDER (`session/isolation.py` + `tools/runner.py`): native OS jail
   (sandbox-exec on macOS, bwrap on Linux) → **Landlock LSM** (Linux ≥5.13, the
   no-userns fallback that works inside Docker, where bwrap can't create a user
   namespace) → **refuse** (the `terminal` tool NEVER silently degrades to directory
-  trust — only an explicit `dir` runs unconfined). Confinement = read workspace+assets,
+  trust — only an explicit `admin` runs unconfined). Confinement = read workspace+assets,
   write workspace only; the chara can't read `~/.lunamoth` (the global key/login hash)
   or `/proc/<pid>/environ`. **Servers: prefer a SYSTEM-LEVEL install** (install.sh /
   `lunamoth desktop`) so bwrap gives the full jail; Docker is also supported (Landlock
@@ -392,10 +438,14 @@ into the session's card, key stripped.)
    existing `stream_event` channel to make charas aware of a living world.
 
 **C. For developers / agent users**
-1. **hermes parity burn-down** (`docs/OPEN-WORK.md` Part 1):
-   8 P1s in flight; then the P2 batches (llm robustness, runner output
-   hygiene, compaction boundaries, tool-loop guardrails, messaging dedup,
-   chara auto-restart). Multi-key management RPC rides this track too.
+1. **hermes apple-to-apple parity** (ACTIVE, owner 2026-06-18): the four
+   context subsystems are being driven to IDENTICAL with hermes — compaction
+   trigger, the structured summary template, `system_and_3` cache_control,
+   and reasoning_details/signature replay — each verified by a code-comparison
+   agent every pass (see `docs/OPEN-WORK.md`, "Loop 2026-06-18 cont."). Then the
+   remaining P2 batches (llm robustness, runner output hygiene, tool-loop
+   guardrails, messaging dedup, chara auto-restart). Multi-key management RPC
+   rides this track too.
 2. Declarative tool registry (hermes-style `tools/registry.py`, builtin/ split).
 3. Messaging: live-test WeChat/QQ with real credentials (budget a fix
    round — iLink endpoints shifted once already); then Telegram (long-poll,

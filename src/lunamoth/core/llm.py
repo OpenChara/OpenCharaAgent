@@ -12,6 +12,7 @@ from ..config import LLMConfig
 from ..obs import get_logger
 from ..content.persona import fallback_persona
 from ..protocol import Attachment, Notice, TextDelta, ThinkDelta, ToolEnd, ToolStart
+from .cache import apply_cache_control, cache_policy
 
 _log = get_logger("llm")
 
@@ -46,6 +47,34 @@ _VISION_HINTS = (
     "grok-4", "molmo", "phi-3.5-vision", "phi-4-multimodal", "mistral-small-3",
     "mistral-medium-3", "deepseek-vl", "kimi-vl", "ernie-4.5-vl", "doubao-vision",
 )
+
+
+def _base_url_host_matches(base_url: str, domain: str) -> bool:
+    """True when base_url's hostname is `domain` or a subdomain of it.
+
+    Safer than `domain in base_url`, which false-positives on paths
+    (`evil.com/moonshot.ai`) and lookalike hosts (`moonshot.ai.evil`)."""
+    from urllib.parse import urlparse
+    raw = (base_url or "").strip()
+    if not raw:
+        return False
+    if "://" not in raw:
+        raw = "//" + raw
+    host = (urlparse(raw).hostname or "").lower().rstrip(".")
+    domain = (domain or "").strip().lower().rstrip(".")
+    if not host or not domain:
+        return False
+    return host == domain or host.endswith("." + domain)
+
+
+def _model_keeps_thought_signature(model: "str | None") -> bool:
+    """Gemini-family targets attach `extra_content` (thought_signature) to each
+    tool call and reject the next request with HTTP 400 if it is missing on
+    replay; every other strict OpenAI-compatible provider rejects the request
+    if extra_content IS present. So the field is kept only when the OUTGOING
+    model is itself Gemini/Gemma family, stripped otherwise."""
+    m = str(model or "").lower()
+    return "gemini" in m or "gemma" in m
 
 
 # ---- lone-surrogate sanitization (audit #7, hermes message_sanitization) ---------------
@@ -483,17 +512,31 @@ class LLMClient:
 
     def reasoning_echoback_required(self) -> bool:
         """Some thinking modes reject replayed assistant tool-call messages that
-        omit reasoning_content — DeepSeek (hermes #15250), Xiaomi MiMo, and
-        Kimi/Moonshot when called on their own endpoints (aggregators like
-        OpenRouter speak their own protocol for Kimi, hence the host gate)."""
+        omit reasoning_content — DeepSeek V4 thinking (hermes #15250), Xiaomi
+        MiMo, and Kimi/Moonshot when called on their OWN endpoints (aggregators
+        like OpenRouter speak their own protocol for those models, hence the
+        HOST gate, not a model-name gate). Host-matched, not substring-matched,
+        so `evil.com/api.deepseek.com` can't false-trigger."""
+        provider = (self.cfg.provider or "").lower()
         model = (self.cfg.model or "").lower()
-        base = (self.cfg.base_url or "").lower()
-        return (
-            "deepseek" in model
-            or "api.deepseek.com" in base
-            or "mimo" in model
-            or any(h in base for h in ("api.kimi.com", "moonshot.ai", "moonshot.cn"))
+        base = self.cfg.base_url or ""
+        deepseek = (
+            provider == "deepseek"
+            or "deepseek" in model
+            or _base_url_host_matches(base, "api.deepseek.com")
         )
+        kimi = (
+            provider in {"kimi-coding", "kimi-coding-cn"}
+            or _base_url_host_matches(base, "api.kimi.com")
+            or _base_url_host_matches(base, "moonshot.ai")
+            or _base_url_host_matches(base, "moonshot.cn")
+        )
+        mimo = (
+            provider == "xiaomi"
+            or "mimo" in model
+            or _base_url_host_matches(base, "api.xiaomimimo.com")
+        )
+        return deepseek or kimi or mimo
 
     def _reasoning_body(self, body: dict, override: "str | None" = None) -> dict:
         """Attach the unified `reasoning` request param (default ON at medium).
@@ -637,6 +680,15 @@ class LLMClient:
                 # turn already in the durable context must not poison every
                 # later request.
                 msg = _preflight_history_tool_calls(msg)
+                # A Gemini thought_signature (extra_content) captured under a
+                # Gemini target is a 400 on every other strict provider — strip
+                # it from replayed history when the current model isn't Gemini.
+                if not _model_keeps_thought_signature(self.cfg.model):
+                    if any(isinstance(tc, dict) and "extra_content" in tc for tc in msg["tool_calls"]):
+                        msg = {**msg, "tool_calls": [
+                            {k: v for k, v in tc.items() if k != "extra_content"} if isinstance(tc, dict) else tc
+                            for tc in msg["tool_calls"]
+                        ]}
             messages.append(msg)
         if not in_context:
             messages.append({"role": "user", "content": user_text})
@@ -704,6 +756,9 @@ class LLMClient:
             **self._max_tokens_param(),
             "stream": True,
         }, override=reasoning)
+        should, native = cache_policy(self.cfg.base_url, self.cfg.model)
+        if should:
+            body["messages"] = apply_cache_control(body["messages"], self.cfg.cache_ttl, native)
         data = json.dumps(body).encode("utf-8")
         flow = ""  # "" | "think" | "speech" — for newline transitions around thinking
         # Lone-surrogate scrub (audit #7); joiners keep split astral pairs whole.
@@ -830,7 +885,7 @@ class LLMClient:
             while step < max_steps:
                 acc.clear()
                 t0 = time.monotonic()
-                tool_calls, thinking_text, finish = yield from self._stream_turn(
+                tool_calls, thinking_text, finish, reasoning_details = yield from self._stream_turn(
                     messages + volatile_messages, tools, acc, reasoning, channel
                 )
                 text = "".join(acc).strip()
@@ -876,8 +931,19 @@ class LLMClient:
                     a_msg: dict[str, Any] = {"role": "assistant", "content": text or "(oversized tool call dropped)"}
                     if thinking_text:
                         a_msg["reasoning_content"] = thinking_text
+                    if reasoning_details:
+                        a_msg["reasoning_details"] = reasoning_details
                     record(a_msg)
-                    messages.append(a_msg if echo else {k: v for k, v in a_msg.items() if k != "reasoning_content"})
+                    if echo:
+                        # Echo-required thinking modes 400 on a replayed assistant
+                        # tool-call turn that omits reasoning_content; a single
+                        # space satisfies the non-empty check without fabricating.
+                        replay = dict(a_msg)
+                        if not isinstance(replay.get("reasoning_content"), str) or replay.get("reasoning_content") == "":
+                            replay["reasoning_content"] = " "
+                        messages.append(replay)
+                    else:
+                        messages.append({k: v for k, v in a_msg.items() if k != "reasoning_content"})
                     note = {"role": "system", "content": self._SPLIT_TOOLS_NOTE}
                     record(note)
                     messages.append(note)
@@ -891,8 +957,20 @@ class LLMClient:
                     # Always kept for the record/transcript; replayed to the API
                     # only when the provider demands it (echo above).
                     a_msg["reasoning_content"] = thinking_text
+                if reasoning_details:
+                    # Opaque continuity blocks (signature / encrypted thinking);
+                    # replayed unmodified on BOTH echo and non-echo paths.
+                    a_msg["reasoning_details"] = reasoning_details
                 record(a_msg)
-                messages.append(a_msg if echo else {k: v for k, v in a_msg.items() if k != "reasoning_content"})
+                if echo:
+                    replay = dict(a_msg)
+                    if tool_calls and not isinstance(replay.get("reasoning_content"), str):
+                        replay["reasoning_content"] = " "
+                    elif replay.get("reasoning_content") == "":
+                        replay["reasoning_content"] = " "
+                    messages.append(replay)
+                else:
+                    messages.append({k: v for k, v in a_msg.items() if k != "reasoning_content"})
 
                 if tool_calls:
                     img_followups = []
@@ -976,7 +1054,8 @@ class LLMClient:
     def _stream_turn(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None, text_out: list[str], reasoning: "str | None" = None, channel: str = "say"):
         """Stream one assistant turn. Yields protocol events; accumulates visible
         text into `text_out` (caller-owned, so an abandoned generator can still
-        read the partial). Returns (tool_calls, reasoning, finish_reason).
+        read the partial). Returns
+        (tool_calls, reasoning, finish_reason, reasoning_details).
         """
         body: dict[str, Any] = self._reasoning_body({
             "model": self.cfg.model,
@@ -988,11 +1067,15 @@ class LLMClient:
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
+        should, native = cache_policy(self.cfg.base_url, self.cfg.model)
+        if should:
+            body["messages"] = apply_cache_control(body["messages"], self.cfg.cache_ttl, native)
         data = json.dumps(body).encode("utf-8")
         _log.debug("request: model=%s messages=%d tools=%d body=%d bytes",
                    self.cfg.model, len(messages), len(tools or []), len(data))
-        acc: dict[int, dict[str, str]] = {}
+        acc: dict[int, dict[str, Any]] = {}
         reasoning_parts: list[str] = []
+        reasoning_details: list[Any] = []   # provider continuity blocks (signature / encrypted), replayed unmodified
         finish_reason = ""
         flow = ""  # "" | "think" | "speech" — for newline transitions around thinking
         # Lone-surrogate scrub (audit #7) on everything emitted/accumulated;
@@ -1040,6 +1123,10 @@ class LLMClient:
                                 yield ThinkDelta("\n")
                             flow = "think"
                         yield ThinkDelta(thinking)
+                    rd = delta.get("reasoning_details")
+                    if isinstance(rd, list) and rd:
+                        guard.mark_payload()
+                        reasoning_details.extend(rd)
                     chunk = delta.get("content")
                     if chunk:
                         guard.mark_payload()
@@ -1053,9 +1140,13 @@ class LLMClient:
                     for tcd in delta.get("tool_calls") or []:
                         guard.mark_payload()
                         idx = tcd.get("index", 0)
-                        slot = acc.setdefault(idx, {"id": "", "name": "", "args": ""})
+                        slot = acc.setdefault(idx, {"id": "", "name": "", "args": "", "extra": None})
                         if tcd.get("id"):
                             slot["id"] = tcd["id"]
+                        if tcd.get("extra_content") is not None:
+                            # Gemini thought_signature rides here; kept only for a
+                            # Gemini-family target (see materialization below).
+                            slot["extra"] = tcd["extra_content"]
                         fn = tcd.get("function") or {}
                         if fn.get("name"):
                             slot["name"] = fn["name"]
@@ -1076,10 +1167,11 @@ class LLMClient:
             text_out.append(leftover)
             yield TextDelta(leftover, channel)
         tool_calls: list[dict[str, Any]] = []
+        keep_sig = _model_keeps_thought_signature(self.cfg.model)
         for idx in sorted(acc):
             s = acc[idx]
             if s["name"]:
-                tool_calls.append({
+                tc: dict[str, Any] = {
                     "id": s["id"] or f"call_{idx}",
                     "type": "function",
                     # Scrub surrogates (audit #7 — args are replayed into later
@@ -1089,8 +1181,11 @@ class LLMClient:
                     # missing-args error, and only clean args enter history.
                     "function": {"name": s["name"],
                                  "arguments": _repair_tool_args(_scrub_surrogates(s["args"]), s["name"])},
-                })
-        return tool_calls, "".join(reasoning_parts), finish_reason
+                }
+                if keep_sig and s.get("extra") is not None:
+                    tc["extra_content"] = s["extra"]
+                tool_calls.append(tc)
+        return tool_calls, "".join(reasoning_parts), finish_reason, reasoning_details
 
     def _mock(self, user_text: str, memory: str, status: dict[str, Any]) -> str:
         # Persona-neutral offline engine: keeps the app usable without an API. Real

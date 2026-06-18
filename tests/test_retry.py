@@ -203,7 +203,7 @@ def _patch_turns(monkeypatch, turns):
         text, tool_calls, thinking, finish = turns.pop(0)
         if text:
             text_out.append(text)
-        return (tool_calls, thinking, finish)
+        return (tool_calls, thinking, finish, [])
         yield  # pragma: no cover — makes this a generator (yield from compatible)
 
     monkeypatch.setattr(LLMClient, "_stream_turn", fake_stream_turn)

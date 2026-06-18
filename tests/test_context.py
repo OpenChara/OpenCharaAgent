@@ -185,3 +185,80 @@ def test_render_echoes_reasoning_only_on_request():
     c.add_message({"role": "assistant", "content": "done", "reasoning_content": "thought hard"})
     assert "reasoning_content" not in c.render()[0]
     assert c.render(include_reasoning=True)[0]["reasoning_content"] == "thought hard"
+
+
+def test_render_pads_missing_reasoning_to_single_space_on_echo():
+    """Echo provider + assistant tool-call turn with NO reasoning_content → the
+    replay MUST carry a non-empty string (a single space), never ""/absent —
+    DeepSeek V4 Pro / Kimi thinking mode 400s otherwise (tier 4)."""
+    c = ContextBuffer()
+    c.add_message({"role": "assistant", "content": None,
+                   "tool_calls": [{"id": "c1", "type": "function",
+                                   "function": {"name": "terminal", "arguments": "{}"}}]})
+    assert "reasoning_content" not in c.render()[0]              # withheld by default
+    echoed = c.render(include_reasoning=True)[0]
+    assert echoed["reasoning_content"] == " "                    # padded, never absent
+
+
+def test_render_upgrades_empty_string_reasoning_on_echo():
+    """tier 1: a pinned empty-string reasoning_content upgrades to ' ' on echo."""
+    c = ContextBuffer()
+    c.add_message({"role": "assistant", "content": "x", "reasoning_content": ""})
+    assert c.render(include_reasoning=True)[0]["reasoning_content"] == " "
+
+
+def test_render_non_string_reasoning_dropped_or_padded():
+    """tier 5: None reasoning_content (e.g. after compaction) → padded on echo,
+    absent when not echoing."""
+    c = ContextBuffer()
+    c.add_message({"role": "assistant", "content": "x", "reasoning_content": None})
+    assert "reasoning_content" not in c.render()[0]
+    assert c.render(include_reasoning=True)[0]["reasoning_content"] == " "
+
+
+def test_render_never_injects_reasoning_on_non_assistant():
+    c = ContextBuffer()
+    c.add_message({"role": "user", "content": "hi"})
+    c.add_message({"role": "assistant", "content": "",
+                   "tool_calls": [{"id": "c1", "type": "function",
+                                   "function": {"name": "terminal", "arguments": "{}"}}]})
+    c.add_message({"role": "tool", "tool_call_id": "c1", "content": "ok"})
+    out = c.render(include_reasoning=True)
+    assert "reasoning_content" not in out[0]   # user
+    assert "reasoning_content" not in out[2]   # tool result
+
+
+def test_render_passes_reasoning_details_unmodified_both_modes():
+    """reasoning_details (signature/encrypted continuity blocks) rides EVERY
+    replay unmodified — echo or not."""
+    c = ContextBuffer()
+    rd = [{"type": "reasoning.encrypted", "signature": "sig-abc", "data": "..."}]
+    c.add_message({"role": "assistant", "content": "done", "reasoning_details": rd})
+    assert c.render()[0]["reasoning_details"] == rd
+    assert c.render(include_reasoning=True)[0]["reasoning_details"] == rd
+
+
+def test_reasoning_echoback_host_match_not_substring():
+    """Host-matched, so a lookalike path can't false-trigger the echo gate."""
+    from lunamoth.config import LLMConfig
+    from lunamoth.core.llm import LLMClient
+
+    def client(base_url, model, provider="openai_compatible"):
+        return LLMClient(LLMConfig(provider=provider, base_url=base_url, model=model))
+
+    # substring "api.deepseek.com" sits in the PATH, not the host → must be False
+    assert not client("https://evil.com/api.deepseek.com/v1", "llama-3").reasoning_echoback_required()
+    # real Kimi/Moonshot host → True
+    assert client("https://api.moonshot.ai/v1", "kimi-k2").reasoning_echoback_required()
+    # provider tag alone → True
+    assert client("https://x.test/v1", "some-model", provider="kimi-coding").reasoning_echoback_required()
+    # MiMo by model name → True
+    assert client("https://x.test/v1", "xiaomi/mimo-7b").reasoning_echoback_required()
+
+
+def test_model_keeps_thought_signature_gate():
+    from lunamoth.core.llm import _model_keeps_thought_signature
+    assert _model_keeps_thought_signature("google/gemini-3-pro")
+    assert _model_keeps_thought_signature("gemma-3-27b")
+    assert not _model_keeps_thought_signature("deepseek/deepseek-v4")
+    assert not _model_keeps_thought_signature(None)

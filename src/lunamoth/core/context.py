@@ -91,9 +91,24 @@ class ContextBuffer:
 
     def render(self, include_reasoning: bool = False) -> list[dict]:
         """API-ready view: sanitized keys, orphaned tool results dropped.
+
         Reasoning is withheld unless the provider demands the echo-back
-        (DeepSeek thinking mode — see llm.py)."""
-        keys = _API_KEYS + ("reasoning_content",) if include_reasoning else _API_KEYS
+        (`include_reasoning=True`, set from llm.reasoning_echoback_required()).
+        When echoing, every assistant message MUST carry a non-empty STRING
+        reasoning_content or DeepSeek V4 Pro / Kimi / MiMo thinking mode 400s
+        the replay ("the reasoning content in thinking mode must be passed back
+        to the API"); a single space satisfies the non-empty check without
+        fabricating chain-of-thought. Mirrors the upstream reference's replay
+        tiers, collapsed to the three reachable here (this codebase has ONE
+        reasoning key and no mid-session provider fallback, so the cross-
+        provider promote/poison tiers are structurally moot):
+          1. explicit string reasoning_content kept verbatim ("" upgraded to
+             " " when echoing — pre-tightening history pinned empty strings);
+          4. echo provider + no usable reasoning_content -> " ";
+          5. non-string reasoning_content (e.g. None after compaction) dropped
+             when not echoing, padded to " " when echoing.
+        reasoning_details (opaque signature / encrypted_content continuity
+        blocks) rides EVERY replay unmodified, echo or not."""
         out: list[dict] = []
         declared_call_ids: set[str] = set()
         for msg in self.messages:
@@ -106,7 +121,17 @@ class ContextBuffer:
             for tc in msg.get("tool_calls") or []:
                 if tc.get("id"):
                     declared_call_ids.add(tc["id"])
-            out.append({k: msg[k] for k in keys if k in msg})
+            api_msg = {k: msg[k] for k in _API_KEYS if k in msg}
+            details = msg.get("reasoning_details")
+            if isinstance(details, list) and details:
+                api_msg["reasoning_details"] = details
+            if include_reasoning and msg.get("role") == "assistant":
+                rc = msg.get("reasoning_content")
+                if isinstance(rc, str):
+                    api_msg["reasoning_content"] = rc if rc != "" else " "   # tier 1 (+ "" upgrade)
+                else:
+                    api_msg["reasoning_content"] = " "                       # tier 4 (None/missing -> pad)
+            out.append(api_msg)
         return out
 
     def token_count(self) -> int:

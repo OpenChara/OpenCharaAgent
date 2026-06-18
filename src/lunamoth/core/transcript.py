@@ -146,7 +146,7 @@ class TranscriptStore:
         # it as JSON (the struct path) so it reloads intact instead of being
         # str()-ed into a broken "[{'type': ...}]" line.
         structured = isinstance(msg.get("content"), list) or any(
-            k in msg for k in ("tool_calls", "tool_call_id", "reasoning_content", "name")
+            k in msg for k in ("tool_calls", "tool_call_id", "reasoning_content", "reasoning_details", "name")
         )
         if msg.get("kind") == "summary":
             self.append(role, str(msg.get("content") or ""), kind="summary")

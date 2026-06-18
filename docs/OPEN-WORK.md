@@ -735,3 +735,41 @@ in a special `.muse-msg` bubble. Owner ruling: "我们就一视同仁地处理�
   branch was removed too. `channel` stays on the protocol type (gateway plumbing).
 - Gates: pytest 908 passed; ruff clean; web build + vitest 155 passed; adversarial
   subagent review clean (no `kind="think"` behavior anywhere, no dangling muse refs).
+
+## Loop 2026-06-18 cont. — apple-to-apple with hermes (owner /loop, IN PROGRESS)
+Owner ruling after the context-vs-hermes audit (`LunaMoth-context-vs-hermes.html`):
+the four context subsystems must become IDENTICAL to hermes (copy algorithm +
+numbers + prompt text verbatim, de-branded), each verified by a code-comparison
+agent every pass until they match. Plus: migrate the good general prompts, drop
+token-costly web search, and remove the redundant `send_file` tool.
+
+Phases (each: port → comparison agent vs `reference/hermes-agent/` → iterate to
+identical → gates → commit → deploy):
+- [x] **Phase 0 — CLAUDE.md** rewritten to the apple-to-apple direction; doc-drift
+      fixed (presence/marker_text gone, docker→admin, web/send_file dropped, the
+      strengthened hermes RULE, Roadmap C).
+- [x] **Phase 1 — Reasoning** (`core/llm.py` + `context.py` + `transcript.py`):
+      host-matched echo gate, single-space reasoning_content pad (record stays
+      pad-free; replay-only), `reasoning_details` captured + persisted + replayed
+      UNCONDITIONALLY (matches hermes — gating it would break OpenRouter
+      continuity), Gemini `thought_signature` capture/gate/strip. Tiers 2/3 +
+      reapply-echo correctly omitted (one reasoning key, no mid-session
+      fallback). Comparison agent verdict: FAITHFUL. Gates: 930 passed, ruff clean.
+      DEFERRED (future-route only): the Anthropic thinking-signature one-shot
+      400-recovery (`conversation_loop.py:2228`) — relevant only if a direct
+      signed-thinking Anthropic route is added later AND history is compacted.
+- [x] **Phase 2 — Cache** (`core/cache.py` new): ported hermes `system_and_3`
+      cache_control (system + last 3 non-system), `cache_policy` route gate
+      (native Anthropic / OpenRouter-claude / else-off), `cache_ttl` config,
+      wired into both llm.py request builders on the API copy only (never the
+      stable-prefix cache). Comparison agent verdict: IDENTICAL. tests/test_cache.py.
+- [ ] **Phase 3 — Compaction + Summary** (`core/compaction.py`): match the trigger
+      (threshold/protect-first/last/anti-thrash + failure cooldown), the structured
+      `## Active Task … ## Critical Context` template, iterative-update framing, the
+      REFERENCE-ONLY handoff prefix, the deterministic static fallback.
+- [ ] **Phase 4 — Prompts** (`content/rules.py`): migrate task-completion discipline +
+      tool-use enforcement + SKILLS guidance from hermes, de-branded (no "hermes"/"VM").
+- [ ] **Phase 5 — Tools**: delete `web.py` (web_search/web_extract), delete `send_file`
+      (MEDIA:<path> inline-marker convention like hermes), neutralize residual
+      "Hermes/the VM/Linux environment" strings in tool descriptions.
+- De-brand invariant: literal "hermes"/"Hermes"/"the VM" must never appear in `src/`.

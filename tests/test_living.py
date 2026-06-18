@@ -104,9 +104,9 @@ def test_say_event_flows_through_stream_agent(agent, monkeypatch):
         calls["n"] += 1
         if calls["n"] == 1:
             return [{"id": "c1", "type": "function",
-                     "function": {"name": "speak", "arguments": json.dumps({"text": "给你听一段。"})}}], "", "tool_calls"
+                     "function": {"name": "speak", "arguments": json.dumps({"text": "给你听一段。"})}}], "", "tool_calls", []
         text_out.append("(done)")
-        return [], "", "stop"
+        return [], "", "stop", []
 
     monkeypatch.setattr(LLMClient, "is_live", lambda self: True)
 

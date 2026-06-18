@@ -40,6 +40,10 @@ class LLMConfig:
     # `on`/`off` is a safety valve for routes the name heuristic can't read
     # (a custom-named vision model, or a text-only one that fakes a vision name).
     vision: str = os.getenv("LLM_VISION", "auto").strip().lower()
+    # Anthropic prompt-cache TTL tier: "5m" (default) or "1h". 1h costs ~2x on
+    # write vs 1.25x for 5m but amortizes across long sessions with >5-min gaps
+    # between turns. Only applied on Anthropic-family routes (see core/cache.py).
+    cache_ttl: str = os.getenv("LLM_CACHE_TTL", "5m").strip().lower()
 
 
 @dataclass(frozen=True)
