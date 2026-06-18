@@ -32,6 +32,7 @@ from typing import Any
 from ..obs import get_logger
 from .context import ContextBuffer, _flatten_content, _msg_text, estimate_tokens
 from .providers import MINIMUM_CONTEXT_LENGTH  # the 64K floor — single source (providers owns context-window facts)
+from .redact import redact_sensitive_text  # code-level secret scrub on summary in/out (hermes redact.py)
 
 _log = get_logger("compaction")
 
@@ -723,14 +724,21 @@ def _summarize(head: list[dict], budget: int, llm) -> str:
     is used. One user message keeps the call filter-safe."""
     prev = next((m for m in head if m.get("kind") == "summary"), None)
     new_turns = [m for m in head if m.get("kind") != "summary"]
-    convo = _serialize(new_turns)
+    # Code-level secret scrub on the way IN: even if the prompt's [REDACTED]
+    # instruction is honored, a credential in the conversation must not reach the
+    # summarizer (force=True — a safety boundary that never emits raw secrets).
+    convo = redact_sensitive_text(_serialize(new_turns), force=True)
     if not convo:
         return ""
     out_budget = min(2048, max(512, budget // 8))
     today = _today_str()
     if prev is not None:
-        prev_body = _strip_summary_prefix(_flatten_content(prev.get("content")))
+        prev_body = redact_sensitive_text(
+            _strip_summary_prefix(_flatten_content(prev.get("content"))), force=True)
         prompt = _iterative_update_prompt(prev_body, convo, out_budget, today)
     else:
         prompt = _first_compaction_prompt(convo, out_budget, today)
-    return llm.raw_complete([{"role": "user", "content": prompt}], max_tokens=out_budget)
+    out = llm.raw_complete([{"role": "user", "content": prompt}], max_tokens=out_budget)
+    # …and on the way OUT: a model that ignored the [REDACTED] instruction must
+    # not leak a secret into the persisted summary.
+    return redact_sensitive_text(out, force=True)
