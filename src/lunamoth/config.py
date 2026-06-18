@@ -40,6 +40,13 @@ class LLMConfig:
     # `on`/`off` is a safety valve for routes the name heuristic can't read
     # (a custom-named vision model, or a text-only one that fakes a vision name).
     vision: str = os.getenv("LLM_VISION", "auto").strip().lower()
+    # AUXILIARY vision model: when the main model can't see images, an uploaded
+    # image is described by THIS model (text fed back to the main model), like
+    # hermes' auxiliary task=vision. Shares the main base_url/api_key — only the
+    # model id differs (any OpenRouter model id reaches other providers). Empty
+    # => no auxiliary vision (a non-vision model keeps the honest "saved to disk"
+    # note instead of a description).
+    vision_model: str = os.getenv("LLM_VISION_MODEL", "").strip()
     # Anthropic prompt-cache TTL tier: "5m" (default) or "1h". 1h costs ~2x on
     # write vs 1.25x for 5m but amortizes across long sessions with >5-min gaps
     # between turns. Only applied on Anthropic-family routes (see core/cache.py).

@@ -79,8 +79,8 @@ class Sandbox:
         ``map_virtual_assets`` the file tools use, so the virtual-prefix convention
         lives in ONE place. The result must live under workspace OR assets — any
         escape (absolute path, ``..`` traversal, or a symlink pointing out) raises
-        :class:`SandboxViolation`. READ-ONLY surfaces only (send_file, image
-        vision): never resolve a write through this — writes stay workspace-confined.
+        :class:`SandboxViolation`. READ-ONLY surfaces only (MEDIA:<path> surfacing,
+        image vision): never resolve a write through this — writes stay workspace-confined.
         """
         rel = Path(relative)
         if rel.is_absolute():

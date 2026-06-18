@@ -12,10 +12,11 @@ from pathlib import Path
 import pytest
 
 from lunamoth.core.attachments import (
-    INLINE_IMAGE_MAX_BYTES,
+    SHRINK_TARGET_BYTES,
     RawAttachment,
     build_user_content,
     ingest_attachments,
+    shrink_data_url,
 )
 from lunamoth.tools.sandbox import Sandbox
 
@@ -67,15 +68,42 @@ def test_small_image_inlines_for_vision_model():
     assert res.saved == []  # inlined, not written to disk
 
 
-def test_large_image_goes_to_workspace_with_note():
+def test_oversized_image_inlines_full_size_for_vision():
+    # hermes native shape: an image is inlined at FULL size (no proactive shrink) —
+    # the model sees the real pixels; a provider too-large rejection is recovered by
+    # the LLM layer's reactive shrink, not by dropping the image at ingest.
     sb = _sandbox()
-    big = b"\x89PNG" + b"y" * (INLINE_IMAGE_MAX_BYTES + 10)
+    big = b"\x89PNG\r\n\x1a\n" + b"y" * (SHRINK_TARGET_BYTES + 10)
     res = ingest_attachments([RawAttachment.from_wire(_wire("big.png", "image/png", big))],
                              sandbox=sb, vision_ok=True)
-    assert res.content_parts == []
-    assert res.saved == ["uploads/big.png"]
-    assert any("big.png" in n for n in res.notes)
-    assert "uploads/big.png" in sb.list_files()
+    assert res.saved == []                       # inlined, not dropped to disk
+    assert len(res.content_parts) == 1
+    url = res.content_parts[0]["image_url"]["url"]
+    inlined = base64.b64decode(url.split(",", 1)[1])
+    assert inlined == big                        # FULL size — byte-identical, not shrunk
+
+
+def test_shrink_data_url_downscales_a_large_real_image():
+    # The reactive recovery: shrink_data_url re-encodes an oversized data URL to fit
+    # the 4MB target (hermes), used on a provider image-too-large rejection.
+    pytest.importorskip("PIL")
+    import io
+    import os
+    from PIL import Image
+
+    raw = os.urandom(1400 * 1400 * 3)  # random noise → ~5.9MB PNG, well over 4MB
+    buf = io.BytesIO()
+    Image.frombytes("RGB", (1400, 1400), raw).save(buf, format="PNG")
+    big_url = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    assert len(big_url) > SHRINK_TARGET_BYTES
+
+    small_url = shrink_data_url(big_url)
+    assert small_url is not None and small_url.startswith("data:image/")
+    assert len(small_url) <= SHRINK_TARGET_BYTES   # shrunk under the target
+    assert len(small_url) < len(big_url)
+
+    # A non-data URL (remote) is left alone.
+    assert shrink_data_url("https://example.com/x.png") is None
 
 
 def test_image_without_vision_saves_and_notices():
@@ -148,20 +176,35 @@ def test_context_pairs_flattens_list_content():
     assert pairs == [("user", "look")]
 
 
-def test_transcript_roundtrips_multimodal_message():
+def test_transcript_roundtrips_multimodal_message_stripping_image_bytes():
+    # A multimodal message reloads as structured content, but inline image BYTES are
+    # NOT persisted (commit 79eac31 "never persist bytes", extended to the upload
+    # path): the text handle round-trips, the data: URL is stripped. A remote http
+    # image URL is tiny and kept.
     from lunamoth.core.transcript import TranscriptStore
     db = Path(tempfile.mkdtemp()) / "t.db"
     t = TranscriptStore(db)
     if not t.available:
         pytest.skip("sqlite transcript unavailable")
     content = [
-        {"type": "text", "text": "hello"},
+        {"type": "text", "text": "hello [image: cat.png]"},
         {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        {"type": "image_url", "image_url": {"url": "https://cdn.example.com/y.png"}},
     ]
-    t.append_message({"role": "user", "content": content})
+    msg = {"role": "user", "content": content}
+    t.append_message(msg)
+    # the in-memory message is NOT mutated — the live context keeps full pixels;
+    # only the persisted copy is stripped.
+    assert msg["content"] is content and content[1]["image_url"]["url"].startswith("data:")
     rows = t.load()
     assert rows and isinstance(rows[-1]["content"], list)
-    assert rows[-1]["content"][1]["type"] == "image_url"
+    parts = rows[-1]["content"]
+    # the text handle survived
+    assert any(p["type"] == "text" and "cat.png" in p["text"] for p in parts)
+    # the base64 data URL was stripped; the remote URL was kept
+    urls = [p["image_url"]["url"] for p in parts if p.get("type") == "image_url"]
+    assert not any(u.startswith("data:") for u in urls)
+    assert "https://cdn.example.com/y.png" in urls
 
 
 # ---- llm.vision_supported ----------------------------------------------------
@@ -295,10 +338,17 @@ def test_image_vision_followup_none_without_vision():
     assert LunaMothAgent._image_vision_followup(_agent_stub(sb, False), rel) is None
 
 
-def test_image_vision_followup_none_for_oversized():
+def test_image_vision_followup_inlines_oversized_full_size():
+    # hermes native shape: a large workspace image is re-viewed at FULL size (the
+    # reactive shrink handles a provider rejection, not a proactive bail).
     sb = _sandbox()
-    rel = sb.write_bytes("big.png", _png(INLINE_IMAGE_MAX_BYTES + 1))
-    assert LunaMothAgent._image_vision_followup(_agent_stub(sb, True), rel) is None
+    big = _png(SHRINK_TARGET_BYTES + 1)
+    rel = sb.write_bytes("big.png", big)
+    out = LunaMothAgent._image_vision_followup(_agent_stub(sb, True), rel)
+    assert out is not None
+    _note, follow = out
+    url = follow["content"][-1]["image_url"]["url"]
+    assert base64.b64decode(url.split(",", 1)[1]) == big   # full size, not shrunk
 
 
 def test_image_vision_followup_none_for_nonimage():

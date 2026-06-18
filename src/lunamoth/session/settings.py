@@ -111,10 +111,14 @@ class Settings:
     # Composable tool pack (decoupled from the persona card). Name ('sandbox') or .json path.
     # Empty => no tools (pure roleplay). Any persona can be combined with any pack.
     toolpack: str = "sandbox"
-    # The context window is NOT a setting — it's the model's real window, read from
-    # the provider (see providers.py). Memory limits stay configurable (0 => auto:
-    # the card's value, else the built-in default), since memory size can be
-    # characterful.
+    # The context window is NOT a setting for KNOWN models — it's the model's real
+    # window, read from the provider (see providers.py). The ONE exception is a
+    # custom / self-hosted endpoint whose window the provider can't report:
+    # model_context (0 => auto: providers.py resolves it; >0 => explicit fallback,
+    # required for custom models, ignored where the provider reports a real window).
+    model_context: int = 0
+    # Memory limits stay configurable (0 => auto: the card's value, else the
+    # built-in default), since memory size can be characterful.
     memory_chars: int = 0
     user_chars: int = 0
     # TUI theme card (cosmetic skin: banner/colors/decoration). Empty => built-in theme.
@@ -122,6 +126,11 @@ class Settings:
     # Reasoning effort for thinking models: off | low | medium | high (default ON
     # at medium). Only sent to routes/models known to accept the parameter.
     reasoning: str = "medium"
+    # Auxiliary vision model id (e.g. "google/gemini-3-flash", "openai/gpt-4o").
+    # When the main model has no vision, an uploaded image is described by this
+    # model and the text fed back. Empty => no auxiliary vision. Shares the main
+    # base_url/api_key (any OpenRouter id reaches other providers).
+    vision_model: str = ""
     # Show the thinking TEXT in the transcript (dimmed)? Default off: you get a
     # Claude-style "✶ thinking…" indicator instead, and the text leaves no trace.
     show_thinking: bool = False
@@ -161,6 +170,7 @@ class Settings:
             temperature=float(self.temperature),
             max_tokens=int(self.max_tokens),
             reasoning=(self.reasoning or "medium").strip().lower(),
+            vision_model=(self.vision_model or "").strip(),
         )
 
 
@@ -209,6 +219,7 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "user_chars": ("LUNAMOTH_USER_CHARS",),
     "mode": ("LUNAMOTH_MODE", "LUNAMOTH_PRESENCE"),
     "reasoning": ("LLM_REASONING",),
+    "vision_model": ("LLM_VISION_MODEL",),
     "patience": ("LUNAMOTH_PATIENCE",),
     "embodiment_override": ("LUNAMOTH_EMBODIMENT",),
 }

@@ -184,23 +184,10 @@ function StatusPane({ stream, onTab }: { stream: CharaStream; onTab: (t: PanelTa
 
 function SkillsPane({ stream, name }: { stream: CharaStream; name: string }) {
   const t = useT();
-  const { hub } = useHubApi();
-  const [pack, setPack] = useState("");
   const [skills, setSkills] = useState<string | null>(null);
   useEffect(() => {
     let on = true;
     (async () => {
-      try {
-        const card = await hub.call<{ extensions?: { lunamoth?: { toolpack?: string } } }>(
-          "card.read",
-          { name },
-          20000,
-        );
-        const p = card?.extensions?.lunamoth?.toolpack;
-        if (on && p) setPack(String(p));
-      } catch {
-        /* fine */
-      }
       const reply = await stream.runCommand("/skills", true);
       if (on) setSkills(reply || "");
     })();
@@ -211,12 +198,6 @@ function SkillsPane({ stream, name }: { stream: CharaStream; name: string }) {
   }, [name]);
   return (
     <div>
-      <div className="dsec">
-        <h4>{t("p-toolpack")}</h4>
-        <div className="tool-chips">
-          <span className="chip">{pack || "sandbox"}</span>
-        </div>
-      </div>
       <div className="dsec">
         <h4>Skills</h4>
         {skills ? (

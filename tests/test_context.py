@@ -262,3 +262,41 @@ def test_model_keeps_thought_signature_gate():
     assert _model_keeps_thought_signature("gemma-3-27b")
     assert not _model_keeps_thought_signature("deepseek/deepseek-v4")
     assert not _model_keeps_thought_signature(None)
+
+
+# ---- refuse a KNOWN-too-small live model (apple-to-apple with hermes) -----------
+
+def test_refuses_known_small_context_live_model(agent, monkeypatch):
+    """A live model whose REAL window is known to be < 64K is refused (hermes
+    raises at init below MINIMUM_CONTEXT_LENGTH). Only when DETERMINED — an
+    unmeasured/offline model that fell back to DEFAULT_WINDOW is allowed."""
+    from lunamoth.core import providers
+
+    a = agent(toolpack="")
+    monkeypatch.setattr(a.llm, "is_live", lambda: True)
+
+    # determined + below floor → refuse
+    monkeypatch.setattr(providers, "context_window_resolved", lambda *x, **k: (32_000, True))
+    a._ctx_window_key = None  # force recompute
+    with pytest.raises(ValueError, match="below the"):
+        a.context_limit()
+
+    # determined + at/above floor → fine
+    monkeypatch.setattr(providers, "context_window_resolved", lambda *x, **k: (128_000, True))
+    a._ctx_window_key = None
+    assert a.context_limit() == 128_000
+
+    # UNDETERMINED small window (offline/unknown) → allowed, never refused
+    monkeypatch.setattr(providers, "context_window_resolved", lambda *x, **k: (32_000, False))
+    a._ctx_window_key = None
+    assert a.context_limit() == 32_000
+
+
+def test_mock_provider_never_refused_for_small_window(agent, monkeypatch):
+    """A non-live (mock/offline) agent is never refused, even at a small window —
+    the guard is live-only."""
+    from lunamoth.core import providers
+    a = agent(toolpack="")  # mock provider → is_live() False
+    monkeypatch.setattr(providers, "context_window_resolved", lambda *x, **k: (8_000, True))
+    a._ctx_window_key = None
+    assert a.context_limit() == 8_000  # no raise

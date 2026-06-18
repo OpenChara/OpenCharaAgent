@@ -399,7 +399,8 @@ class FileOps:
                 file_size=file_size,
                 hint=(
                     "Image file — cannot be read as text. You can show it to your user "
-                    "with send_file, but cannot inspect its pixels here."
+                    "by writing a line MEDIA:<path> in your reply, but cannot inspect "
+                    "its pixels here."
                 ),
             )
 

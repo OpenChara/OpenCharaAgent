@@ -197,17 +197,9 @@ export function useCharaStream(name: string): CharaStream {
         setWorkState(true, "generate");
       } else if (ev.type === "notice") {
         m.pushNotice(ev.text || ev.kind);
-      } else if (ev.type === "attachment") {
-        m.pushAttachment({
-          id: "",
-          kind: "attachment",
-          url: ev.url,
-          mime: ev.mime,
-          name: ev.name,
-          caption: ev.caption,
-          channel: ev.channel,
-        });
       }
+      // Files are no longer a separate event: the chara writes a MEDIA:<path>
+      // marker in its say text, which SayMessage extracts and renders inline.
       bump();
     },
     [applyStatusWord, setWorkState, bump],

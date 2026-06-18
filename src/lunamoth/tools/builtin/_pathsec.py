@@ -87,7 +87,7 @@ def resolve_in_workspace(
     silent.
 
     The ``assets`` sibling is a READ-only root: it is an allowed destination only
-    when *readable* is true (read_file/search/send_file). Write paths
+    when *readable* is true (read_file/search/MEDIA:<path> surfacing). Write paths
     (``readable=False``, the default) deliberately EXCLUDE it from the allowed
     roots, so a write that resolves into ``assets/`` fails confinement — the
     file-tool wrapper turns that into a friendly read-only refusal first, but the

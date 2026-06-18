@@ -17,7 +17,7 @@
  *    turn boundary closes the previous item, but with no channel-based styling).
  *  - A run of consecutive tool calls folds into ONE `tool-group` item; its
  *    summary is a hermes-style tally ("read 1 file · ran 2 commands"). Any
- *    non-tool item (text/think/attachment/system) breaks the group.
+ *    non-tool item (text/think/system) breaks the group.
  *  - The `speak` tool ending ok sets a pending-super flag; the NEXT say-channel
  *    text opens as a bright super-chat bubble (the chara reaching out).
  *  - think deltas accumulate into the SINGLE think block for the turn
@@ -41,7 +41,6 @@ export type ItemKind =
   | "super"
   | "think"
   | "tool-group"
-  | "attachment"
   | "system"
   | "permission"
   | "clarify";
@@ -81,16 +80,6 @@ export interface ThinkItem {
   raw: string;
   tokens: number;
   streaming: boolean;
-}
-
-export interface AttachmentItem {
-  id: string;
-  kind: "attachment";
-  url: string;
-  mime: string;
-  name: string;
-  caption: string;
-  channel: "say" | "muse";
 }
 
 export interface UserItem {
@@ -140,7 +129,6 @@ export type StreamItem =
   | TextItem
   | ThinkItem
   | ToolGroupItem
-  | AttachmentItem
   | SystemItem
   | PermissionItem
   | ClarifyItem;
@@ -275,12 +263,6 @@ export class StreamModel {
 
   pushNotice(text: string): void {
     this.systemLine(text);
-  }
-
-  pushAttachment(a: AttachmentItem): void {
-    this.closeCurrent();
-    this.breakToolGroup();
-    this.items.push({ ...a, id: this.nextId(), kind: "attachment" });
   }
 
   /* ---- user / peer / queued bubbles ---- */

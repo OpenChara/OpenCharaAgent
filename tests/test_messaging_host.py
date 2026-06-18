@@ -48,6 +48,9 @@ class _Handle:
     def detach(self):
         self.attached = False
 
+    def resolve_media(self, rel):
+        return None  # no files by default; media tests override
+
     def stream_user(self, text):
         self.user_calls.append(text)
         yield ThinkDelta("private")
@@ -184,6 +187,10 @@ class _BusyDispatch:
         def snapshot():
             raise RuntimeError("no snapshot in this stub")
 
+        @staticmethod
+        def resolve_media(rel):
+            return None
+
     def emit_peer_message(self, *a, **k):
         pass
 
@@ -220,43 +227,91 @@ def test_inbound_busy_note_when_agent_never_frees(monkeypatch):
     assert any("busy" in s.lower() or "还在忙" in s for s in adapter.sent)
 
 
-# ---- ① send_file over the gateway: real media OR an honest note (never silent) ----
-
-from lunamoth.protocol import Attachment  # noqa: E402
+# ---- ① a MEDIA: marker over the gateway: real media OR an honest note (never silent) ----
 
 
 class _AttachHandle(_Handle):
+    """Streams a say reply with a MEDIA: marker (hermes shape) and resolves it to a
+    real local path inside the sandbox."""
     def stream_user(self, text):
         self.user_calls.append(text)
-        yield TextDelta("here it is", SAY)
-        yield Attachment(url="/asset?p=/tmp/foo.png", mime="image/png", name="foo.png", caption="a pic")
+        yield TextDelta("here it is\n", SAY)
+        yield TextDelta("MEDIA:works/foo.png", SAY)
+
+    def resolve_media(self, rel):
+        return "/tmp/foo.png" if rel == "works/foo.png" else None
 
 
 class _MediaAdapter(_Adapter):
     def __init__(self):
         super().__init__()
         self.media: list = []
+        self.images: list = []
 
     def send_media(self, source, mime="", caption=""):
         self.media.append((source, mime, caption))
 
+    def send_image(self, url, caption=""):
+        self.images.append((url, caption))
 
-def test_send_file_falls_back_to_honest_note_when_channel_has_no_media():
+
+class _ImageUrlHandle(_Handle):
+    """Streams a say reply with a remote markdown image (hermes ![alt](url) path)."""
+    def stream_user(self, text):
+        self.user_calls.append(text)
+        yield TextDelta("look: ![a](https://fal.media/x.png)", SAY)
+
+
+def test_remote_image_url_sent_natively_when_adapter_supports_it():
+    handle = _ImageUrlHandle()
+    adapter = _MediaAdapter()
+    dispatch, host = _host_with_adapter(handle, adapter, [])
+    host._process(adapter, InboundMessage("u1", "Alice", "show me"))
+    assert adapter.images == [("https://fal.media/x.png", "")]   # sent as a native photo
+    assert not any("![a]" in s for s in adapter.sent)            # markdown stripped from text
+
+
+def test_remote_image_url_falls_back_to_link_text_when_unsupported():
+    handle = _ImageUrlHandle()
+    adapter = _Adapter()  # default send_image raises DeliveryDeferred
+    dispatch, host = _host_with_adapter(handle, adapter, [])
+    host._process(adapter, InboundMessage("u1", "Alice", "show me"))
+    assert any("https://fal.media/x.png" in s for s in adapter.sent)  # link survives as text
+
+
+def test_media_marker_falls_back_to_honest_note_when_channel_has_no_media():
     handle = _AttachHandle()
     adapter = _Adapter()  # default send_media raises DeliveryDeferred
     dispatch, host = _host_with_adapter(handle, adapter, [])
     host._process(adapter, InboundMessage("u1", "Alice", "show me"))
-    assert any("here it is" in s for s in adapter.sent)        # the say text
+    assert any("here it is" in s for s in adapter.sent)        # the say text (marker stripped)
+    assert not any("MEDIA:" in s for s in adapter.sent)         # the marker never shows as text
     assert any("foo.png" in s for s in adapter.sent)            # honest 'file generated' note, NOT a silent drop
 
 
-def test_send_file_uses_send_media_when_the_adapter_supports_it():
+def test_media_marker_uses_send_media_when_the_adapter_supports_it():
     handle = _AttachHandle()
     adapter = _MediaAdapter()
     dispatch, host = _host_with_adapter(handle, adapter, [])
     host._process(adapter, InboundMessage("u1", "Alice", "show me"))
-    # resolved the /asset?p= URL to the real local path and uploaded it
-    assert adapter.media == [("/tmp/foo.png", "image/png", "a pic")]
+    # extracted the MEDIA: marker, resolved it via the sandbox, and uploaded the file
+    assert adapter.media == [("/tmp/foo.png", "image/png", "")]
+    assert any("here it is" in s for s in adapter.sent)
+    assert not any("MEDIA:" in s for s in adapter.sent)
+
+
+def test_missing_media_marker_surfaces_honest_note():
+    # A MEDIA: marker that doesn't resolve to a real file → honest note, never silent.
+    class _Missing(_AttachHandle):
+        def resolve_media(self, rel):
+            return None
+
+    handle = _Missing()
+    adapter = _MediaAdapter()
+    dispatch, host = _host_with_adapter(handle, adapter, [])
+    host._process(adapter, InboundMessage("u1", "Alice", "show me"))
+    assert adapter.media == []                                   # nothing uploaded
+    assert any("foo.png" in s for s in adapter.sent)             # but the user is told
 
 
 # ---- superchat → gateway: PROACTIVE idle-turn say is pushed to the platform ----

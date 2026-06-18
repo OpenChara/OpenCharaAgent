@@ -15,6 +15,17 @@
   --statusbar-h:24px;
   --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
   --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  /* Brand display face — Latin-only, self-hosted (~18KB woff2), used ONLY for the
+     wordmark + per-card name. Everything else stays on the system stack so the app
+     loads instantly and CJK renders natively. Falls back to a system serif (CJK
+     glyphs have no Fraunces coverage and pass straight through to the sans). */
+  --display:"Fraunces","Iowan Old Style",Georgia,var(--sans);
+}
+/* Fraunces (OFL, free for commercial use). font-display:swap → no FOIT; the
+   wordmark paints in the fallback first, then upgrades. One static weight only. */
+@font-face{
+  font-family:"Fraunces"; font-style:normal; font-weight:600; font-display:swap;
+  src:url("./fonts/fraunces-600.woff2") format("woff2");
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%}
@@ -203,6 +214,7 @@ body.dark .gate-field input{background:#1C2228; border-color:rgba(255,255,255,.1
 body.dark .fr-close{background:rgba(255,255,255,.07)}
 body.dark .fr-close:hover{background:rgba(255,255,255,.13); color:var(--text)}
 .empty-state .acts{display:flex; gap:10px}
+.empty-state .empty-title{font-size:15px; color:var(--text-2); letter-spacing:.2px}
 
 /* 肖像渐变（按名字哈希轮换） */
 .p-0{background:linear-gradient(165deg,#16233C 0%,#2E5A86 48%,#7FB6DE 88%,#CFE9F8 100%)}
@@ -301,13 +313,14 @@ body.dark .chat-veil{ background:#0f141a }
 .chat-sprite.pos-right img{right:0}
 .chat-sprite.pos-center img{left:50%; transform:translateX(-50%)}
 
-/* 设置里的滑块（外观/立绘浓度），随主题着色 */
-.lm-range{ -webkit-appearance:none; appearance:none; width:180px; height:4px; border-radius:3px;
-  background:rgba(20,40,60,.14); cursor:pointer }
-.lm-range::-webkit-slider-thumb{ -webkit-appearance:none; appearance:none; width:15px; height:15px;
-  border-radius:50%; background:var(--accent); box-shadow:0 1px 3px rgba(10,30,50,.25) }
-.lm-range::-moz-range-thumb{ width:15px; height:15px; border:none; border-radius:50%; background:var(--accent) }
-body.dark .lm-range{ background:rgba(255,255,255,.16) }
+/* 滑块：窄的圆角淡蓝轨道 + 窄的实心圆角方块滑块（不再用圆点） */
+.lm-range{ -webkit-appearance:none; appearance:none; width:180px; height:6px; border-radius:4px;
+  background:color-mix(in srgb, var(--accent) 22%, #fff); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, #fff);
+  cursor:pointer }
+.lm-range::-webkit-slider-thumb{ -webkit-appearance:none; appearance:none; width:11px; height:16px;
+  border-radius:3px; background:var(--accent); box-shadow:0 1px 2px rgba(10,30,50,.25) }
+.lm-range::-moz-range-thumb{ width:11px; height:16px; border:none; border-radius:3px; background:var(--accent) }
+body.dark .lm-range{ background:rgba(91,159,212,.18); box-shadow:inset 0 0 0 1px rgba(91,159,212,.3) }
 
 /* 空聊天状态：每张卡的品牌时刻 */
 .chat-empty{
@@ -315,7 +328,7 @@ body.dark .lm-range{ background:rgba(255,255,255,.16) }
   color:var(--text-3);
 }
 .chat-empty .avatar-s{width:96px;height:96px;border-radius:24px;font-size:40px}
-.chat-empty b{font-size:18px; font-weight:650; color:var(--text)}
+.chat-empty b{font-family:var(--display); font-size:21px; font-weight:600; letter-spacing:.2px; color:var(--text)}
 .chat-empty .tagline{font-size:13px; color:var(--text-2); max-width:380px; text-align:center; line-height:1.7}
 
 .char-msg{display:flex; gap:12px}
@@ -1490,7 +1503,8 @@ details.cv-raw pre{
 .fr-dots i.done{background:var(--accent); opacity:.45}
 .fr-dots i.on{background:var(--accent)}
 .fr-word{
-  font-size:46px; font-weight:650; letter-spacing:1.5px; line-height:1.1; margin-bottom:18px;
+  font-family:var(--display); font-size:52px; font-weight:600; letter-spacing:.2px;
+  line-height:1.1; margin-bottom:18px;
   background:linear-gradient(180deg,#8FC6EA 0%,#5B9FD4 55%,#3E7FB4 100%);
   -webkit-background-clip:text; background-clip:text; color:transparent;
 }
@@ -1632,6 +1646,102 @@ body.dark .bp-dots i.on{background:var(--accent)}
   border:1px dashed var(--hairline); border-radius:9px; padding:8px 12px; margin-bottom:12px;
 }
 
+/* ---------- 扁平下拉 Select (Hermes-style: provider / model boxes) ---------- */
+.sel{position:relative; width:100%}
+.sel.disabled{opacity:.55; pointer-events:none}
+/* flat: white fill, light-blue 1px border, square corners. Click to expand. */
+.sel-trigger{
+  width:100%; display:flex; align-items:center; gap:8px; cursor:pointer; text-align:left;
+  padding:7px 12px; border-radius:3px; background:#fff; color:var(--text);
+  border:1px solid color-mix(in srgb, var(--accent) 42%, #fff); font-size:13px; transition:border-color .12s;
+}
+.sel-trigger:hover,.sel-trigger.open{border-color:var(--accent)}
+.sel-val{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.sel-ph{color:var(--text-3); font-style:normal}
+.sel-chev{color:var(--text-3); flex:none}
+.sel-pop{
+  position:absolute; z-index:40; top:calc(100% - 1px); left:0; width:100%;
+  background:#fff; border:1px solid var(--accent); border-radius:3px; padding:4px;
+  box-shadow:0 10px 30px rgba(10,30,50,.12);
+}
+.sel-search{
+  width:100%; box-sizing:border-box; outline:none; background:#fff; border:1px solid color-mix(in srgb, var(--accent) 42%, #fff);
+  border-radius:3px; padding:7px 10px; font-size:12.5px; color:var(--text); font-family:var(--sans); margin-bottom:4px;
+}
+.sel-search::placeholder{color:var(--text-3)}
+.sel-list{max-height:300px; overflow-y:auto; display:flex; flex-direction:column}
+.sel-group{
+  font-size:10px; font-weight:600; letter-spacing:.6px; text-transform:uppercase; color:var(--text-3); padding:8px 10px 3px;
+}
+.sel-item{
+  display:flex; align-items:center; gap:8px; width:100%; text-align:left; cursor:pointer;
+  border:none; background:none; border-radius:2px; padding:7px 10px; font-size:12.5px; color:var(--text); font-family:var(--mono);
+}
+.sel-item:hover{background:rgba(91,159,212,.10)}
+.sel-item.on{background:var(--accent-soft)}
+.sel-name{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.sel-note{font-size:10.5px; color:var(--text-3); flex:none; font-family:var(--sans)}
+.sel-check{color:var(--accent-deep); flex:none}
+.sel-use{color:var(--accent-deep)}
+.sel-empty{padding:12px 10px; color:var(--text-3); font-size:12px}
+
+/* the 模型 pane's provider+model boxes (Hermes Model pane shape) */
+.model-boxes{display:flex; flex-direction:column; gap:10px; max-width:680px; margin-top:8px}
+.model-box{display:flex; flex-direction:column; gap:5px}
+.mb-lbl{font-size:11px; font-weight:600; color:var(--text-3); letter-spacing:.3px}
+.mb-lbl i{font-style:normal; font-weight:400; color:var(--text-3); opacity:.8}
+.ctx-box .ctx-input{max-width:170px}
+.ctx-box .ctx-input input{font-family:var(--mono); font-size:12.5px}
+.model-test{display:flex; align-items:center; gap:12px; margin-top:2px; min-height:24px; font-size:12px}
+.model-reasoning{display:flex; align-items:center; gap:12px; margin-top:6px}
+.model-reasoning .seg{font-size:12px}
+.reason-hint{font-size:11px; color:var(--text-3)}
+.model-save-state{min-height:18px; margin-top:14px; font-size:12px}
+.model-nokey{border:none; background:none; cursor:pointer; text-align:left; padding:0}
+body.dark .sel-trigger,body.dark .sel-pop{background:#1C2228}
+body.dark .sel-search{background:rgba(255,255,255,.06)}
+body.dark .sel-item:hover{background:rgba(91,159,212,.16)}
+
+/* 其他模态 — Hermes auxiliary-models rows */
+.aux-sec{max-width:680px; margin-top:26px}
+.aux-title{font-size:13px; font-weight:650; margin-bottom:2px}
+.aux-subline{font-size:11.5px; color:var(--text-3); margin-bottom:12px}
+.aux-row{display:flex; align-items:flex-start; gap:12px; padding:12px 0; border-top:1px solid var(--hairline-2)}
+.aux-main{flex:1; min-width:0}
+.aux-head{display:flex; align-items:baseline; gap:8px}
+.aux-head b{font-size:12.5px; font-weight:600}
+.aux-desc{font-size:11px; color:var(--text-3)}
+.aux-cur{margin-top:3px; font-size:11.5px; color:var(--text-3)}
+.aux-cur code{font-family:var(--mono); font-size:11px; color:var(--text-2)}
+.aux-acts{display:flex; gap:6px; flex:none}
+.aux-edit{flex:1; min-width:0; display:flex; flex-direction:column; gap:8px}
+.aux-edit .acts{display:flex; gap:8px}
+
+/* 提供商 (Providers) — one row per provider, one key per provider */
+.prov-pane{max-width:720px}
+.prov-section{margin-top:30px}
+.prov-list{display:flex; flex-direction:column; margin-top:10px}
+.prov-row{display:flex; align-items:center; gap:12px; padding:13px 2px; border-top:1px solid var(--hairline-2)}
+.prov-row:first-child{border-top:none}
+.prov-dot{width:8px; height:8px; border-radius:50%; flex:none; background:rgba(20,40,60,.16)}
+.prov-dot.set{background:var(--text-3)}
+.prov-dot.on{background:var(--accent); box-shadow:0 0 0 3px var(--accent-soft)}
+.prov-meta{flex:1; min-width:0}
+.prov-name{font-size:13px; font-weight:600; display:flex; align-items:center; gap:8px}
+.prov-badge{font-size:10px; font-weight:600; color:var(--accent-deep); background:var(--accent-soft); border-radius:99px; padding:1.5px 8px}
+.prov-desc{font-size:11px; color:var(--text-3); margin-top:2px; font-family:var(--mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:340px}
+.prov-key{display:flex; align-items:center; gap:7px; flex:none}
+.prov-masked{font-family:var(--mono); font-size:12px; color:var(--text-3); letter-spacing:1px}
+.prov-input{
+  width:230px; max-width:46vw; font-family:var(--mono); font-size:12px; color:var(--text);
+  background:#fff; border:1px solid color-mix(in srgb, var(--accent) 42%, #fff); border-radius:3px; padding:6px 10px; outline:none;
+}
+.prov-input:focus{border-color:var(--accent)}
+.prov-add-form{display:flex; flex-direction:column; gap:9px; max-width:460px; margin-top:14px; padding:14px; border-radius:8px; background:var(--field-bg)}
+.prov-add-form .acts{display:flex; gap:8px; margin-top:2px}
+.prov-add-btn{margin-top:14px}
+body.dark .prov-input{background:#1C2228}
+
 /* ---------- 设置 ---------- */
 .settings-root{flex:1; display:flex; min-height:0}
 .settings-nav{width:170px; flex:none; padding:18px 10px; display:flex; flex-direction:column; gap:2px}
@@ -1640,9 +1750,18 @@ body.dark .bp-dots i.on{background:var(--accent)}
   border-radius:7px; cursor:pointer;
 }
 .settings-nav button.on{background:rgba(91,159,212,.14); color:var(--text); font-weight:550}
-.settings-body{flex:1; overflow:auto; padding:18px 30px 30px; max-width:640px}
-.settings-pane{display:none}
+/* The body fills to the window's right edge so the scrollbar sits at the edge,
+   not mid-page; the readable content is constrained by each pane's own max-width. */
+.settings-body{flex:1; min-width:0; overflow-y:auto; padding:18px 30px 30px}
+.settings-pane{display:none; max-width:760px}
 .settings-pane.on{display:block}
+/* narrow, restrained-blue scrollbar (settings + other scroll containers) */
+.settings-body::-webkit-scrollbar,.panel-pane::-webkit-scrollbar,.board::-webkit-scrollbar,.deck::-webkit-scrollbar,.stream::-webkit-scrollbar,.sel-list::-webkit-scrollbar{width:8px}
+.settings-body::-webkit-scrollbar-thumb,.panel-pane::-webkit-scrollbar-thumb,.board::-webkit-scrollbar-thumb,.deck::-webkit-scrollbar-thumb,.stream::-webkit-scrollbar-thumb,.sel-list::-webkit-scrollbar-thumb{
+  background:color-mix(in srgb, var(--accent) 32%, transparent); border-radius:99px; border:2px solid transparent; background-clip:padding-box;
+}
+.settings-body::-webkit-scrollbar-thumb:hover,.panel-pane::-webkit-scrollbar-thumb:hover,.board::-webkit-scrollbar-thumb:hover,.deck::-webkit-scrollbar-thumb:hover{background:color-mix(in srgb, var(--accent) 55%, transparent); background-clip:padding-box}
+.settings-body::-webkit-scrollbar-track,.panel-pane::-webkit-scrollbar-track,.board::-webkit-scrollbar-track,.deck::-webkit-scrollbar-track,.stream::-webkit-scrollbar-track{background:transparent}
 .settings-pane h2{font-size:17px; font-weight:650; margin-bottom:14px}
 .set-row{display:flex; align-items:center; gap:12px; padding:11px 0; border-bottom:1px solid var(--hairline-2); font-size:13.5px}
 .set-row .lbl{flex:1}

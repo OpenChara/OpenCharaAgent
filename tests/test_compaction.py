@@ -32,12 +32,44 @@ def _fill(ctx, n, chars=500):
         ctx.add("user" if i % 2 == 0 else "assistant", "x" * chars)
 
 
+@pytest.fixture(autouse=True)
+def _low_floor(monkeypatch):
+    """hermes' 64K MINIMUM_CONTEXT_LENGTH floor would make every tiny-window
+    unit test need 64K+ tokens to trigger. Drop it to 0 here so these tests
+    exercise the 0.50 ratio at small windows; the floor itself is covered by
+    test_threshold_floor_and_ratio / test_subfloor_window_never_triggers."""
+    monkeypatch.setattr(compaction, "MINIMUM_CONTEXT_LENGTH", 0)
+
+
 def test_should_compact_threshold():
     ctx = ContextBuffer(max_tokens=10_000_000)
     _fill(ctx, 20, 500)  # ~2540 tokens
-    assert _sc(ctx, 1000, FakeLLM())          # 2540 >= 750
-    assert not _sc(ctx, 1_000_000, FakeLLM())  # well under 75%
+    assert _sc(ctx, 1000, FakeLLM())          # 2540 >= 0.50*1000 = 500
+    assert not _sc(ctx, 1_000_000, FakeLLM())  # well under 50%
     assert not _sc(ctx, 1000, FakeLLM(live=False))  # offline
+
+
+def test_threshold_floor_and_ratio(monkeypatch):
+    """Apple-to-apple with hermes: threshold = max(0.50*window, 64K)."""
+    monkeypatch.setattr(compaction, "MINIMUM_CONTEXT_LENGTH", 64_000)
+
+    def thr(window):
+        return compaction._threshold_tokens(ContextBuffer(max_tokens=window))
+
+    assert thr(1_000_000) == 500_000   # 50% of a 1M window
+    assert thr(200_000) == 100_000     # 50%
+    assert thr(128_000) == 64_000      # 50% (64K) == floor
+    assert thr(96_000) == 64_000       # 50% (48K) floored up to 64K
+    assert thr(32_000) == 64_000       # floor exceeds the window → unreachable
+
+
+def test_subfloor_window_never_triggers(monkeypatch):
+    """A window below the 64K floor never reaches the threshold → compaction
+    never fires; trim() is the backstop (hermes refuses such models, we don't)."""
+    monkeypatch.setattr(compaction, "MINIMUM_CONTEXT_LENGTH", 64_000)
+    ctx = ContextBuffer(max_tokens=32_000, trim_buffer_tokens=2000)
+    _fill(ctx, 40, 800)  # plenty of tokens, but the 32K window < 64K floor
+    assert compaction.should_compact(ctx, FakeLLM()) is False
 
 
 def test_compact_replaces_head_keeps_tail():

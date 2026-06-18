@@ -61,8 +61,12 @@ with, not a clone on disk.)
   awakener all cite it).
 - **openclaw** — the "strip-the-persona → plain workhorse" reference (cards,
   packs, MCP, skills, headless run).
-- **SillyTavern/SillyTavern** — character cards / world books / prompt layering
-  (we stay card- and world-book-compatible; ST content is the import format).
+- **SillyTavern/SillyTavern** — character cards / world books / prompt layering.
+  ST is the card/world-book FORMAT we stay compatible with (our OWN cards ARE
+  ST-format); it is NOT a UI import path. The dedicated card-import feature was
+  REMOVED 2026-06-18 (deferred — re-adding it must also handle asset import, since
+  a chara is a card PLUS assets). To start from a foreign card, paste its JSON into
+  the create box (the AI drafts from it as inspiration — no structured ST adapter).
 - **farion1231/cc-switch** — session/roster ergonomics, remote access.
 
 (The default card is Quinn 小Q, the owner-authored digital intern — selected via the
@@ -88,7 +92,11 @@ example) and Quinn 小Q (the default).)
   (your work must be real; act through tools; unattended time is yours) —
   never a personality, never commands about what to want. 注意类似于默认卡，presence和角色扮演提醒提示词这种也是中立的，并非需要修改的bug。
 - **Language is never a setting** — it's a property of the active card.
-- **The model's real context window is never a setting** (providers.py).
+- **The model's real context window is never a setting for KNOWN models**
+  (providers.py resolves it from the provider catalogue). The ONE exception
+  (2026-06-18): a custom / self-hosted endpoint whose window the provider can't
+  report — `defaults.model_context` (Settings · 模型 · 上下文长度) is an explicit
+  fallback, 0 = auto, IGNORED where the provider reports a real window (OpenRouter).
 - **Every UI action responds instantly; every API call shows progress.**
   (apps/web, binding.) A click flips its own control's state IMMEDIATELY
   (optimistic), before any round-trip — no dead clicks, no frozen buttons.
@@ -224,10 +232,14 @@ zero internal deps; `obs/` imports only `config`.
     DROPPED (owner, 2026-06-18): **web_search / web_extract are gone** — a web
     round-trip burns extra tokens for a search backend we don't run; the chara
     browses via `terminal` + `/net on` or an MCP fetch server instead. **The
-    standalone `send_file` tool is gone too** — like hermes, the model surfaces
-    a file by emitting its workspace path inline (a `MEDIA:<path>` marker the
-    frontends turn into an inline image / download), so a dedicated tool was
-    redundant. (The older inspect_env/write_log/request_permission/clarify tools
+    standalone `send_file` tool is gone too** — like hermes, the chara surfaces
+    a file by writing a line `MEDIA:<workspace path>` in its reply; the agent's
+    streaming `_media_filter` (core/agent.py) extracts that line, strips it from
+    the visible text, and emits the `Attachment` protocol event the frontends and
+    messaging adapters already render (inline image / download / honest note). The
+    filter is streaming-safe (it withholds only a still-live `MEDIA:` candidate
+    line, never whole prose) and code-fence aware; rules.py + the file/image tool
+    descriptions teach the convention. (The older inspect_env/write_log/request_permission/clarify tools
     were already retired: env facts ride the volatile tail, the chara has memory
     for notes, network is on by default.) Helpers are `_underscore.py` modules
     (not discovered).
@@ -248,8 +260,10 @@ zero internal deps; `obs/` imports only `config`.
   hub RPCs), `matte.py` (local background-removal models — download/install/select,
   the `matte.*` hub RPCs; the heavy `rembg`/`onnxruntime` stack is the OPTIONAL
   `visuals` extra, `uv sync --extra visuals`). The web side is the deck card
-  editor's 视觉 tab + the 生图 Settings pane (apps/web). `tools/builtin/_image_gen.py`
-  is the shared Ark image backend (the chara's `generate_image` tool uses it too).
+  editor's 视觉 tab + the 生图 Settings pane (matte models). The image-gen KEY now
+  lives in Settings · 提供商 (image-gen row → `image_api_key`) and the image MODEL in
+  Settings · 模型 (`image_model`). `tools/builtin/_image_gen.py` is the shared Ark
+  image backend (the chara's `generate_image` tool uses it too).
 - `session/` — `sessions.py` (named charas under ~/.lunamoth/sessions/<name>/;
   `SessionMeta.env()` is the activation interface), `settings.py`, `cleanup.py`,
   `isolation.py` (stdlib-only OS jail builders — shared by tools/runner and the
@@ -273,10 +287,14 @@ zero internal deps; `obs/` imports only `config`.
   browse/copy/wake only). `wake(card_data=…)` freezes the EDITED card as the chara's
   own (source untouched) — waking is a 2-step editor in the web UI (content → settings).
   `card.rewrite_field` is the per-field natural-language AI rewrite (editor / wake
-  step-1 / create-shape). Card draft, avatar generation and field rewrite all use the
-  SYSTEM default model — the per-task "aux models" were removed; the model override
-  lives only on wake + chara settings. Avatars are NEVER auto-generated (upload or an
-  explicit generate → sidecar, stored separately from the card)),
+  step-1 / create-shape). PER-FUNCTION MODELS (re-added 2026-06-18, Settings · 模型 ·
+  其他模态, Hermes' auxiliary-models pattern): each function defaults to the main
+  model but can be overridden by a per-task default field — `card.draft` → `card_model`,
+  `card.visual_brief` (生图 prompt) → `image_prompt_model`, `generate_image` →
+  `image_model`, vision/读图 → `vision_model` (STORED but its routing pipeline is a
+  deferred follow-up — selecting it is a no-op for now). Avatar generation + field
+  rewrite still use the system default model. Avatars are NEVER auto-generated (upload
+  or an explicit generate → sidecar, stored separately from the card)),
   `supervisor.py` (lunamothd: long-lived `serve --stdio` child registry; the
   messaging host now runs INSIDE that child sharing its agent, so `GatewayChild`
   just toggles it over RPC — no separate gateway process; seq/rejoin, life.state,
@@ -303,10 +321,19 @@ zero internal deps; `obs/` imports only `config`.
     Vite build, bundled into the wheel via package-data, served by `lunamoth
     desktop` and loaded by the Electron shell). The SOURCE is the React+TS SPA at
     repo-root `apps/web/` (NOT under src/): `src/rpc.ts`+`protocol.ts` (the ported
-    transport + event union), `i18n/` (445 keys), `lib/` (pure helpers), `state/`
+    transport + event union), `i18n/` (~555 keys; `i18n.test.ts` pins the count —
+    update it when you add/remove keys), `lib/` (pure helpers), `state/`
     (hub/overlay context), `hooks/useCharaStream.ts` (the stream accumulator),
     `views/` (Board/Deck/Gateways/Settings/Chat), `components/{chat,deck,gateways,
-    settings,overlays,ui}`. Dev: `cd apps/web && npm run dev` (proxies /rpc+ws to a
+    settings,overlays,ui}`. SETTINGS · 模型/提供商 (rebuilt 2026-06-18 after Hermes,
+    旧 ModelPane/KeysPane 整组替换): `settings/Select.tsx` (the flat white/light-blue
+    square-cornered dropdown — provider + model are two such boxes), `ModelPane.tsx`
+    (provider box + model box + Test + Reasoning[OpenRouter-only] + 上下文长度 +
+    the per-function `TaskModels.tsx` rows), `KeysPane.tsx` (NOW the 提供商 pane:
+    one row per provider, one key per provider — OpenRouter + self-registered
+    Local/Custom OpenAI-compatible endpoints (name+base_url+key, for relays/self-host)
+    + the image-gen key row). Card import overlay (`Import.tsx`/`importCard.ts`) was
+    deleted. Dev: `cd apps/web && npm run dev` (proxies /rpc+ws to a
     running `lunamoth desktop`); build: `npm run build` → `front/webui/`. Hash
     routing (no server SPA-fallback needed). NOTE: the gateway deck UI currently
     exposes only WeChat (weixin); QQ/Telegram/WeChatPadPro adapters exist in
@@ -317,9 +344,10 @@ zero internal deps; `obs/` imports only `config`.
     this SPA; the protocol/codec contract it speaks is unchanged.)
 
 Content (gitignore-allowlisted): `cards/` `toolpacks/`. The card is the ONE
-content file (world embedded as `character_book`); standalone ST world books
-are an IMPORT format only (web upload recognizes them → `card.merge_world`
-folds them into a card), never a runtime source.
+content file (world embedded as `character_book`). The `card.merge_world` /
+`_card_json_from_png` / `/upload` card-import backers still exist in the backend
+but are UI-orphaned (the import feature was removed 2026-06-18, deferred); a
+standalone ST world book is never a runtime source.
 
 ## The prompt stack (the machine that runs a chara)
 
@@ -423,7 +451,8 @@ into the session's card, key stripped.)
    + 2-step wake-as-editor + per-field AI rewrite + unified loading + avatar
    no-autogen landed 2026-06-14; further polish tracked in `docs/OPEN-WORK.md` Part 2).
 2. Card/persona market: `lunamoth-pack.json` + git-repo index (Claude Code
-   marketplace model); ST PNG import already works.
+   marketplace model). Card IMPORT (ST PNG/JSON + asset import) is DEFERRED
+   (the UI import feature was removed 2026-06-18) — re-add it here, with assets.
 
 **B. For the charas (the biggest design effort: the chara curriculum)**
 1. **The neutral prompt curriculum** — iterate rules.py + tool descriptions so

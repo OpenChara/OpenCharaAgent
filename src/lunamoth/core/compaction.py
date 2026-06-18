@@ -31,11 +31,21 @@ from typing import Any
 
 from ..obs import get_logger
 from .context import ContextBuffer, _flatten_content, _msg_text, estimate_tokens
+from .providers import MINIMUM_CONTEXT_LENGTH  # the 64K floor — single source (providers owns context-window facts)
 
 _log = get_logger("compaction")
 
-THRESHOLD_RATIO = 0.75       # compact once the window is this full
-_TAIL_RATIO = 0.25           # keep this fraction of the window as verbatim tail
+# Compaction trigger — apple-to-apple with hermes (context_compressor.py:587-643):
+# threshold_tokens = max(context_length * THRESHOLD_RATIO, MINIMUM_CONTEXT_LENGTH),
+# measured against the model's REAL window (providers.context_window), NOT a
+# trim-adjusted budget. The 64K floor is hermes' MINIMUM_CONTEXT_LENGTH
+# (model_metadata.py:133): below it hermes refuses to run; we instead let the
+# floor make the threshold unreachable so the window leans on trim() — the
+# sanctioned backstop — rather than refusing a card's chosen model.
+THRESHOLD_RATIO = 0.50            # compact at 50% of the real window (hermes default)
+# MINIMUM_CONTEXT_LENGTH (64K floor) is imported from providers — the same
+# constant that refuses a too-small live model also floors the trigger here.
+_TAIL_RATIO = 0.20                # keep this fraction of the threshold as verbatim tail (hermes summary_target_ratio)
 _TAIL_MIN_TOKENS = 2000
 _TOOL_RESULT_CLIP = 240      # one-line old tool output summaries for the summarizer
 
@@ -527,9 +537,20 @@ def _serialize(messages: list[dict]) -> str:
 
 def _budget(ctx: ContextBuffer) -> int:
     """The usable prompt budget = the same target trim() uses (window minus the
-    reply/tool headroom). Tying compaction to this guarantees it fires BEFORE
-    trim() hard-drops anything."""
+    reply/tool headroom). Used only for the liveness guard now; the trigger is
+    _threshold_tokens()."""
     return max(0, ctx.max_tokens - ctx.trim_buffer_tokens)
+
+
+def _threshold_tokens(ctx: ContextBuffer) -> int:
+    """The compaction trigger, apple-to-apple with hermes
+    (context_compressor.py:641-643): max(real_window * THRESHOLD_RATIO,
+    MINIMUM_CONTEXT_LENGTH). Measured on the REAL model window (ctx.max_tokens,
+    set from providers.context_window), so a 1M model compacts at 500K, a 128K
+    model at 64K, etc. For a window below the 64K floor the threshold exceeds
+    the window and never fires — trim() carries it (hermes refuses such models;
+    we degrade to the backstop instead)."""
+    return max(int(ctx.max_tokens * THRESHOLD_RATIO), MINIMUM_CONTEXT_LENGTH)
 
 
 def _window_tokens(ctx: ContextBuffer, llm) -> int:
@@ -555,11 +576,10 @@ def _window_tokens(ctx: ContextBuffer, llm) -> int:
 
 
 def should_compact(ctx: ContextBuffer, llm) -> bool:
-    budget = _budget(ctx)
-    if not (llm and llm.is_live()) or budget <= 0:
+    if not (llm and llm.is_live()) or _budget(ctx) <= 0:
         return False
     tokens = _window_tokens(ctx, llm)
-    if tokens < THRESHOLD_RATIO * budget:
+    if tokens < _threshold_tokens(ctx):
         return False
     return _guard(ctx).allows(tokens)
 
@@ -607,6 +627,7 @@ def compact(ctx: ContextBuffer, llm, *, force: bool = False) -> bool:
     budget = _budget(ctx)
     if not (llm and llm.is_live()) or budget <= 0:
         return False
+    threshold = _threshold_tokens(ctx)
     tokens_before = ctx.token_count()
     guard = _guard(ctx)
     if force:
@@ -616,7 +637,7 @@ def compact(ctx: ContextBuffer, llm, *, force: bool = False) -> bool:
         # below stays on the heuristic — it is the only measure available for
         # the just-rewritten window, and before/after must share a scale.
         trigger_tokens = _window_tokens(ctx, llm)
-        if trigger_tokens < THRESHOLD_RATIO * budget:
+        if trigger_tokens < threshold:
             return False
         if not guard.allows(trigger_tokens):
             return False
@@ -635,15 +656,16 @@ def compact(ctx: ContextBuffer, llm, *, force: bool = False) -> bool:
         # window, so the skip test goes on the heuristic, which reflects the
         # actual post-prune size — and shrink is measured on the same scale.
         tokens_after = ctx.token_count()
-        if tokens_after < THRESHOLD_RATIO * budget:
+        if tokens_after < threshold:
             if tokens_before > 0 and (tokens_before - tokens_after) / tokens_before >= _MIN_SHRINK:
                 guard.record_success()
             else:
                 guard.record_ineffective(tokens_after)
             return True
 
-    # Walk back from the end, protecting a verbatim tail of ~tail_budget tokens.
-    tail_budget = max(_TAIL_MIN_TOKENS, int(budget * _TAIL_RATIO))
+    # Walk back from the end, protecting a verbatim tail of ~tail_budget tokens
+    # (hermes target_tokens = threshold_tokens * summary_target_ratio).
+    tail_budget = max(_TAIL_MIN_TOKENS, int(threshold * _TAIL_RATIO))
     acc = 0
     cut = None
     for i in range(len(msgs) - 1, -1, -1):

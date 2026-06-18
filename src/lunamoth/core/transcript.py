@@ -28,6 +28,41 @@ from typing import Any
 # Markers of WAL-incompatible filesystems (from hermes-agent, MIT).
 _WAL_INCOMPAT_MARKERS = ("locking protocol", "not authorized", "disk i/o error")
 
+
+def _strip_inline_images(msg: dict) -> dict:
+    """Return a copy of a context message with inline base64 image data URLs dropped
+    (the accompanying text note is the handle that round-trips). Images ride FULL
+    size in the in-memory context for the model to see, but bytes in the durable
+    transcript are exactly what to avoid (commit 79eac31, "never persist bytes" —
+    already applied to the read_file re-view; this extends it to the upload path).
+    On reload an old image is a text handle anyway (compaction.strip_old_images keeps
+    only the newest image's pixels live). Remote http(s) image URLs are tiny and
+    kept. Never mutates the input; returns it unchanged when there is nothing to
+    strip."""
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return msg
+    kept: list = []
+    changed = False
+    for part in content:
+        if isinstance(part, dict) and part.get("type") == "image_url":
+            iv = part.get("image_url")
+            url = iv.get("url", "") if isinstance(iv, dict) else (iv if isinstance(iv, str) else "")
+            if isinstance(url, str) and url.startswith("data:"):
+                changed = True
+                continue  # drop the pixels; the text part carries the handle
+        kept.append(part)
+    if not changed:
+        return msg
+    has_text = any(isinstance(p, dict) and p.get("type") == "text"
+                   and str(p.get("text") or "").strip() for p in kept)
+    if not has_text:
+        kept.append({"type": "text", "text": "[image attached]"})
+    out = dict(msg)
+    out["content"] = kept
+    return out
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,7 +188,9 @@ class TranscriptStore:
             return
         if structured:
             try:
-                self.append(role, json.dumps(msg, ensure_ascii=False), kind="struct")
+                # Strip inline image bytes before persisting — full-size pixels live
+                # only in the in-memory context, never in the durable transcript.
+                self.append(role, json.dumps(_strip_inline_images(msg), ensure_ascii=False), kind="struct")
             except (TypeError, ValueError):
                 self.append(role, str(msg.get("content") or ""), kind="chat")
             return

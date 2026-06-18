@@ -83,7 +83,8 @@ def read_file(args: dict, ctx) -> str:
             "file_size": result_dict.get("file_size", 0),
             "note": (
                 "This is an image — it can't be read as text, and you can't inspect "
-                "its pixels here. You CAN show it to your user with send_file. "
+                "its pixels here. You CAN show it to your user by writing a line "
+                "MEDIA:<path> in your reply. "
                 "(Images under assets/ are your card's reference visuals, already "
                 "described in your visual set.)"
             ),
@@ -133,7 +134,7 @@ def read_file(args: dict, ctx) -> str:
 def _assets_readonly_error(ctx, fops, path: str):
     """assets/ is the read-only reference shelf (card art + operator-dropped
     reference material), a SIBLING of the workspace. Refuse writes/edits that
-    target it (reads and send_file still work). Returns a tool_error string when
+    target it (reads and MEDIA:<path> surfacing still work). Returns a tool_error string when
     blocked, else None. The mapping honors the virtual ``assets/`` prefix, so a
     write to ``assets/x`` is caught here before the resolver's hard PathEscape."""
     try:
@@ -148,7 +149,7 @@ def _assets_readonly_error(ctx, fops, path: str):
                 "any reference material your user placed there) — it can't be written "
                 "to or modified. Keep your own work in your workspace (put things to "
                 "show your user under works/); you can still read these files and show "
-                "them with send_file."
+                "them by writing a line MEDIA:<path> in your reply."
             )
     except Exception:
         return None
@@ -302,7 +303,7 @@ def patch(args: dict, ctx) -> str:
 # Schemas (verbatim from hermes file_tools.py — the model is post-trained on these)
 # ---------------------------------------------------------------------------
 READ_FILE_SCHEMA = {
-    "description": "Read a text file with line numbers and pagination. Use this instead of cat/head/tail in terminal. Output format: 'LINE_NUM|CONTENT'. Suggests similar filenames if not found. Use offset and limit for large files. Reads exceeding ~100K characters are rejected; use offset and limit to read specific sections of large files. NOTE: For an IMAGE, when your model can see images it is shown to you directly (you can then describe or use it); otherwise the image is left on disk and you can still show it to your user with send_file. Cannot read other binary files as text.",
+    "description": "Read a text file with line numbers and pagination. Use this instead of cat/head/tail in terminal. Output format: 'LINE_NUM|CONTENT'. Suggests similar filenames if not found. Use offset and limit for large files. Reads exceeding ~100K characters are rejected; use offset and limit to read specific sections of large files. NOTE: For an IMAGE, when your model can see images it is shown to you directly (you can then describe or use it); otherwise the image is left on disk and you can still show it to your user by writing a line MEDIA:<path> in your reply. Cannot read other binary files as text.",
     "parameters": {
         "type": "object",
         "properties": {

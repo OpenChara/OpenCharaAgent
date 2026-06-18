@@ -301,6 +301,26 @@ class CharaHandle:
         self._visuals_cache = (path, v)
         return v
 
+    def resolve_media(self, rel: str) -> str | None:
+        """Resolve a chara-emitted ``MEDIA:`` path (workspace-relative, or absolute
+        inside the jail) to an absolute, readable file path — or ``None`` if it
+        escapes the sandbox, isn't a file, or exceeds the size cap. This is the ONE
+        place the sandbox boundary is enforced for OUTBOUND files: every surface that
+        delivers/renders a marker (messaging upload, the web asset route) resolves
+        through here, so "what the chara may surface" can't drift between them."""
+        from .media import MAX_MEDIA_BYTES
+
+        a = self._agent
+        try:
+            fp = a.sandbox.resolve_readable(rel)
+            if not fp.is_file():
+                return None
+            if fp.stat().st_size > MAX_MEDIA_BYTES:
+                return None
+        except Exception:  # noqa: BLE001 — a bad/escaping path resolves to "not allowed"
+            return None
+        return str(fp)
+
     def reconfigure(self, settings) -> None:
         self._agent.reconfigure(settings)
         self._visuals_cache = None  # the card may have changed

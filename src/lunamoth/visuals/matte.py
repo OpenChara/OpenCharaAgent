@@ -117,6 +117,63 @@ def deps_available() -> bool:
         return False
 
 
+# --- optional-deps install (background; `uv sync --extra visuals`) ------------
+# The visuals extra (rembg/onnxruntime) is heavy + platform-specific, so it is
+# installed on demand from the Settings UI rather than bundled. We run the
+# project's own `uv sync --extra visuals` (respects the lock, no pip/lock drift)
+# in the project root (config.ROOT = the installed app dir or the dev checkout)
+# and surface a coarse installing/done/error state (uv gives no per-step %).
+_deps_progress: dict = {}
+
+
+def deps_progress() -> dict:
+    with _lock:
+        return dict(_deps_progress)
+
+
+def _uv_bin() -> str:
+    import shutil
+    return shutil.which("uv") or str(Path.home() / ".lunamoth" / "bin" / "uv")
+
+
+def install_deps_async() -> dict:
+    """Start `uv sync --extra visuals` in the background (idempotent). The hub
+    polls :func:`status` (which carries ``deps_progress``). Never raises."""
+    with _lock:
+        if deps_available():
+            _deps_progress.clear(); _deps_progress.update({"state": "done"})
+            return dict(_deps_progress)
+        if _deps_progress.get("state") == "installing":
+            return dict(_deps_progress)
+        _deps_progress.clear(); _deps_progress.update({"state": "installing"})
+
+    def _run() -> None:
+        import subprocess
+        from ..config import ROOT
+        try:
+            uv = _uv_bin()
+            if not (Path(uv).exists() or __import__("shutil").which("uv")):
+                raise RuntimeError("uv not found — install.sh provides one")
+            proc = subprocess.run(
+                [uv, "sync", "--extra", "visuals"], cwd=str(ROOT),
+                capture_output=True, text=True, timeout=1800,
+            )
+            ok = proc.returncode == 0 and deps_available()
+            with _lock:
+                _deps_progress.clear()
+                if ok:
+                    _deps_progress.update({"state": "done"})
+                else:
+                    tail = (proc.stderr or proc.stdout or "install failed").strip()[-400:]
+                    _deps_progress.update({"state": "error", "error": tail})
+        except Exception as exc:  # noqa: BLE001 — surface, never crash the hub
+            with _lock:
+                _deps_progress.clear(); _deps_progress.update({"state": "error", "error": str(exc)[:400]})
+
+    threading.Thread(target=_run, daemon=True).start()
+    return dict(_deps_progress)
+
+
 # --- download (background, polled progress) -----------------------------------
 
 _progress: dict[str, dict] = {}
@@ -220,6 +277,7 @@ def status() -> dict:
     active = selected_model()
     return {
         "deps": deps_available(),
+        "deps_progress": deps_progress(),
         "home": str(matte_home()),
         "active": active,
         "models": [

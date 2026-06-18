@@ -14,18 +14,16 @@ import { useHub } from "../state/hub";
 import { applyTheme, currentThemePref, type ThemePref } from "../theme";
 import { ModelPane } from "../components/settings/ModelPane";
 import { KeysPane } from "../components/settings/KeysPane";
-import { MattePane } from "../components/settings/MattePane";
 import { deckToast } from "../components/ui/deckToast";
 import { rpcErrText } from "../lib/status";
 
-type Pane = "model" | "keys" | "general" | "image" | "gateway" | "advanced" | "about";
+type Pane = "model" | "keys" | "general" | "gateway" | "advanced" | "about";
 type Display = "product" | "technical";
 
 const PANES: ReadonlyArray<readonly [Pane, string]> = [
   ["model", "set-model"],
   ["keys", "set-keys"],
   ["general", "set-general"],
-  ["image", "set-image"],
   ["gateway", "set-gateway"],
   ["advanced", "set-advanced"],
   ["about", "set-about"],
@@ -97,10 +95,6 @@ export function Settings() {
           {/* #5 — the unified Keys surface: BOTH the saved text/provider keys
               and the global image-gen key/model, one visual language. */}
           {pane === "keys" && <KeysPane />}
-
-          {/* 生图 (Images): the local matte-model manager (R11). The image key
-              now lives in the unified Keys pane above. */}
-          {pane === "image" && <MattePane />}
 
           {pane === "general" && (
             <div className="settings-pane on">

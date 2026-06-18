@@ -65,7 +65,7 @@ def generate_image(args, ctx) -> str:
 
     return tool_result(
         ok=True, path=saved, size=size, bytes=len(data),
-        note="saved in your workspace — show it with send_file",
+        note=f"saved in your workspace — show it to the user by writing a line MEDIA:{saved} in your reply",
     )
 
 
@@ -73,8 +73,8 @@ SCHEMA = {
     "description": (
         "Generate an image from a text prompt and save it into your workspace "
         "(under works/ by default, where your user can see it). Returns the saved "
-        "path — show it with send_file. Needs the network on and an image key "
-        "configured."
+        "path — to show it to the user, write a line MEDIA:<path> in your reply. "
+        "Needs the network on and an image key configured."
     ),
     "parameters": {
         "type": "object",

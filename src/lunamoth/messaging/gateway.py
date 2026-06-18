@@ -10,12 +10,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..protocol import SAY, Attachment, TextDelta
+from ..protocol import SAY, TextDelta
 from ..protocol.api import CharaHandle
 from .access import RefusalThrottle, sender_allowed
 from .base import Adapter, DeliveryDeferred, InboundMessage
 from .filters import is_silence_narration
-from .media import deliver_attachment
+from .media import deliver_image_url, deliver_media, extract_outbound, missing_media_note
 from .qq import QQAdapter
 from .telegram import TelegramAdapter
 from .text import split_text
@@ -302,42 +302,52 @@ class MessagingGateway:
         engaged = bool(self._last_user_at and now < self._last_user_at + quiet)
         if engaged or self._resting() or now < self._next_idle_at:
             return False
-        text = self._collect_say_text(self.handle.stream_idle())
-        if text:
+        cleaned, files, image_urls, missing = self._collect_reply(self.handle.stream_idle())
+        if cleaned:
             for adapter in self.adapters:
-                self._send(adapter, text)
+                self._send(adapter, cleaned)
+        self._deliver_files(list(self.adapters), files, image_urls, missing)
         self._next_idle_at = time.monotonic() + self._cycle_pause()
         return True
 
     def _stream_to_adapter(self, adapter: Adapter, events) -> None:
-        text = self._collect_say_text(events, adapter=adapter)
-        if text:
-            self._send(adapter, text)
+        cleaned, files, image_urls, missing = self._collect_reply(events, adapter=adapter)
+        if cleaned:
+            self._send(adapter, cleaned)
+        self._deliver_files([adapter], files, image_urls, missing)
 
-    def _collect_say_text(self, events, *, adapter: Adapter | None = None) -> str:
+    def _collect_reply(
+        self, events, *, adapter: Adapter | None = None
+    ) -> tuple[str, list[str], list[str], list[str]]:
+        """Drain a turn's say-channel text, then extract its file/image markers
+        (hermes shape — on the COMPLETE text). Returns
+        ``(cleaned_text, files, image_urls, missing)``; the caller sends the text
+        first, then delivers the files/images."""
         chunks: list[str] = []
-        atts: list[Any] = []
         try:
             for ev in events:
                 if isinstance(ev, TextDelta) and ev.channel == SAY:
                     chunks.append(ev.text)
-                elif isinstance(ev, Attachment) and ev.channel == SAY:
-                    atts.append(ev)  # a send_file — deliver via the shared media helper
         except Exception as e:
             _log.exception("messaging turn failed")
-            if adapter is not None:
-                self._send(adapter, f"[gateway error] {e}")
-            else:
-                for out in self.adapters:
-                    self._send(out, f"[gateway error] {e}")
-            return ""
-        # Deliver any attachments to the relevant adapter(s) — the inbound reply
-        # adapter, or all adapters for a broadcast (idle/self-work) turn.
-        targets = [adapter] if adapter is not None else list(self.adapters)
-        for att in atts:
+            targets = [adapter] if adapter is not None else list(self.adapters)
             for out in targets:
-                deliver_attachment(out, att, lambda t, _o=out: self._send(_o, t))
-        return "".join(chunks).strip()
+                self._send(out, f"[gateway error] {e}")
+            return "", [], [], []
+        cleaned, files, image_urls, missing = extract_outbound("".join(chunks), self.handle.resolve_media)
+        return cleaned.strip(), files, image_urls, missing
+
+    def _deliver_files(self, targets: list[Adapter], files: list[str],
+                       image_urls: list[str], missing: list[str]) -> None:
+        """Upload each resolved file + remote image URL to *targets* (or an honest
+        note / the URL-as-text for one that can't be sent). Never silently drops."""
+        for out in targets:
+            for path in files:
+                deliver_media(out, path, lambda t, _o=out: self._send(_o, t))
+            for url in image_urls:
+                deliver_image_url(out, url, lambda t, _o=out: self._send(_o, t))
+            for rel in missing:
+                self._send(out, missing_media_note(rel, zh=False))
 
     def _send(self, adapter: Adapter, text: str) -> None:
         """Deliver one outbound message, containing send failures (audit #31).

@@ -105,13 +105,11 @@ export function Deck() {
             </span>
           ))}
         </div>
-        {/* ✨默认 builtin carousel + 导入 import + ＋新角色卡 create-flow (§6 overlays).
-            New-card + builtin route through ensureModel like wake does; import does not. */}
+        {/* ✨默认 builtin carousel + ＋新角色卡 create-flow (§6 overlays). Both route
+            through ensureModel like wake does. Card import is deferred — to start from
+            a card you have elsewhere (e.g. SillyTavern), paste its JSON into the create box. */}
         <button className="btn pick-default" onClick={() => overlay.open({ kind: "builtin" })}>
           {t("deck-pick")}
-        </button>
-        <button className="btn soft" onClick={() => overlay.open({ kind: "import" })}>
-          {t("import")}
         </button>
         <button className="btn primary" onClick={() => ensureModel(() => overlay.open({ kind: "create" }))}>
           {t("new-card")}

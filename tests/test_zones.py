@@ -166,6 +166,12 @@ def test_worldinfo_budget_cap_truncates_by_order(agent_factory, tmp_path, monkey
 
 
 def test_compaction_summary_persists_and_restore_avoids_resummarizing(agent_factory, monkeypatch):
+    from lunamoth.core import compaction
+    # This fast test uses a 4000-token window; drop the 64K trigger floor so the
+    # tail budget (keyed to the threshold) fits the tiny window. The floor itself
+    # is covered in tests/test_compaction.py.
+    monkeypatch.setattr(compaction, "MINIMUM_CONTEXT_LENGTH", 0)
+
     a = agent_factory(toolpack="")
     s = a.make_session()
     for i in range(50):

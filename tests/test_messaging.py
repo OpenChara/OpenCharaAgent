@@ -48,6 +48,9 @@ class FakeHandle:
     def attach(self, present=True):
         self.attached = True
 
+    def resolve_media(self, rel):
+        return None  # no files in these gateway tests
+
     def snapshot(self):
         return StateSnapshot(
             char_name="Mock",

@@ -89,7 +89,8 @@ def user_worlds_dir() -> Path:
 # matte_model: the active local matting (抠像) model id, set in Settings·生图 and
 # read by lunamoth.visuals.matte.selected_model(). Not a secret.
 _DEFAULT_FIELDS = ("provider", "base_url", "api_key", "model", "ui_lang", "ui_theme",
-                   "image_api_key", "image_model", "matte_model")
+                   "image_api_key", "image_model", "matte_model", "reasoning", "vision_model",
+                   "card_model", "image_prompt_model", "model_context")
 # Default fields whose value is a secret: stripped from every public payload,
 # surfaced only as a has_<field> presence flag.
 _SECRET_FIELDS = ("api_key", "image_api_key")
@@ -1185,6 +1186,29 @@ def save_card(data: dict[str, Any], path: str = "") -> dict[str, Any]:
     return {"path": str(target)}
 
 
+def _merge_preserving(base: Any, over: Any) -> Any:
+    """Deep-merge ``over`` onto ``base``, but an EMPTY value in ``over`` never
+    wipes a non-empty value in ``base``.
+
+    Root-fix for the wake data-loss bug: the wake editor round-trips the WHOLE
+    card through UI fields and submits it back, but (a) it renders no field for
+    mes_example / system_prompt / post_history_instructions, and (b) a load/value
+    hiccup (e.g. card.read caught to null) can blank every field. Either way an
+    empty submitted field would overwrite the source's real content and freeze a
+    persona-less, greeting-less chara. Merging the edit ONTO the freshly-loaded
+    SOURCE card with this rule means a blank edit keeps the source value, so the
+    frozen chara always carries the full persona, first_mes, and avatar
+    declaration — while a genuinely-edited (non-empty) field still wins."""
+    if isinstance(base, dict) and isinstance(over, dict):
+        out = dict(base)
+        for k, v in over.items():
+            out[k] = _merge_preserving(out[k], v) if k in out else v
+        return out
+    if over in ("", None, [], {}) and base not in ("", None, [], {}):
+        return base
+    return over
+
+
 def _sanitize_card_extensions(card: dict[str, Any]) -> None:
     data = card.get("data") if isinstance(card.get("data"), dict) else {}
     ext_root = data.get("extensions")
@@ -1853,6 +1877,21 @@ def wake(card_path: str, name: str = "", isolation: str = "sandbox",
             raise RpcError(-32602, "card_data must be a {data:{...}} card object")
         edited = dict(card_data)
         edited.setdefault("version", "1.0")  # our own card format (no ST spec markers)
+        # ROOT FIX (data-loss): merge the edit ONTO the freshly-loaded SOURCE card
+        # so a blank/partial submission from the wake editor can never freeze a
+        # persona-less, greeting-less chara. The editor renders no field for
+        # mes_example / system_prompt / post_history_instructions, and a card.read
+        # hiccup blanks the rest — without this merge those overwrite the source
+        # with "". An empty edited field keeps the source value; a real edit wins.
+        from ..content.cards import _card_json_from_png as _png_json
+        try:
+            src_dict = _png_json(src) if src.suffix.lower() == ".png" else json.loads(src.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 — unreadable source → freeze the edit as-is
+            src_dict = {}
+        if isinstance(src_dict, dict) and isinstance(src_dict.get("data"), dict):
+            edited["data"] = _merge_preserving(src_dict["data"], edited.get("data") or {})
+            if not str(edited.get("name") or "").strip() and src_dict.get("name"):
+                edited["name"] = src_dict["name"]
         _sanitize_card_extensions(edited)
         frozen.write_text(json.dumps(edited, ensure_ascii=False, indent=2), encoding="utf-8")
     elif src.suffix.lower() == ".png":
@@ -1884,6 +1923,7 @@ def wake(card_path: str, name: str = "", isolation: str = "sandbox",
         # load from the global keyring (settings.global_api_key). Sessions hold only
         # non-secret overrides, so the key isn't duplicated into every chara's dir.
         "model": model or defaults.get("model", cfg["model"]),
+        "model_context": int(defaults.get("model_context") or 0),
         "character_path": str(frozen),
         "py_backend": _ISOLATION_TO_BACKEND.get(meta.isolation, "sandbox"),
     })
@@ -2477,6 +2517,10 @@ class HubDispatcher:
         if method == "matte.status":
             from ..visuals import matte
             return matte.status()
+        if method == "matte.install_deps":
+            from ..visuals import matte
+            matte.install_deps_async()
+            return matte.status()
         if method == "matte.download":
             from ..visuals import matte
             mid = str(p.get("model") or "")
@@ -2527,9 +2571,10 @@ class HubDispatcher:
             except (OSError, json.JSONDecodeError) as exc:
                 raise RpcError(-32035, f"unreadable card: {exc}") from exc
             defaults = load_defaults()
+            _vp_model = str(defaults.get("image_prompt_model") or "")
             try:
                 return {"brief": pipeline.build_brief(
-                    card, lambda s, u: _complete(defaults, s, u, temperature=0.7, max_tokens=3000))}
+                    card, lambda s, u: _complete(defaults, s, u, model=_vp_model, temperature=0.7, max_tokens=3000))}
             except (RuntimeError, ValueError) as exc:
                 raise HubRpcError(-32050, str(exc), {"kind": "visual_brief"}) from exc
         if method == "card.visual_generate":
@@ -2614,8 +2659,10 @@ class HubDispatcher:
             inspiration = str(p.get("inspiration") or "").strip()
             if not inspiration:
                 raise RpcError(-32602, "cards.draft needs inspiration")
-            # Card drafting always uses the system default model (no per-task override).
-            return draft_card_from_inspiration(load_defaults(), inspiration)
+            # Card drafting uses the per-task card_model override when set, else the
+            # system default model (Settings · 模型 · 其他模态 · 生成角色卡).
+            _d = load_defaults()
+            return draft_card_from_inspiration(_d, inspiration, model=str(_d.get("card_model") or ""))
         if method == "card.from_draft":
             draft = p.get("draft")
             if not isinstance(draft, dict):

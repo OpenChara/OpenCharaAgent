@@ -60,17 +60,8 @@ class Notice:
     text: str = ""
 
 
-@dataclass(frozen=True)
-class Attachment:
-    """A file the chara chose to put in front of the user (the send_file tool).
-    `url` is a same-origin link the frontend can render (images inline) or offer
-    for download; `mime` decides which. Carries the same say|muse register as
-    text — `say` reaches every frontend, `muse` is panoramic-only."""
-    url: str
-    mime: str = ""
-    name: str = ""
-    caption: str = ""
-    channel: str = SAY
+# Files are NOT a protocol event: like hermes, the chara surfaces a file by writing
+# a MEDIA:<path> marker in its say text, which each surface extracts at its render/
+# delivery edge (see protocol/media.py). There is no Attachment event.
 
-
-Event = Union[TextDelta, ThinkDelta, ToolStart, ToolEnd, Notice, Attachment]
+Event = Union[TextDelta, ThinkDelta, ToolStart, ToolEnd, Notice]

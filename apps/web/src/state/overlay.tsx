@@ -24,7 +24,6 @@ export type OverlayState =
   | { kind: "firstrun" }
   | { kind: "create" }
   | { kind: "builtin" }
-  | { kind: "import" }
   // The in-flow model-key step; onReady resumes the create/wake the user started.
   | { kind: "model-gate"; onReady: () => void }
   // The 2-step wake sheet lives in components/deck but is opened as an overlay so

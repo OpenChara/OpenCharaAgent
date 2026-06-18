@@ -128,12 +128,7 @@ export function Board() {
 
         {sessions.length === 0 && (
           <div className="empty-state" style={{ display: "flex" }}>
-            <svg width="64" height="64" viewBox="0 0 100 100" fill="none">
-              <ellipse cx="38" cy="44" rx="17" ry="25" transform="rotate(24 38 44)" fill="rgba(91,159,212,.35)" />
-              <ellipse cx="62" cy="44" rx="17" ry="25" transform="rotate(-24 62 44)" fill="rgba(91,159,212,.35)" />
-              <ellipse cx="50" cy="52" rx="3.4" ry="15" fill="rgba(91,159,212,.55)" />
-            </svg>
-            <div>{t("empty-board")}</div>
+            <div className="empty-title">{t("empty-board")}</div>
             <div className="acts">
               <button className="btn primary" onClick={() => overlay.open({ kind: "firstrun" })}>
                 {t("meet-luna")}

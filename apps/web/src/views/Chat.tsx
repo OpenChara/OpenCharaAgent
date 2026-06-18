@@ -145,6 +145,8 @@ function ChatStreamPage({
   // veil, plus the sprite (立绘). Operator presentation prefs (on/off, opacities,
   // sprite position) are read per-chara from localStorage; the snapshot supplies
   // the URLs (bg_url / sprite_url|keyvisual_url need the auth token via assetUrl).
+  const sandboxRoot = snap ? String(snap.sandbox_root || "") : "";
+  const workspaceRoot = snap ? String(snap.workspace_root || snap.sandbox_root || "") : "";
   const prefs = readVisualPrefs(stream.charName);
   const bgUrl = prefs.bgOn && snap?.bg_url ? assetUrl(String(snap.bg_url)) : "";
   const spriteUrl =
@@ -249,6 +251,8 @@ function ChatStreamPage({
               superReadTs={superReadTs}
               technical={technical}
               avatarUri={avatarUri}
+              sandboxRoot={sandboxRoot}
+              workspaceRoot={workspaceRoot}
               onPermission={stream.permissionReply}
               onClarify={stream.clarifyReply}
             />

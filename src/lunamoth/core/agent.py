@@ -6,7 +6,6 @@ import base64
 import mimetypes
 import os
 import shutil
-import urllib.parse
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
@@ -24,7 +23,7 @@ from ..tools.goals import GoalStore
 from .llm import LLMClient
 from ..protocol import MUSE, Notice, TextDelta
 from .attachments import (
-    INLINE_IMAGE_MAX_BYTES, IngestResult, RawAttachment, build_user_content, ingest_attachments,
+    IngestResult, RawAttachment, build_user_content, ingest_attachments,
 )
 from ..tools.memory import MemoryLimits, MemoryStore
 from ..content.persona import (
@@ -50,6 +49,13 @@ _log = get_logger("agent")
 # The Settings.user_name default — card-declared user_name applies only when the
 # operator hasn't overridden it (precedence: operator > card > default).
 _DEFAULT_USER_NAME = "操作者"
+
+# Outbound file surfacing (hermes shape): the chara writes a `MEDIA:<path>` line
+# in its reply and the engine does NOT touch it here — the agent yields the model's
+# text verbatim. Each surface extracts the marker at its own rendering/delivery edge
+# (messaging uploads the file, the web renders it inline, a plain terminal shows the
+# path as text — exactly like hermes's CLI). The shared parser lives in
+# protocol/media.py; the sandbox boundary is enforced once in CharaHandle.resolve_media.
 
 
 def _abbrev(text: str, limit: int) -> str:
@@ -341,10 +347,25 @@ class LunaMothAgent:
         the operator or a card. Cached per (provider, base_url, model); a model
         swap via reconfigure refetches it."""
         s = self.settings
-        key = (s.provider, s.base_url, s.model)
+        key = (s.provider, s.base_url, s.model, getattr(s, "model_context", 0))
         if getattr(self, "_ctx_window_key", None) != key:
+            win, determined = providers.context_window_resolved(
+                s.provider, s.base_url, s.model, s.api_key, override=int(getattr(s, "model_context", 0) or 0))
+            # Refuse a KNOWN-too-small live model (apple-to-apple with hermes,
+            # which raises at init below MINIMUM_CONTEXT_LENGTH). Only when the
+            # window was actually determined — an unmeasured/offline model that
+            # fell back to DEFAULT_WINDOW is allowed (trim() carries it).
+            llm = getattr(self, "llm", None)
+            if determined and win < providers.MINIMUM_CONTEXT_LENGTH and llm is not None and llm.is_live():
+                raise ValueError(
+                    f"Model {s.model!r} has a context window of {win:,} tokens, below the "
+                    f"{providers.MINIMUM_CONTEXT_LENGTH:,}-token minimum needed for reliable "
+                    f"tool use and compaction. Choose a model with at least "
+                    f"{providers.MINIMUM_CONTEXT_LENGTH // 1000}K context, or pin a larger "
+                    f"window with LUNAMOTH_MODEL_CONTEXT."
+                )
             self._ctx_window_key = key
-            self._ctx_window = providers.context_window(s.provider, s.base_url, s.model, s.api_key)
+            self._ctx_window = win
         return self._ctx_window
 
     def make_session(self) -> "Session":
@@ -485,7 +506,8 @@ class LunaMothAgent:
                 + ". Reach them by the plain prefix assets/… — e.g. assets/sprite.png. "
                 "assets/ is read-only (you can read and send these, but not write there); "
                 "your own work lives in your workspace. You can show any of these to the "
-                "foreground when it fits (e.g. with send_file).")
+                "foreground when it fits — write a line MEDIA:<path> in your reply, e.g. "
+                "MEDIA:assets/sprite.png.")
 
     def _stable_prefix(self) -> list[str]:
         """Session-stable prompt prefix. The same list object is reused until a
@@ -737,36 +759,6 @@ class LunaMothAgent:
             # no dim machinery line — the words ARE the visible result.
             out["say"] = str(args.get("text", ""))
             out["display"] = ""
-        elif name == "send_file" and result.get("ok"):
-            # Read the workspace file and hand the loop a ready attachment payload
-            # (a data-URI, so no extra serving route) → an Attachment event.
-            try:
-                meta = _json.loads(result.get("data") or "{}")
-            except _json.JSONDecodeError:
-                meta = {}
-            relp = str(meta.get("path") or args.get("path") or "")
-            mime = str(meta.get("mime") or "application/octet-stream")
-            caption = str(meta.get("caption") or args.get("caption") or "")
-            try:
-                fp = self.sandbox.resolve_readable(relp)
-                if not fp.is_file():
-                    raise FileNotFoundError(relp)
-                # Reference the LIVE sandbox file, served on demand — never embed or
-                # persist the bytes. If the chara later moves/deletes it, the frontend
-                # shows a placeholder (image) or a "missing" file chip on click.
-                out["attachment"] = {
-                    "url": "/asset?p=" + urllib.parse.quote(str(fp)),
-                    "mime": mime,
-                    "name": Path(relp).name,
-                    "caption": caption,
-                }
-                out["display"] = f"🖼️ sent {Path(relp).name}"
-            except Exception as exc:  # noqa: BLE001 - surface the failure, don't fake success
-                # The tool reported success (shown=True), but the file is gone: make
-                # the failure visible to the chara (no silent no-op) so it can react.
-                out["ok"] = False
-                out["display"] = f"⚙ send_file ✗ {_abbrev(str(exc), 120)}"
-                out["content"] = f"ERROR: could not send {relp!r}: {exc}"
         elif name == "read_file" and result.get("ok"):
             # read_file on an image can't return pixels as text. When the model has
             # vision, hand the loop a follow-up USER message carrying the image_url
@@ -804,11 +796,14 @@ class LunaMothAgent:
             data = fp.read_bytes()
         except Exception:  # noqa: BLE001 - any failure → keep the honest note
             return None
-        if not data or len(data) > INLINE_IMAGE_MAX_BYTES:
-            return None  # too large to inline — leave it on disk, note unchanged
+        if not data:
+            return None
         mime, _ = mimetypes.guess_type(str(fp))
         if not mime or not mime.startswith("image/"):
             return None
+        # Inline at full size (hermes native shape); a provider too-large rejection is
+        # recovered by the LLM layer's reactive shrink. This follow-up rides the
+        # cross-turn context but is NOT persisted to the transcript.
         b64 = base64.b64encode(data).decode("ascii")
         # This note is the DURABLE tool result (persists in the transcript). The
         # pixels ride the follow-up below, which lives in the cross-turn context but
@@ -833,7 +828,10 @@ class LunaMothAgent:
         try:
             raws = [r for r in (RawAttachment.from_wire(d) for d in attachments) if r]
             return ingest_attachments(
-                raws, sandbox=self.sandbox, vision_ok=self.llm.vision_supported()
+                raws, sandbox=self.sandbox, vision_ok=self.llm.vision_supported(),
+                # When the main model can't see, an auxiliary vision model (if
+                # configured) describes the image and the text is fed back.
+                describe=self.llm.describe_image,
             )
         except Exception as e:  # ingestion must never break the conversation
             self.audit.write("attachment_error", error=str(e)[:200])

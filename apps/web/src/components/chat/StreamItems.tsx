@@ -1,7 +1,9 @@
 /* The stream item renderers — one component per StreamItem kind, mirroring the
- * DOM that chat.js built (char-msg / think-block / tool-group / attachment /
- * sys-note / user-msg + the inline permission & clarify boxes). The CSS class
- * names are reused 1:1 from front/web/style.css (ported in global.css).
+ * DOM that chat.js built (char-msg / think-block / tool-group / sys-note /
+ * user-msg + the inline permission & clarify boxes). A file the chara surfaces
+ * via a MEDIA:<path> marker is rendered inline inside its say message
+ * (MediaInline), not as a separate item. The CSS class names are reused 1:1 from
+ * front/web/style.css (ported in global.css).
  *
  * The say|muse channel is a backend messaging-gateway forwarding hint, not a
  * display distinction — on the desktop muse renders identically to say. */
@@ -13,6 +15,7 @@ import { useT, type TFn } from "../../i18n";
 import { assetUrl } from "../../rpc";
 import { glyphOf, paletteClass } from "../../lib/format";
 import { assertNever } from "../../lib/exhaustive";
+import { splitOutbound, assetPathFor, type MediaMarker } from "../../lib/media";
 import {
   chipLabel,
   summarizeToolTally,
@@ -20,7 +23,6 @@ import {
   type ToolGroupItem,
   type TextItem,
   type ThinkItem,
-  type AttachmentItem,
   type SystemItem,
   type UserItem,
   type PermissionItem,
@@ -49,20 +51,68 @@ function Markdown({ text }: { text: string }) {
   return <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>;
 }
 
+/** One inline file the chara surfaced via a MEDIA: marker — an image embeds, any
+ *  other file is offered as a download. The path is resolved to a same-origin
+ *  /asset URL (the server re-validates it against the session sandbox). */
+function MediaInline({
+  marker,
+  sandboxRoot,
+  workspaceRoot,
+}: {
+  marker: MediaMarker;
+  sandboxRoot: string;
+  workspaceRoot: string;
+}) {
+  const t = useT();
+  const [broken, setBroken] = useState(false);
+  const src = assetUrl(assetPathFor(marker.path, sandboxRoot, workspaceRoot));
+  const name = marker.path.split("/").pop() || (marker.isImage ? "image" : "file");
+  if (marker.isImage) {
+    return broken ? (
+      <div className="att-missing">{t("att-img-missing")}</div>
+    ) : (
+      <div className="wp-img">
+        <img alt={name} loading="lazy" decoding="async" src={src} onError={() => setBroken(true)} />
+      </div>
+    );
+  }
+  return (
+    <div className="artifact">
+      <div className="thumb">{(name.split(".").pop() || "").toUpperCase().slice(0, 4) || "FILE"}</div>
+      <div className="meta">
+        <b>{name}</b>
+        <span>{t("att-file")}</span>
+      </div>
+      <div className="acts">
+        <a className="go" href={src} target="_blank" rel="noopener" download={name}>
+          {t("att-open")}
+        </a>
+      </div>
+    </div>
+  );
+}
+
 function SayMessage({
   item,
   charName,
   superReadTs,
   avatarUri,
+  sandboxRoot,
+  workspaceRoot,
 }: {
   item: TextItem;
   charName: string;
   superReadTs: number;
   avatarUri?: string;
+  sandboxRoot: string;
+  workspaceRoot: string;
 }) {
   const t = useT();
   const isSuper = item.kind === "super";
   const read = isSuper && item.ts !== undefined && item.ts <= superReadTs;
+  // Extract MEDIA: markers from the accumulated text (hermes shape): prose renders
+  // as markdown, a marker renders as an inline image / download, in order.
+  const segments = splitOutbound(item.raw);
   return (
     <div className={`char-msg${isSuper ? " super-chat" : ""}${read ? " read" : ""}`}>
       <Avatar name={charName} avatarUri={avatarUri} />
@@ -75,9 +125,15 @@ function SayMessage({
             </span>
           )}
         </div>
-        <div className="text">
-          <Markdown text={item.raw} />
-        </div>
+        {segments.map((seg, i) =>
+          seg.kind === "text" ? (
+            <div className="text" key={i}>
+              <Markdown text={seg.text} />
+            </div>
+          ) : (
+            <MediaInline key={i} marker={seg} sandboxRoot={sandboxRoot} workspaceRoot={workspaceRoot} />
+          ),
+        )}
       </div>
     </div>
   );
@@ -153,47 +209,6 @@ function ToolChipRow({ chip, technical }: { chip: ToolGroupItem["chips"][number]
   );
 }
 
-function AttachmentCard({ item, charName, avatarUri }: { item: AttachmentItem; charName: string; avatarUri?: string }) {
-  const t = useT();
-  const [broken, setBroken] = useState(false);
-  const isImage = (item.mime || "").startsWith("image/");
-  const name = item.name || (isImage ? "image" : "file");
-  const media = isImage ? (
-    broken ? (
-      <div className="att-missing">{t("att-img-missing")}</div>
-    ) : (
-      <div className="wp-img">
-        <img alt={name} loading="lazy" decoding="async" src={assetUrl(item.url)} onError={() => setBroken(true)} />
-      </div>
-    )
-  ) : (
-    <div className="artifact">
-      <div className="thumb">{(name.split(".").pop() || "").toUpperCase().slice(0, 4) || "FILE"}</div>
-      <div className="meta">
-        <b>{name}</b>
-        <span>{item.mime || t("att-file")}</span>
-      </div>
-      <div className="acts">
-        <a className="go" href={assetUrl(item.url)} target="_blank" rel="noopener" download={name}>
-          {t("att-open")}
-        </a>
-      </div>
-    </div>
-  );
-  const cap = item.caption ? <div className="attach-cap">{item.caption}</div> : null;
-  // The say|muse channel is a backend forwarding hint, not a display
-  // distinction — a muse attachment renders the same as a say one.
-  return (
-    <div className="char-msg">
-      <Avatar name={charName} avatarUri={avatarUri} />
-      <div className="body">
-        <div className="name">{charName}</div>
-        {media}
-        {cap}
-      </div>
-    </div>
-  );
-}
 
 function SystemLine({ item }: { item: SystemItem }) {
   return <div className={`sys-note${item.cls ? " " + item.cls : ""}`}>{item.text}</div>;
@@ -295,6 +310,8 @@ export function StreamItemView({
   superReadTs,
   technical,
   avatarUri,
+  sandboxRoot,
+  workspaceRoot,
   onPermission,
   onClarify,
 }: {
@@ -304,6 +321,9 @@ export function StreamItemView({
   technical: boolean;
   /** the chara's inline avatar data-URI (snapshot.avatar_uri); glyph fallback when absent. */
   avatarUri?: string;
+  /** session roots (snapshot) used to resolve a MEDIA: marker's relative path. */
+  sandboxRoot: string;
+  workspaceRoot: string;
   onPermission: (id: string, granted: boolean) => void;
   onClarify: (id: string, answer: string) => void;
 }) {
@@ -313,13 +333,20 @@ export function StreamItemView({
       return <UserMessage item={item} t={t} />;
     case "say":
     case "super":
-      return <SayMessage item={item} charName={charName} superReadTs={superReadTs} avatarUri={avatarUri} />;
+      return (
+        <SayMessage
+          item={item}
+          charName={charName}
+          superReadTs={superReadTs}
+          avatarUri={avatarUri}
+          sandboxRoot={sandboxRoot}
+          workspaceRoot={workspaceRoot}
+        />
+      );
     case "think":
       return <ThinkBlock item={item} />;
     case "tool-group":
       return <ToolGroup item={item} technical={technical} />;
-    case "attachment":
-      return <AttachmentCard item={item} charName={charName} avatarUri={avatarUri} />;
     case "system":
       return <SystemLine item={item} />;
     case "permission":

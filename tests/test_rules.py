@@ -15,6 +15,26 @@ def test_rules_are_neutral_no_identity_claims():
     assert "记住" not in r  # the closer is separate
 
 
+def test_rules_carry_finish_the_job_discipline():
+    """The migrated task-completion discipline (de-branded from the upstream
+    reference's TASK_COMPLETION/TOOL_USE_ENFORCEMENT), folded into the act-now
+    paragraph to avoid restating it 3x."""
+    low = rules.rules().lower()
+    assert "keep going until the task is really done" in low
+    assert "stub" in low                       # don't stop after a stub
+    assert "next time" in low                  # don't end with a plan-for-next-time
+    assert "make real progress" in low or "finished result" in low
+
+
+def test_engine_prompt_text_is_brand_free():
+    """No upstream brand leaks into any model-facing rules string."""
+    for txt in (rules.rules(), rules.capabilities(), rules.tool_use(),
+                rules.closer(), rules.embodiment_bridge()):
+        low = txt.lower()
+        for banned in ("hermes", "nous", "the vm", "linux environment"):
+            assert banned not in low, f"{banned!r} leaked into model-facing rules text"
+
+
 def test_global_override_file(tmp_path, monkeypatch):
     monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path))
     (tmp_path / "rules.md").write_text("my house rules", encoding="utf-8")

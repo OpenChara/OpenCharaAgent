@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import json
+import mimetypes
 import queue
 import random
 import re
@@ -11,12 +13,79 @@ from typing import Any, Iterator, NoReturn
 from ..config import LLMConfig
 from ..obs import get_logger
 from ..content.persona import fallback_persona
-from ..protocol import Attachment, Notice, TextDelta, ThinkDelta, ToolEnd, ToolStart
+from ..protocol import Notice, TextDelta, ThinkDelta, ToolEnd, ToolStart
+from .attachments import shrink_data_url, shrink_image_to_inline
 from .cache import apply_cache_control, cache_policy
+
+# Auxiliary vision model — when the main model can't see, an image is described
+# by cfg.vision_model (same route/key, different model id) and the text fed back.
+# hermes' generic describe prompt (auxiliary task=vision interceptor), verbatim.
+_VISION_DESCRIBE_PROMPT = (
+    "Describe everything visible in this image in thorough detail. Include any "
+    "text, code, data, objects, people, layout, colors, and any other notable "
+    "visual information."
+)
+_VISION_MAX_BYTES = 8 * 1024 * 1024  # shrink anything larger before the aux call
 
 _log = get_logger("llm")
 
 LIVE_PROVIDERS = {"openai_compatible", "openai", "ollama", "openrouter"}
+
+# Provider "image too large" rejection markers (ported from hermes
+# agent/error_classifier.py). A chara inlines images at full size (hermes native
+# shape); when a provider 400s on an oversized image part we reactively shrink the
+# data-URL parts and retry once (see _connect_with_retry / _shrink_request_images).
+_IMAGE_TOO_LARGE_MARKERS = (
+    "image_too_large", "image too large", "image is too large", "image exceeds",
+    "exceeds 5 mb", "exceeds the maximum size", "maximum allowed size",
+)
+
+
+def _is_image_too_large(detail: str) -> bool:
+    """True when a provider error reads as an oversized-image rejection."""
+    d = (detail or "").lower()
+    if any(m in d for m in _IMAGE_TOO_LARGE_MARKERS):
+        return True
+    return "image" in d and ("exceed" in d or "too large" in d or "maximum size" in d)
+
+
+def _shrink_request_images(data: bytes) -> "bytes | None":
+    """Reactively shrink oversized inline image data-URLs in an already-serialized
+    request body. Returns new bytes, or None when there were no shrinkable image
+    parts / nothing changed (so the caller surfaces the original error). Mirrors
+    hermes try_shrink_image_parts_in_messages; remote http(s) URLs are left alone."""
+    try:
+        body = json.loads(data.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    msgs = body.get("messages")
+    if not isinstance(msgs, list):
+        return None
+    changed = False
+    for m in msgs:
+        content = m.get("content") if isinstance(m, dict) else None
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict) or part.get("type") != "image_url":
+                continue
+            iv = part.get("image_url")
+            if isinstance(iv, dict):
+                new = shrink_data_url(iv.get("url", ""))
+                if new:
+                    iv["url"] = new
+                    changed = True
+            elif isinstance(iv, str):
+                new = shrink_data_url(iv)
+                if new:
+                    part["image_url"] = new
+                    changed = True
+    if not changed:
+        return None
+    try:
+        return json.dumps(body).encode("utf-8")
+    except (TypeError, ValueError):
+        return None
 
 # All streaming generators here yield protocol events (protocol/events.py),
 # never styled strings: speech is TextDelta, reasoning is ThinkDelta, tool
@@ -583,6 +652,7 @@ class LLMClient:
         import urllib.request
 
         attempt = 0
+        shrunk_for_image = False
         while True:
             retry_after = None
             req = urllib.request.Request(url, data=data, headers=self._headers(), method="POST")
@@ -591,6 +661,17 @@ class LLMClient:
             except urllib.error.HTTPError as e:
                 detail = e.read().decode("utf-8", errors="replace")[:500]
                 if e.code not in self._RETRYABLE_HTTP:
+                    # hermes reactive recovery: a 400 that reads as image-too-large →
+                    # shrink the inline image data-URLs once and retry (no backoff, no
+                    # attempt cost). Any failure falls through to surfacing the error.
+                    if e.code == 400 and not shrunk_for_image and _is_image_too_large(detail):
+                        new_data = _shrink_request_images(data)
+                        if new_data is not None:
+                            shrunk_for_image = True
+                            data = new_data
+                            _log.warning("image too large — shrank inline image(s) and retrying")
+                            yield Notice("retry", "⚠ image too large — shrinking and retrying")
+                            continue
                     _log.info("permanent HTTP error from %s: %s %s", url, e.code, detail[:200])
                     raise RuntimeError(f"HTTP {e.code}: {detail}") from e
                 if e.code == 429:
@@ -609,22 +690,25 @@ class LLMClient:
             yield Notice("retry", f"⚠ {err} — retry {attempt}/{self._RETRY_LIMIT} in {delay:.0f}s")
             time.sleep(delay)
 
-    def raw_complete(self, messages: list[dict[str, Any]], max_tokens: int = 1024, timeout: float = 60.0) -> str:
-        """One-off NON-streaming completion for engine-internal use (context
-        compaction summaries). Returns the assistant text, or "" on ANY failure —
-        compaction must degrade to a no-op, never crash or block the turn."""
+    def raw_complete(self, messages: list[dict[str, Any]], max_tokens: int = 1024,
+                     timeout: float = 60.0, model: str = "", temperature: float = 0.3) -> str:
+        """One-off NON-streaming completion for engine-internal use (compaction
+        summaries; auxiliary vision). `model` overrides the main model (an aux
+        task on a different model id, same route/key). Returns the assistant text,
+        or "" on ANY failure — engine side-tasks degrade to a no-op, never crash
+        or block the turn."""
         if not self.is_live():
             return ""
         import urllib.request
 
         body = {
-            "model": self.cfg.model,
+            "model": (model or self.cfg.model),
             "messages": messages,
-            "temperature": 0.3,           # factual, low-variance summaries
+            "temperature": temperature,   # low-variance for summaries / descriptions
             "max_tokens": int(max_tokens),
             "stream": False,
         }
-        body = self._reasoning_body(body, override="off")  # summaries don't need thinking
+        body = self._reasoning_body(body, override="off")  # side-tasks don't need thinking
         data = json.dumps(body).encode("utf-8")
         req = urllib.request.Request(
             f"{self.cfg.base_url}/chat/completions", data=data, headers=self._headers(), method="POST"
@@ -636,6 +720,43 @@ class LLMClient:
         except Exception as e:
             _log.warning("raw_complete failed (degrading to no-op): %s", e)
             return ""
+
+    def describe_image(self, data: bytes, mime: str, question: str = "") -> "str | None":
+        """Understand an image via the AUXILIARY vision model (cfg.vision_model)
+        when the main model has no vision — hermes' auxiliary task=vision shape.
+        The vision model shares this route's base_url/api_key; only the model id
+        differs. Returns the description, "" for an empty completion, or None when
+        no vision model is configured / not live / not an image (the caller then
+        keeps the honest 'saved to disk' note — no fabrication)."""
+        vm = (getattr(self.cfg, "vision_model", "") or "").strip()
+        if not vm or not self.is_live() or not data or not (mime or "").startswith("image/"):
+            return None
+        if len(data) > _VISION_MAX_BYTES:  # keep the aux call cheap / within limits
+            shrunk = shrink_image_to_inline(data, mime)
+            if shrunk is not None:
+                data, mime = shrunk
+        q = (question or "").strip()
+        prompt = _VISION_DESCRIBE_PROMPT if not q else (
+            "Fully describe and explain everything about this image, then answer "
+            f"the following question:\n\n{q}")
+        b64 = base64.b64encode(data).decode("ascii")
+        messages = [{"role": "user", "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+        ]}]
+        out = self.raw_complete(messages, max_tokens=1500, timeout=120, model=vm, temperature=0.1)
+        return out or None
+
+    def analyze_image(self, image_path: str, question: str = "") -> "str | None":
+        """Path-based wrapper over describe_image (browser screenshots, read_file
+        on an image). Reads the file, sniffs the mime, describes it. None on any
+        read failure or when no vision model is configured."""
+        try:
+            data = open(image_path, "rb").read()
+        except OSError:
+            return None
+        mime, _ = mimetypes.guess_type(image_path)
+        return self.describe_image(data, mime or "image/png", question)
 
     def stream_complete(
         self, user_text: str, context: list[dict], stable: list[str], volatile: list[str],
@@ -990,15 +1111,9 @@ class LLMClient:
                             # speak tool): always the say channel — every
                             # frontend delivers it, whatever this turn's channel.
                             yield TextDelta(str(res["say"]) + "\n", "say")
-                        att = res.get("attachment")
-                        if isinstance(att, dict) and att.get("url"):
-                            # A tool put a file in front of the user (send_file):
-                            # an Attachment event, say channel like spoken words.
-                            yield Attachment(
-                                url=str(att["url"]), mime=str(att.get("mime") or ""),
-                                name=str(att.get("name") or ""), caption=str(att.get("caption") or ""),
-                                channel="say",
-                            )
+                        # Files are no longer surfaced by a tool: the chara puts a
+                        # file in front of the user by writing a `MEDIA:<path>` line
+                        # in its reply, which the agent extracts (see agent._media_filter).
                         t_msg = {"role": "tool", "tool_call_id": tc.get("id") or "", "content": res.get("content", "")}
                         record(t_msg)
                         messages.append(t_msg)

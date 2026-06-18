@@ -146,7 +146,7 @@ def _confine(ctx, path: str) -> tuple[str | None, str | None]:
     leading ``assets`` component maps to the sibling assets dir (the same virtual
     prefix the file tools use). Returns (resolved_abs, error). NOTE: under Linux
     sandbox isolation the OS jail binds only the workspace, so a shelled rg/grep
-    won't see assets there — read_file/send_file (direct, unjailed I/O) remain
+    won't see assets there — read_file and MEDIA:<path> surfacing (direct, unjailed I/O) remain
     the portable way to reach assets; assets scanning works under macOS sandbox
     (reads are unrestricted) and is bound read-only for bwrap (isolation.py)."""
     workspace = Path(ctx.workspace).resolve()

@@ -28,22 +28,28 @@ function ConnDot() {
 function Shell() {
   const route = useHashRoute();
 
+  // #statusbar lives BELOW #app, not inside it: #app is a flex ROW (sidebar +
+  // main) sized to calc(100vh - statusbar-h), and the status bar is the 24px
+  // bottom strip. Nesting it inside the row turned it into a ~44px empty column
+  // pinned to the right edge (and left the bottom strip blank). Keep it a sibling.
   return (
-    <div id="app">
-      <Sidebar view={route.view} />
-      <div className="main">
-        {route.view === "board" && <Board />}
-        {route.view === "deck" && <Deck />}
-        {route.view === "gateways" && <Gateways />}
-        {route.view === "settings" && <Settings />}
-        {route.view === "chat" && route.name && <Chat name={route.name} sub={route.sub} />}
+    <>
+      <div id="app">
+        <Sidebar view={route.view} />
+        <div className="main">
+          {route.view === "board" && <Board />}
+          {route.view === "deck" && <Deck />}
+          {route.view === "gateways" && <Gateways />}
+          {route.view === "settings" && <Settings />}
+          {route.view === "chat" && route.name && <Chat name={route.name} sub={route.sub} />}
+        </div>
       </div>
       <div id="statusbar">
         <span className="grow" />
         <ConnDot />
       </div>
       <OverlayHost />
-    </div>
+    </>
   );
 }
 

@@ -234,8 +234,7 @@ export function CardEditor({
               <span className="chip">{full.language || card.lang}</span>
               {card.builtin && <span className="chip">{t("deck-builtin")}</span>}
               {ext.embodiment && <span className="chip">{ext.embodiment}</span>}
-              {ext.toolpack && <span className="chip">⚒ {ext.toolpack}</span>}
-              {card.frozen && <span className="chip">{t("card-frozen-by", { names: (card.used_by || []).join("、") })}</span>}
+              {card.frozen &&<span className="chip">{t("card-frozen-by", { names: (card.used_by || []).join("、") })}</span>}
             </div>
           </div>
         </div>

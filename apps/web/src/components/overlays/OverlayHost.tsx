@@ -7,7 +7,6 @@ import { WakeSheet } from "../deck/WakeSheet";
 import { FirstRun } from "./FirstRun";
 import { CreateFlow } from "./CreateFlow";
 import { BuiltinPicker } from "./BuiltinPicker";
-import { Import } from "./Import";
 import { ModelGate } from "./ModelGate";
 
 export function OverlayHost() {
@@ -20,8 +19,6 @@ export function OverlayHost() {
       return <CreateFlow onClose={close} />;
     case "builtin":
       return <BuiltinPicker onClose={close} />;
-    case "import":
-      return <Import onClose={close} />;
     case "model-gate":
       return <ModelGate onClose={close} onReady={state.onReady} />;
     case "wake":

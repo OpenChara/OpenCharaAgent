@@ -39,22 +39,12 @@ export interface Notice {
   kind: string;
   text: string;
 }
-export interface Attachment {
-  type: "attachment";
-  url: string;
-  mime: string;
-  name: string;
-  caption: string;
-  channel: Channel;
-}
-
 export type ProtocolEvent =
   | TextDelta
   | ThinkDelta
   | ToolStart
   | ToolEnd
-  | Notice
-  | Attachment;
+  | Notice;
 
 /** Known event type tags (codec.py `_TYPES` keys). */
 export const KNOWN_EVENT_TYPES = [
@@ -63,7 +53,6 @@ export const KNOWN_EVENT_TYPES = [
   "tool_start",
   "tool_end",
   "notice",
-  "attachment",
 ] as const;
 
 /** Defaults mirror the frozen dataclass field defaults in events.py, so a
@@ -93,15 +82,6 @@ export function decodeEvent(data: Record<string, unknown>): ProtocolEvent | null
       };
     case "notice":
       return { type, kind: String(data.kind ?? ""), text: String(data.text ?? "") };
-    case "attachment":
-      return {
-        type,
-        url: String(data.url ?? ""),
-        mime: String(data.mime ?? ""),
-        name: String(data.name ?? ""),
-        caption: String(data.caption ?? ""),
-        channel: chan(data.channel),
-      };
     default:
       // Unknown type — tolerate (forward-compat). Caller drops a null.
       return null;

@@ -1,303 +1,182 @@
-/* ModelPane — the model setup pane, a React port of app.js:1451 setupPane (the
- * settings·模型 use; the first-run variant is a separate overlay per §6).
- * Provider presets + base-url + API key (key.test) + default model, saved via
- * defaults.set. After save, if the backend reports charas whose key could be
- * updated, the apply-key prompt offers to propagate it (defaults.apply_key).
+/* ModelPane — Settings 模型 pane, after Hermes' Model pane: a PROVIDER box + a
+ * MODEL box (provider:model) for the MAIN model, a Test-connection button, a
+ * Reasoning control (OpenRouter-only — OpenRouter wraps the unified reasoning
+ * param), then an "other modalities" section that mirrors Hermes' auxiliary
+ * models: each modality defaults to the main model and can be overridden with its
+ * own model. We surface Vision (image understanding) + Image-gen. Image-gen is
+ * wired (image_model); the vision override is stored (vision_model) but its
+ * routing pipeline is a separate follow-up.
  *
- * Binding UI rule: Test shows a working state + the result inline; Save (继续)
- * shows a working state and surfaces errors. */
+ * Providers/keys are added in the Providers pane; this pane only chooses models.
+ * Provider switch → defaults.use_key; everything else → defaults.set. Instant. */
 
 import { useEffect, useMemo, useState } from "react";
-import { useT, useLang } from "../../i18n";
-import { useHub, useHubApi } from "../../state/hub";
+import { useT } from "../../i18n";
+import { useHub } from "../../state/hub";
+import { useNavigate } from "../../hooks/useHashRoute";
 import { errText, rpcErrText } from "../../lib/status";
-import { Caps } from "../deck/Caps";
-import { DeckModal } from "../ui/DeckModal";
 import { deckToast } from "../ui/deckToast";
+import { Select, type SelectOption } from "./Select";
+import { TaskModels } from "./TaskModels";
+import { MatteSection } from "./MattePane";
+import type { TKey } from "../../i18n";
 import type { ModelInfo } from "../deck/types";
 
-interface Preset {
-  provider?: string;
-  base_url?: string;
-  model?: string;
-}
 interface Defaults {
   provider?: string;
   base_url?: string;
   model?: string;
+  reasoning?: string;
+  image_model?: string;
+  vision_model?: string;
+  model_context?: number | string;
   has_key?: boolean;
 }
-interface KeyTestResult {
-  ok?: boolean;
-  error?: { kind?: string };
-  capabilities?: { tools?: boolean; writing?: boolean; vision?: boolean };
-}
-interface KeyCandidate {
-  name: string;
-  char_name?: string;
-  model?: string;
-}
+interface KeyRow { label: string; provider: string; base_url: string; model: string; has_key: boolean; active: boolean }
+interface TestResult { ok?: boolean; error?: { kind?: string }; capabilities?: { tools?: boolean; vision?: boolean } }
 
-const BUILTIN_PROVIDERS: ReadonlyArray<readonly [string, string, string, boolean]> = [
-  ["OpenRouter", "OpenRouter", "or-desc", true],
-  ["OpenAI", "OpenAI", "prov-openai-desc", false],
-  ["Ollama (local)", "Ollama", "prov-ollama-desc", false],
-  ["_custom", "OpenAI-compatible", "prov-compat-desc", false],
-] as const;
+/* The pair we OFFER as quick picks. */
+const RECOMMENDED = [
+  { id: "deepseek/deepseek-v4-flash", note: "model-note-flash" },
+  { id: "deepseek/deepseek-v4-pro", note: "model-note-pro" },
+];
+const REASONING = ["off", "low", "medium", "high"] as const;
+const providerOf = (id: string) => (id.includes("/") ? id.split("/")[0] : "other").replace(/^[~@]/, "");
 
 export function ModelPane() {
   const t = useT();
-  const { lang } = useLang();
   const { hub, snapshot, refresh } = useHub();
+  const nav = useNavigate();
   const defaults = (snapshot?.defaults as Defaults) || {};
-  const presets = (snapshot?.presets as Record<string, Preset>) || {};
+
+  const [keys, setKeys] = useState<KeyRow[]>([]);
   const [models, setModels] = useState<ModelInfo[]>([]);
-
-  // models aren't on hub.state — fetch the catalog once (app.js modelsCached).
-  useEffect(() => {
-    let alive = true;
-    hub
-      .call<ModelInfo[]>("models.list", {}, 30000)
-      .then((m) => alive && setModels(Array.isArray(m) ? m : []))
-      .catch(() => alive && setModels([]));
-    return () => {
-      alive = false;
-    };
-  }, [hub]);
-
-  const [provider, setProvider] = useState(defaults.provider || "openrouter");
-  const [pickedPreset, setPickedPreset] = useState("OpenRouter");
-  const [baseUrl, setBaseUrl] = useState(defaults.base_url || "https://openrouter.ai/api/v1");
-  const [model, setModel] = useState(defaults.model || "deepseek/deepseek-v4-flash");
-  const [apiKey, setApiKey] = useState("");
-  const [showMore, setShowMore] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [savedTick, setSavedTick] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [test, setTest] = useState<KeyTestResult | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [candidates, setCandidates] = useState<KeyCandidate[] | null>(null);
+  const [test, setTest] = useState<TestResult | null>(null);
+  const [ctx, setCtx] = useState(String(defaults.model_context || ""));
+  useEffect(() => { setCtx(String(defaults.model_context || "")); }, [defaults.model_context]);
 
-  const pickProvider = (key: string) => {
-    const p = presets[key] || {};
-    setProvider(p.provider || "openai_compatible");
-    setBaseUrl(p.base_url || "");
-    if (p.model) setModel(p.model);
-    setPickedPreset(key);
-    setTest(null);
+  useEffect(() => {
+    let on = true;
+    hub.call<KeyRow[]>("keys.list", {}, 15000).then((k) => on && setKeys(Array.isArray(k) ? k : [])).catch(() => {});
+    return () => { on = false; };
+  }, [hub]);
+  useEffect(() => {
+    let on = true;
+    hub.call<ModelInfo[]>("models.list", {}, 30000).then((m) => on && setModels(Array.isArray(m) ? m : [])).catch(() => {});
+    return () => { on = false; };
+  }, [hub, defaults.base_url]);
+
+  const activeProvider = keys.find((k) => k.active)?.label || defaults.provider || "";
+  const model = defaults.model || "";
+  const isOpenRouter = (defaults.base_url || "").includes("openrouter.ai");
+
+  const capNote = (m: ModelInfo) => `${t("cap-tools-short")}${m.tools ? "✓" : "✗"} · ${t("cap-vision-short")}${m.vision ? "✓" : "✗"}`;
+
+  const providerOptions: SelectOption[] = keys.map((k) => ({ value: k.label, label: k.label, note: k.provider || undefined }));
+
+  const modelOptions: SelectOption[] = useMemo(() => {
+    const recIds = new Set(RECOMMENDED.map((r) => r.id));
+    const rec: SelectOption[] = RECOMMENDED.map((r) => ({ value: r.id, label: r.id, note: t(r.note as TKey), group: t("model-recommended") }));
+    const rest = models
+      .filter((m) => !recIds.has(m.id))
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((m) => ({ value: m.id, label: m.id, note: capNote(m), group: providerOf(m.id) }));
+    return [...rec, ...rest];
+  }, [models, t]);
+
+  const persist = async (patch: Record<string, string>, useKey?: string) => {
+    setBusy(true); setSavedTick(false); setTest(null);
+    try {
+      if (useKey) await hub.call("defaults.use_key", { label: useKey }, 15000);
+      else await hub.call("defaults.set", patch, 15000);
+      await refresh();
+      setSavedTick(true);
+    } catch (e) {
+      deckToast(rpcErrText(t, e as { message?: string }), true);
+    } finally { setBusy(false); }
   };
 
   const runTest = async () => {
-    setTesting(true);
-    setTest(null);
-    const params = {
-      provider,
-      base_url: baseUrl,
-      api_key: apiKey.trim(),
-      model: model.trim(),
-    };
-    try {
-      const r = await hub.call<KeyTestResult>("key.test", params, 60000);
-      setTest(r);
-    } catch (e) {
-      setTest({ ok: false, error: { kind: (e as { data?: { kind?: string } })?.data?.kind } });
-      deckToast(rpcErrText(t, e as { message?: string }), true);
-    } finally {
-      setTesting(false);
-    }
+    setTesting(true); setTest(null);
+    try { setTest(await hub.call<TestResult>("key.test", {}, 60000)); }
+    catch (e) { setTest({ ok: false, error: { kind: (e as { data?: { kind?: string } })?.data?.kind } }); }
+    finally { setTesting(false); }
   };
-
-  const save = async () => {
-    setSaving(true);
-    const payload: Record<string, unknown> = {
-      provider,
-      base_url: baseUrl,
-      model: model.trim() || model,
-      ui_lang: lang,
-    };
-    if (apiKey.trim()) payload.api_key = apiKey.trim();
-    try {
-      const saved = await hub.call<{ key_update_candidates?: KeyCandidate[] }>("defaults.set", payload, 15000);
-      await refresh();
-      deckToast(t("saved"));
-      if (saved && saved.key_update_candidates && saved.key_update_candidates.length) {
-        setCandidates(saved.key_update_candidates);
-      }
-    } catch (e) {
-      deckToast(rpcErrText(t, e as { message?: string }), true);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const okBad = test && test.ok === false;
 
   return (
-    <div className="settings-pane on" id="pane-model">
-      <h1>{t("setup-title")}</h1>
-      <div className="sub">{t("setup-sub")}</div>
+    <div className="settings-pane on">
+      <h2>{t("set-model")}</h2>
+      <div className="sub">{t("model-pane-sub")}</div>
       <div className="scope-note">{t("default-scope")}</div>
-      <div className="no-fallback-row">⊘ {t("no-fallback")}</div>
 
-      {BUILTIN_PROVIDERS.slice(0, 2).map(([key, label, desc, rec]) => (
-        <ProviderRow key={key} on={pickedPreset === key} label={label} desc={t(desc)} rec={rec} onClick={() => pickProvider(key)} />
-      ))}
-      <button className="provider more" onClick={() => setShowMore((v) => !v)}>
-        {t("more-providers")}
-      </button>
-      {showMore && (
-        <div>
-          {BUILTIN_PROVIDERS.slice(2).map(([key, label, desc, rec]) => (
-            <ProviderRow key={key} on={pickedPreset === key} label={label} desc={t(desc)} rec={rec} onClick={() => pickProvider(key)} />
-          ))}
-        </div>
-      )}
+      <div className="model-boxes">
+        <label className="model-box">
+          <span className="mb-lbl">{t("provider")}</span>
+          {keys.length === 0 ? (
+            <button className="okline bad small model-nokey" onClick={() => nav("#/settings")}>{t("model-no-key")}</button>
+          ) : (
+            <Select value={activeProvider} options={providerOptions} onChange={(v) => void persist({}, v)} placeholder={t("provider")} />
+          )}
+        </label>
 
-      {pickedPreset === "_custom" && (
-        <div className="keyrow">
-          <div className="input-like">
-            <input placeholder={t("base-ph")} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+        <label className="model-box">
+          <span className="mb-lbl">{t("model-label")}</span>
+          <Select value={model} options={modelOptions} onChange={(v) => v.trim() && void persist({ model: v.trim() })} placeholder={t("model-other-ph")} search allowCustom disabled={!defaults.has_key} />
+        </label>
+
+        <label className="model-box ctx-box">
+          <span className="mb-lbl">{t("model-ctx-label")} <i>{t("model-ctx-note")}</i></span>
+          <div className="input-like ctx-input">
+            <input
+              type="number" min="0" placeholder="0" value={ctx}
+              onChange={(e) => setCtx(e.target.value)}
+              onBlur={(e) => { const v = e.target.value.trim(); if (v !== String(defaults.model_context || "")) void persist({ model_context: v || "0" }); }}
+            />
           </div>
-        </div>
-      )}
+        </label>
 
-      <div className="keyrow">
-        <div className="input-like">
-          <input
-            type="password"
-            placeholder={defaults.has_key ? "••••••••  (saved)" : t("key-ph")}
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-          />
-        </div>
-        <button className="btn soft" disabled={testing} onClick={() => void runTest()}>
-          {testing ? t("testing") : t("test")}
-        </button>
-      </div>
-
-      {(testing || test) && (
-        <div className="test-result show">
-          <div className={"okline" + (okBad ? " bad" : "")}>
-            {testing ? t("testing") : test && test.ok ? t("connected") : "✗ " + errText(t, test?.error)}
-          </div>
-          <div className="modelrow">
-            <span>{t("default-model")}</span>
-            <div className="input-like" style={{ flex: 1 }}>
-              <input list="model-list" value={model} onChange={(e) => setModel(e.target.value)} />
-            </div>
-          </div>
-          {test && test.ok && <Caps caps={test.capabilities || null} />}
-          <div className="cap-hint">{t("cap-hint")}</div>
-        </div>
-      )}
-      <datalist id="model-list">
-        {models.slice(0, 400).map((m) => (
-          <option key={m.id} value={m.id} />
-        ))}
-      </datalist>
-
-      <div className="setup-acts">
-        <span />
-        <div className="grow" />
-        <button className="btn primary big" disabled={saving} onClick={() => void save()}>
-          {saving ? <span className="spin" /> : t("continue")}
-        </button>
-      </div>
-
-      {candidates && <KeyUpdatePrompt candidates={candidates} onClose={() => setCandidates(null)} />}
-    </div>
-  );
-}
-
-function ProviderRow({
-  on,
-  label,
-  desc,
-  rec,
-  onClick,
-}: {
-  on: boolean;
-  label: string;
-  desc?: string;
-  rec: boolean;
-  onClick: () => void;
-}) {
-  const t = useT();
-  return (
-    <button className={"provider" + (on ? " on" : "")} onClick={onClick}>
-      <div>
-        <div className="pname">
-          {label}
-          {rec && <span className="rec">{t("rec")}</span>}
-        </div>
-        {desc && <div className="pdesc">{desc}</div>}
-      </div>
-      <div className="radio" />
-    </button>
-  );
-}
-
-/* The "propagate the new key to these charas" prompt (app.js:1589 promptKeyUpdate),
-   rendered as a modal. Optimistic per-row checkboxes; Apply shows a working state. */
-function KeyUpdatePrompt({ candidates, onClose }: { candidates: KeyCandidate[]; onClose: () => void }) {
-  const t = useT();
-  const { hub, refresh } = useHubApi();
-  const [checked, setChecked] = useState<Set<string>>(() => new Set(candidates.map((c) => c.name)));
-  const [applying, setApplying] = useState(false);
-
-  const allOn = useMemo(() => candidates.every((c) => checked.has(c.name)), [candidates, checked]);
-
-  const toggle = (name: string) =>
-    setChecked((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
-
-  const apply = async () => {
-    const names = candidates.filter((c) => checked.has(c.name)).map((c) => c.name);
-    if (!names.length) return;
-    setApplying(true);
-    try {
-      const r = await hub.call<{ updated?: string[] }>("defaults.apply_key", { names }, 30000);
-      deckToast(t("key-update-done", { n: (r.updated || []).length }));
-      await refresh();
-      onClose();
-    } catch (e) {
-      setApplying(false);
-      deckToast(rpcErrText(t, e as { message?: string }), true);
-    }
-  };
-
-  return (
-    <DeckModal open variant="sheet" onClose={onClose}>
-      <h2>{t("key-update-title")}</h2>
-      <div className="sub">{t("key-update-sub")}</div>
-      <label className="check-row select-all">
-        <input
-          type="checkbox"
-          checked={allOn}
-          onChange={() => setChecked(allOn ? new Set() : new Set(candidates.map((c) => c.name)))}
-        />
-        <b>{t("select-all")}</b>
-      </label>
-      <div className="key-update-list">
-        {candidates.map((c) => (
-          <label className="check-row" key={c.name}>
-            <input type="checkbox" checked={checked.has(c.name)} onChange={() => toggle(c.name)} />
-            <span>
-              <b>{c.char_name || c.name}</b> <small>{c.name}</small>
+        <div className="model-test">
+          <button className="btn soft sm" disabled={testing || !defaults.has_key} onClick={() => void runTest()}>
+            {testing ? t("testing") : t("test")}
+          </button>
+          {test && (
+            <span className={"okline" + (test.ok ? "" : " bad")}>
+              {test.ok ? `${t("connected")} · ${t("cap-tools-short")}${test.capabilities?.tools ? "✓" : "✗"} · ${t("cap-vision-short")}${test.capabilities?.vision ? "✓" : "✗"}` : "✗ " + errText(t, test.error)}
             </span>
-            {c.model && <code>{c.model}</code>}
-          </label>
-        ))}
+          )}
+        </div>
+
+        {isOpenRouter && (
+          <div className="model-reasoning">
+            <span className="mb-lbl">{t("reasoning-label")}</span>
+            <div className="seg">
+              {REASONING.map((r) => (
+                <span key={r} className={(defaults.reasoning || "medium") === r ? "on" : ""} onClick={() => void persist({ reasoning: r })}>
+                  {t(("reason-" + r) as TKey)}
+                </span>
+              ))}
+            </div>
+            <span className="reason-hint">{t("reasoning-or-only")}</span>
+          </div>
+        )}
       </div>
-      <div className="acts" style={{ marginTop: 16 }}>
-        <button className="btn text" onClick={onClose}>{t("later")}</button>
-        <div className="grow" />
-        <button className="btn primary big" disabled={applying || checked.size === 0} onClick={() => void apply()}>
-          {applying ? <span className="spin" /> : t("key-update-apply", { n: checked.size })}
-        </button>
+
+      {/* per-function model overrides — Hermes' auxiliary-models pattern */}
+      <TaskModels
+        values={defaults as unknown as Record<string, string | undefined>}
+        catalog={modelOptions}
+        onApply={(field, v) => void persist({ [field]: v })}
+      />
+
+      <div className="model-save-state">
+        {busy ? <span className="lm-thinking">{t("saving")}</span> : savedTick ? <span className="okline">✓ {t("saved")}</span> : null}
       </div>
-    </DeckModal>
+
+      {/* background-removal models — lives at the very bottom, set apart */}
+      <MatteSection />
+    </div>
   );
 }

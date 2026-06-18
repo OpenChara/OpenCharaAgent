@@ -40,17 +40,8 @@ describe("protocol.decodeEvent", () => {
     expect(ev.ok).toBe(false);
   });
 
-  it("decodes an attachment with all fields", () => {
-    expect(
-      decodeEvent({ type: "attachment", url: "/asset?p=a.png", mime: "image/png", name: "a.png" }),
-    ).toEqual({
-      type: "attachment",
-      url: "/asset?p=a.png",
-      mime: "image/png",
-      name: "a.png",
-      caption: "",
-      channel: "say",
-    });
+  it("drops the retired attachment event (files now ride MEDIA: markers in say text)", () => {
+    expect(decodeEvent({ type: "attachment", url: "/asset?p=a.png", mime: "image/png" })).toBeNull();
   });
 
   it("ignores unknown fields", () => {

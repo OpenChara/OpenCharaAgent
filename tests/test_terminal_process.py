@@ -75,7 +75,9 @@ def test_schemas_match_hermes_shape():
     assert set(tp) == {"command", "background", "timeout", "workdir", "pty",
                        "notify_on_complete", "watch_patterns"}
     assert TERMINAL_SCHEMA["parameters"]["required"] == ["command"]
-    assert tp["command"]["description"] == "The command to execute on the VM"
+    # Param SHAPE matches the reference byte-for-byte (model recognition); the
+    # description is de-branded (no "the VM" in model-facing text).
+    assert tp["command"]["description"] == "The command to execute in your environment"
 
     pp = PROCESS_SCHEMA["parameters"]["properties"]
     assert pp["action"]["enum"] == [

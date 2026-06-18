@@ -770,22 +770,34 @@ identical → gates → commit → deploy):
       template (with hermes's worked examples, de-branded), `_SUMMARIZER_PREAMBLE`,
       temporal-anchoring, first-vs-iterative framing, and the REFERENCE-ONLY
       `SUMMARY_PREFIX` handoff. Comparison agent verdict: FAITHFUL.
-      DELIBERATE KEEPS (NOT matched to hermes, with reason): (1) trigger stays
-      **0.75** of `(window − trim_buffer)` — it's calibrated to fire just before
-      trim hard-drops; matching hermes's `0.50` of the raw window would compact
-      over-eagerly and burn summary calls (the burned-key failure family). (2)
-      summary-failure stays a **no-op + trim backstop** — CLAUDE.md's "No failure
-      fallbacks, ever" explicitly names "compaction → trim" as the only allowed
-      backstop, so hermes's window-drop + locally-fabricated static summary is NOT
-      ported. FOLLOW-UP: no `redact_sensitive_text` programmatic scrub yet (the
-      prompt-level `[REDACTED]` instruction is in; the code-level scrub is a gap).
-- [~] **Phase 4 — Prompts**: SKILLS guidance DONE (`tools/skills.py render_block`:
-      ported hermes's "## Skills (mandatory)" header faithfully de-branded — MUST-load,
-      err-on-the-side, skills-encode-the-user's-approach, the "only proceed without
-      loading if none relevant" bookend). The task-completion "Finish the job"
-      paragraph for `content/rules.py` _RULES is SPEC'd but DEFERRED: a parallel
-      sibling holds `rules.py` uncommitted, so editing it now would risk a
-      staging-clobber — add it after the sibling's rules.py commit lands.
+      TRIGGER now apple-to-apple with hermes (owner override 2026-06-18): compact at
+      **`max(0.50 × real_window, MINIMUM_CONTEXT_LENGTH=64_000)`** on the REAL model
+      window (`_threshold_tokens`), exactly like hermes (context_compressor.py:641,
+      model_metadata.py:133). So a 1M model compacts at 500K, a 200K at 100K, a 128K
+      at 64K. We also REFUSE a model below the 64K floor, apple-to-apple with hermes
+      (owner 2026-06-18): `agent.context_limit` raises a clear ValueError when the
+      window is < `MINIMUM_CONTEXT_LENGTH` — but ONLY when it was actually DETERMINED
+      (env pin / OpenRouter catalogue / operator `model_context` override), so an
+      unmeasured/offline model that falls back to DEFAULT_WINDOW is never false-
+      refused (`providers.context_window_resolved` returns `(window, determined)`).
+      The 64K constant is single-sourced in `providers.MINIMUM_CONTEXT_LENGTH`
+      (the same value floors the trigger and gates the refusal). Tail budget is now
+      `threshold × 0.20` (hermes summary_target_ratio). The
+      earlier "keep 0.75" reasoning was wrong — hermes triggers on the raw window,
+      not a trim-adjusted budget, and the 64K floor (not 50% alone) is what stops
+      tiny-model thrash. KEPT (still a deliberate deviation): summary-failure stays a
+      **no-op + trim backstop** — CLAUDE.md's "No failure fallbacks, ever" names
+      "compaction → trim" as the only allowed backstop, so hermes's window-drop +
+      locally-fabricated static summary is NOT ported. FOLLOW-UP: no
+      `redact_sensitive_text` programmatic scrub yet (prompt-level `[REDACTED]` is in).
+- [x] **Phase 4 — Prompts**: SKILLS guidance DONE (`tools/skills.py render_block`:
+      ported hermes's "## Skills (mandatory)" header faithfully de-branded). Task-
+      completion discipline DONE — folded into `_RULES`' act-now paragraph (one
+      paragraph, not a 4th restatement: "keep going until the task is really done…").
+      Tool-description de-brand DONE (`terminal.py`, `execute_code.py` →
+      `lunamoth_tools`; brand scan: all 31 registered tools clean). MEMORY discipline
+      DONE — added hermes's "declarative facts, not imperatives" rule to the `memory`
+      tool description (memory.py).
 - [ ] **Phase 5 — Tools**: delete `web.py` (web_search/web_extract), delete `send_file`
       (MEDIA:<path> inline-marker convention like hermes), neutralize residual
       "Hermes/the VM/Linux environment" strings in tool descriptions.

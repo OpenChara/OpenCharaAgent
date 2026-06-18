@@ -67,9 +67,19 @@ class Adapter(abc.ABC):
 
         The DEFAULT raises :class:`DeliveryDeferred` — a platform that can't (yet)
         upload media says so honestly, and the host falls back to a text note
-        rather than pretending the file was delivered (the send_file-over-gateway
+        rather than pretending the file was delivered (the file-over-gateway
         bug). Override per platform with a real upload (iLink media, etc.)."""
         raise DeliveryDeferred(f"{self.name} cannot send files on this channel yet")
+
+    def send_image(self, url: str, caption: str = "") -> None:
+        """Send a REMOTE image URL to the platform as a native photo (hermes's
+        ![alt](url) path). `url` is an http(s) link the platform fetches itself.
+
+        The DEFAULT raises :class:`DeliveryDeferred` — a platform that can't send a
+        remote image natively says so, and the host falls back to delivering the URL
+        as plain text (the link survives, never silently dropped). Override per
+        platform with a real photo-by-URL send."""
+        raise DeliveryDeferred(f"{self.name} cannot send image URLs on this channel yet")
 
     def set_reply_target(self, message: InboundMessage) -> None:
         """Select the destination for sends caused by one inbound message.

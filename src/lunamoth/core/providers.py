@@ -20,6 +20,14 @@ from pathlib import Path
 # models, small enough that a tiny local model won't silently overflow.
 DEFAULT_WINDOW = 32768
 
+# Minimum real context window we will run a live model on — apple-to-apple with
+# hermes (model_metadata.py MINIMUM_CONTEXT_LENGTH = 64_000). Below this, tool
+# use + compaction can't keep a usable working window, so a chara waking on a
+# KNOWN-smaller model is refused (see core/agent.context_limit). Only enforced
+# when the window was actually determined (env pin / provider catalogue) — an
+# unknown/offline model that falls back to DEFAULT_WINDOW is never refused.
+MINIMUM_CONTEXT_LENGTH = 64_000
+
 _OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 _DISK_TTL_SECONDS = 86400  # refetch the OpenRouter catalogue at most once a day
 
@@ -68,14 +76,32 @@ def _openrouter_catalogue(api_key: str = "") -> dict[str, int]:
     return catalogue
 
 
-def context_window(provider: str, base_url: str, model: str, api_key: str = "") -> int:
-    """Best guess at the model's real context window. Never raises."""
+def context_window_resolved(provider: str, base_url: str, model: str, api_key: str = "",
+                             override: int = 0) -> tuple[int, bool]:
+    """``(window, determined)``. ``determined`` is True when the window came from
+    an explicit env pin, the provider catalogue, or a configured ``override``;
+    False when we fell back to ``DEFAULT_WINDOW`` (unknown / offline / un-probed
+    provider). Callers use the flag to refuse a KNOWN-too-small model without
+    false-refusing one we simply couldn't measure. Never raises.
+
+    ``override`` is the operator's per-config fallback for a custom / self-hosted
+    model whose window the provider can't report; it is IGNORED when the provider
+    reports a real window (e.g. OpenRouter's catalogue), so it can't shrink a
+    known model."""
     pin = os.getenv("LUNAMOTH_MODEL_CONTEXT", "").strip()
     if pin.isdigit() and int(pin) > 0:
-        return int(pin)
+        return int(pin), True
     is_openrouter = provider == "openrouter" or "openrouter.ai" in (base_url or "")
     if is_openrouter and model:
         ctx = _openrouter_catalogue(api_key).get(model)
         if ctx:
-            return ctx
-    return DEFAULT_WINDOW
+            return ctx, True
+    if override and override > 0:
+        return int(override), True
+    return DEFAULT_WINDOW, False
+
+
+def context_window(provider: str, base_url: str, model: str, api_key: str = "",
+                   override: int = 0) -> int:
+    """Best guess at the model's real context window. Never raises."""
+    return context_window_resolved(provider, base_url, model, api_key, override)[0]

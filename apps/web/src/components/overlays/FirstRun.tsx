@@ -1,7 +1,8 @@
 /* FirstRun — the no-charas first-run welcome, a React port of app.js openFirstRun
- * (1673) / frShowWelcome / frShowPicker. The wordmark + a lang toggle, then three
- * paths: create your character (CreateFlow), pick a recommended one (the builtin
- * carousel embedded here), or import a card file (Import).
+ * (1673) / frShowWelcome / frShowPicker. The wordmark + a lang toggle, then two
+ * paths: create your character (CreateFlow), or pick a recommended one (the builtin
+ * carousel embedded here). Card import is deferred — to start from a card you have
+ * elsewhere (e.g. a SillyTavern card), paste its JSON into the create box.
  *
  * In the vanilla app a missing model reused this overlay's setup column; the SPA
  * routes the model gate to Settings (useEnsureModel), so this overlay only carries
@@ -64,9 +65,6 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
           <button className="btn soft stacked fr-second" id="fr-try" onClick={() => setPane("picker")}>
             <span>{t("btn-try")}</span>
             <small>{t("btn-try-sub")}</small>
-          </button>
-          <button className="fr-tert" id="fr-import" onClick={() => { onClose(); overlay.open({ kind: "import" }); }}>
-            {t("btn-import")}
           </button>
         </div>
       ) : (

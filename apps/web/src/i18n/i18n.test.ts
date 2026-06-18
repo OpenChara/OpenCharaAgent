@@ -20,8 +20,14 @@ describe("I18N strings map", () => {
   // (vis-kind-keyvisual, p-visuals, vis-session-note) → 508; dropping the
   // muse-label (the say|muse channel is a backend forwarding hint, not a desktop
   // display distinction — muse now renders identically to say) removed 1 → 507.
-  it("preserves the full key set from the source dict (507 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(507);
+  // Deferring card import (removed the Import overlay + file .json/.png path; paste a
+  // foreign card's JSON into the create box instead) removed 3 (import, btn-import,
+  // imported) → 504. The model-picker refactor (Providers pane = key library,
+  // 模型 pane = picker) added 5 (model-pane-sub, model-other, model-other-note,
+  // model-other-ph, model-no-key) → 509; the picker redesign added 2 note keys
+  // (model-note-flash, model-note-pro) → 511.
+  it("preserves the full key set from the source dict (556 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(556);
   });
 
   it("every value is a [zh, en] string tuple", () => {
