@@ -119,3 +119,60 @@ def test_ingest_describe_failure_falls_back_to_honest_note():
     raws = [RawAttachment(name="p.png", mime="image/png", data=b"\x89PNGx")]
     res = ingest_attachments(raws, sandbox=_SB(), vision_ok=False, describe=boom)
     assert res.notices and "no vision" in res.notices[0].lower()  # never crashes the turn
+
+
+# ---- raw_complete: adapt to reasoning-mandatory side-task models ----------------
+
+def test_raw_complete_retries_with_exclude_on_reasoning_mandatory(monkeypatch):
+    """A reasoning-MANDATORY model (e.g. a vision model that can't disable thinking)
+    rejects the cheap reasoning:{enabled:false} side-tasks send. raw_complete adapts
+    the REQUEST — reason internally, exclude it from the output — and retries once."""
+    import io
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    c = LLMClient(LLMConfig(provider="openrouter", base_url="https://openrouter.ai/api/v1",
+                            api_key="sk", model="deepseek/deepseek-v4", reasoning="off"))
+    assert c.reasoning_supported()  # openrouter route → the reasoning param is sent
+    seen = []
+
+    class _R:
+        def __init__(self, payload): self._p = payload
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self): return self._p
+
+    def fake_urlopen(req, timeout=0):
+        body = _json.loads(req.data)
+        seen.append(body.get("reasoning"))
+        if body.get("reasoning") == {"enabled": False}:
+            raise urllib.error.HTTPError(
+                req.full_url, 400, "bad", {},
+                io.BytesIO(b'{"error":{"message":"Reasoning is mandatory for this endpoint and cannot be disabled."}}'))
+        return _R(_json.dumps({"choices": [{"message": {"content": "a red square"}}]}).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    out = c.raw_complete([{"role": "user", "content": "hi"}])
+    assert out == "a red square"
+    assert seen == [{"enabled": False}, {"exclude": True}]  # retried with exclude:true
+
+
+def test_raw_complete_non_reasoning_400_does_not_retry(monkeypatch):
+    # a 400 unrelated to reasoning surfaces (degrades to "") with NO second attempt
+    import io
+    import urllib.error
+    import urllib.request
+
+    c = LLMClient(LLMConfig(provider="openrouter", base_url="https://openrouter.ai/api/v1",
+                            api_key="sk", model="deepseek/deepseek-v4", reasoning="off"))
+    calls = {"n": 0}
+
+    def fake_urlopen(req, timeout=0):
+        calls["n"] += 1
+        raise urllib.error.HTTPError(req.full_url, 400, "bad", {},
+                                     io.BytesIO(b'{"error":{"message":"bad messages"}}'))
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    assert c.raw_complete([{"role": "user", "content": "hi"}]) == ""
+    assert calls["n"] == 1  # no reasoning retry

@@ -72,10 +72,11 @@ def read_file(args: dict, ctx) -> str:
     result = fops.read_file(path, offset, limit)
     result_dict = result.to_dict()
 
-    # An image can't be read as text, and there is no in-context image vision for
-    # the chara yet (no vision_analyze tool exists — pointing at one was a dead
-    # end). Tell the truth about what IS possible instead of sending the model
-    # chasing a phantom tool.
+    # An image can't be read as text. The agent layer post-processes an is_image
+    # result (core/agent._image_vision_followup): if the main model has vision it
+    # inlines the pixels, else the configured vision_model describes it. This note
+    # is the honest FALLBACK shown only when neither is available — so it tells the
+    # truth about what IS possible (MEDIA:<path>) rather than chasing a phantom tool.
     if result_dict.get("is_image"):
         return json.dumps({
             "is_image": True,

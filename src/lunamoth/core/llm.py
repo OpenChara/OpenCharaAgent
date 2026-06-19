@@ -710,6 +710,7 @@ class LLMClient:
         or block the turn."""
         if not self.is_live():
             return ""
+        import urllib.error
         import urllib.request
 
         body = {
@@ -720,13 +721,34 @@ class LLMClient:
             "stream": False,
         }
         body = self._reasoning_body(body, override="off")  # side-tasks don't need thinking
-        data = json.dumps(body).encode("utf-8")
-        req = urllib.request.Request(
-            f"{self.cfg.base_url}/chat/completions", data=data, headers=self._headers(), method="POST"
-        )
-        try:
+        url = f"{self.cfg.base_url}/chat/completions"
+
+        def _post(b: dict) -> dict:
+            req = urllib.request.Request(
+                url, data=json.dumps(b).encode("utf-8"), headers=self._headers(), method="POST")
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+                return json.loads(resp.read().decode("utf-8", errors="replace"))
+
+        try:
+            try:
+                payload = _post(body)
+            except urllib.error.HTTPError as e:
+                # Some routes (e.g. reasoning-mandatory vision models) reject the
+                # cheap reasoning:{enabled:false} side-tasks send. Adapt the REQUEST
+                # to the model — reason internally but exclude it from the output —
+                # then retry once. Not a fabricated fallback; the request shape
+                # changes, the work is still real.
+                detail = ""
+                if "reasoning" in body and e.code == 400:
+                    try:
+                        detail = e.read().decode("utf-8", errors="replace")
+                    except Exception:  # noqa: BLE001
+                        detail = ""
+                if "reasoning" in detail.lower() and "reasoning" in body:
+                    body["reasoning"] = {"exclude": True}
+                    payload = _post(body)
+                else:
+                    raise
             return str(payload.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
         except Exception as e:
             _log.warning("raw_complete failed (degrading to no-op): %s", e)

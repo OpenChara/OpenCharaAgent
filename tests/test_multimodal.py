@@ -304,15 +304,19 @@ from lunamoth.core.agent import LunaMothAgent
 
 
 class _StubLLM:
-    def __init__(self, vision):
+    def __init__(self, vision, describe=None):
         self._v = vision
+        self._describe = describe
 
     def vision_supported(self):
         return self._v
 
+    def describe_image(self, data, mime, question=""):
+        return self._describe
 
-def _agent_stub(sandbox, vision):
-    return _types.SimpleNamespace(sandbox=sandbox, llm=_StubLLM(vision))
+
+def _agent_stub(sandbox, vision, describe=None):
+    return _types.SimpleNamespace(sandbox=sandbox, llm=_StubLLM(vision, describe))
 
 
 def _png(nbytes=64):
@@ -332,10 +336,25 @@ def test_image_vision_followup_injects_user_image_when_vision():
     assert parts[-1]["image_url"]["url"].startswith("data:image/png;base64,")
 
 
-def test_image_vision_followup_none_without_vision():
+def test_image_vision_followup_none_without_vision_or_vision_model():
+    # main model can't see AND no vision_model describes it → None (honest note)
     sb = _sandbox()
     rel = sb.write_bytes("look.png", _png())
     assert LunaMothAgent._image_vision_followup(_agent_stub(sb, False), rel) is None
+
+
+def test_image_vision_followup_describes_via_vision_model_without_vision():
+    # main model can't see, but a vision_model describes it → inject the description
+    # as the note, with NO pixels inlined (follow is None).
+    sb = _sandbox()
+    rel = sb.write_bytes("look.png", _png())
+    out = LunaMothAgent._image_vision_followup(
+        _agent_stub(sb, False, describe="a small red square on white"), rel)
+    assert out is not None
+    note, follow = out
+    assert follow is None                                   # no pixels — model can't see
+    assert "a small red square on white" in note           # the description is injected
+    assert "vision model" in note.lower()
 
 
 def test_image_vision_followup_inlines_oversized_full_size():

@@ -774,22 +774,23 @@ class LunaMothAgent:
                 if inj is not None:
                     note, follow = inj
                     out["content"] = note
-                    out["follow_up"] = follow
-                    out["display"] = f"🖼️ read {Path(relp).name} (attached to view)"
+                    out["follow_up"] = follow  # None when described (no pixels to inline)
+                    seen = "attached to view" if follow else "described by the vision model"
+                    out["display"] = f"🖼️ read {Path(relp).name} ({seen})"
         return out
 
     def _image_vision_followup(self, relp: str):
-        """Turn a workspace image into a follow-up USER message carrying the pixels,
-        when (and only when) the active model can see images. Returns
-        ``(tool_note, user_message)`` or ``None`` to keep the honest no-vision note.
-
-        hermes shape (mirrors core/attachments.py): an ``image_url`` data-URI on a
-        user message — NEVER on the tool message (OpenAI-compatible APIs reject
-        image parts in tool-role content). Oversized/non-image/unreadable → None,
-        so the file stays on disk and the truthful note is shown (no fabrication)."""
+        """Make an image the chara read with ``read_file`` actually usable to it.
+        Fallback chain (mirrors core/attachments.py, hermes order):
+          (a) the MAIN model has vision → inline the pixels on a follow-up USER
+              message (NEVER the tool message — APIs reject image parts there);
+          (b) else → the configured ``vision_model`` describes it → inject the
+              description as the tool note (no pixels; the main model can't see);
+          (c) else (no vision_model / it failed / non-image / unreadable) → ``None``,
+              so read_file's honest "can't see it" note stands (no fabrication).
+        Returns ``(tool_note, follow_up_or_None)`` or ``None``. Oversized images are
+        shrunk reactively by the LLM layer (a) or proactively by describe_image (b)."""
         try:
-            if not self.llm.vision_supported():
-                return None
             fp = self.sandbox.resolve_readable(relp)
             if not fp.is_file():
                 return None
@@ -801,24 +802,40 @@ class LunaMothAgent:
         mime, _ = mimetypes.guess_type(str(fp))
         if not mime or not mime.startswith("image/"):
             return None
-        # Inline at full size (hermes native shape); a provider too-large rejection is
-        # recovered by the LLM layer's reactive shrink. This follow-up rides the
-        # cross-turn context but is NOT persisted to the transcript.
-        b64 = base64.b64encode(data).decode("ascii")
-        # This note is the DURABLE tool result (persists in the transcript). The
-        # pixels ride the follow-up below, which lives in the cross-turn context but
-        # NOT the transcript; the newest image stays viewable and older ones collapse
-        # to a text handle (compaction.strip_old_images). So word it tense-neutral —
-        # a handle that you looked at this image, accurate whether the pixels are
-        # still attached or already superseded.
-        note = (f"Image {relp} is attached for you to view — describe or use what is "
-                "actually in it, not a guess. (Kept viewable until a newer image "
-                "supersedes it, then dropped to a text reference.)")
-        follow = {"role": "user", "content": [
-            {"type": "text", "text": f"[image: {relp}]"},
-            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
-        ]}
-        return note, follow
+
+        # (a) the main model can see — inline the pixels at full size (hermes native
+        # shape); a provider too-large rejection is recovered by the LLM layer's
+        # reactive shrink. This follow-up rides the cross-turn context but is NOT
+        # persisted to the transcript.
+        if self.llm.vision_supported():
+            b64 = base64.b64encode(data).decode("ascii")
+            # Tense-neutral DURABLE tool note (the pixels live only in the cross-turn
+            # context; the newest image stays viewable, older ones collapse to a text
+            # handle via compaction.strip_old_images).
+            note = (f"Image {relp} is attached for you to view — describe or use what is "
+                    "actually in it, not a guess. (Kept viewable until a newer image "
+                    "supersedes it, then dropped to a text reference.)")
+            follow = {"role": "user", "content": [
+                {"type": "text", "text": f"[image: {relp}]"},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
+            ]}
+            return note, follow
+
+        # (b) the main model can't see — let the auxiliary vision_model describe it.
+        # describe_image handles its own oversized-shrink and returns None when no
+        # vision_model is configured / not live / the call fails.
+        try:
+            desc = self.llm.describe_image(data, mime)
+        except Exception:  # noqa: BLE001 - any failure → fall through to the honest note
+            desc = None
+        if desc:
+            note = (f"Image {relp} — your model can't see pixels directly, so a vision "
+                    f"model looked at it for you. It describes the image as:\n{desc}\n"
+                    "Use what is actually described, not a guess.")
+            return note, None
+
+        # (c) no vision_model / it failed → keep read_file's honest no-vision note.
+        return None
 
     def _ingest_attachments(self, attachments) -> IngestResult:
         """Decode + place inbound attachments. Never raises into a turn: a bad
