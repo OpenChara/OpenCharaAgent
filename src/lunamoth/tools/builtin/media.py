@@ -34,8 +34,8 @@ def generate_image(args, ctx) -> str:
         )
     if not image_key():
         return tool_error(
-            "no image key configured — set an image provider key in Settings·提供商 "
-            "(or set ARK_API_KEY) before generating images."
+            "no image key configured — pick an image provider/model in "
+            "Settings · 模型 · 生图模型 and add that provider's key in Settings · 提供商."
         )
 
     prompt = str(args.get("prompt") or "").strip()

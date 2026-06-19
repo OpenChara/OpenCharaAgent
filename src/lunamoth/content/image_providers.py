@@ -12,15 +12,13 @@ server/). Both sides import this:
 Design (handover 2026-06-18 → multi-provider, owner-scoped 2026-06-19 to
 Volcano Ark + Alibaba DashScope, with OpenAI + OpenRouter added by owner request):
 
-  - The active provider is stored EXPLICITLY (``image_provider`` in desktop.json,
-    chosen in Settings · 模型). When it is missing/blank (legacy configs, a
-    free-typed model id) we infer it from the model id prefix — see
-    ``provider_for_model``.
+  - The active provider is EXACTLY the one selected in Settings · 模型 · 生图模型
+    (``image_provider`` in desktop.json). No inference, no fallback — an unset
+    value yields a plain error at generation time.
   - The per-provider key REUSES the named provider keyring (the desktop ``keys``
     map that powers the text providers): a key is matched by its ``provider`` id
-    OR by its ``base_url`` host. So a single Volcano / Alibaba / OpenAI /
-    OpenRouter key serves both text and image. Volcano additionally falls back to
-    the legacy single ``image_api_key`` field (+ env / bare-file in _image_gen).
+    OR by its ``base_url`` host — the SAME unified path for every provider. So a
+    single Volcano / Alibaba / OpenAI / OpenRouter key serves both text and image.
 
 No brand text here is model-facing — these labels appear only in the Settings UI
 and the catalogue RPC, never in a prompt the chara sees.
@@ -38,8 +36,6 @@ from typing import Any
 #               this (its image API lives on a different path than its text base)
 #   domains     host fragments that identify this provider's keyring entry
 #   key_provider the provider id a keyring entry may carry for this platform
-#   prefixes    model-id prefixes used to INFER the provider when none is stored
-#   slash       True → any "vendor/model" id (contains '/') infers to this provider
 #   models      curated selectable models {id, label}
 IMAGE_PROVIDERS: list[dict[str, Any]] = [
     {
@@ -49,8 +45,6 @@ IMAGE_PROVIDERS: list[dict[str, Any]] = [
         "base_url": "https://ark.cn-beijing.volces.com/api/v3",
         "domains": ("volces.com",),
         "key_provider": "volcano",
-        "prefixes": ("doubao", "seedream"),
-        "slash": False,
         "models": [
             {"id": "Doubao-Seedream-5.0-lite", "label": "Doubao Seedream 5.0 Lite"},
             {"id": "doubao-seedream-4-0-250828", "label": "Doubao Seedream 4.0"},
@@ -67,8 +61,6 @@ IMAGE_PROVIDERS: list[dict[str, Any]] = [
         "domains": ("dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com",
                     "dashscope-us.aliyuncs.com"),
         "key_provider": "dashscope",
-        "prefixes": ("wan", "wanx"),
-        "slash": False,
         # The message-based wan2.x image models (our adapter speaks that API). The
         # older wanx2.x text2image endpoint is a different shape — free-type those.
         "models": [
@@ -83,8 +75,6 @@ IMAGE_PROVIDERS: list[dict[str, Any]] = [
         "base_url": "https://api.openai.com/v1",
         "domains": ("api.openai.com",),
         "key_provider": "openai",
-        "prefixes": ("gpt-image", "dall-e", "dalle"),
-        "slash": False,
         "models": [
             {"id": "gpt-image-1", "label": "GPT Image 1"},
             {"id": "dall-e-3", "label": "DALL·E 3"},
@@ -98,9 +88,6 @@ IMAGE_PROVIDERS: list[dict[str, Any]] = [
         "base_url": "https://openrouter.ai/api/v1",
         "domains": ("openrouter.ai",),
         "key_provider": "openrouter",
-        # OpenRouter ids are "vendor/model"; the slash flag routes any such id here.
-        "prefixes": (),
-        "slash": True,
         # Curated picks (incl. grok-imagine, which OpenRouter's /models does NOT
         # list yet still serves). The hub MERGES the live image-output models from
         # OpenRouter's catalogue on top of these — see catalogue()/merge_dynamic.
@@ -114,10 +101,6 @@ IMAGE_PROVIDERS: list[dict[str, Any]] = [
 
 _BY_ID = {p["id"]: p for p in IMAGE_PROVIDERS}
 
-# The default provider when nothing is configured AND nothing can be inferred —
-# preserves the pre-multi-provider behaviour (a bare/free-typed id hits Ark).
-DEFAULT_PROVIDER = "volcano"
-
 
 def provider_ids() -> list[str]:
     return [p["id"] for p in IMAGE_PROVIDERS]
@@ -127,33 +110,13 @@ def spec(provider_id: str) -> dict[str, Any] | None:
     return _BY_ID.get(str(provider_id or ""))
 
 
-def provider_for_model(model: str) -> str:
-    """Infer the provider from a model id (used only when none is stored).
-
-    Order: a "vendor/model" id (has '/') → the slash provider (OpenRouter);
-    then longest-prefix match across the catalogue; else the default (Ark)."""
-    m = str(model or "").strip().lower()
-    if not m:
-        return DEFAULT_PROVIDER
-    if "/" in m:
-        for p in IMAGE_PROVIDERS:
-            if p.get("slash"):
-                return p["id"]
-    best_id, best_len = DEFAULT_PROVIDER, -1
-    for p in IMAGE_PROVIDERS:
-        for pre in p["prefixes"]:
-            if m.startswith(pre) and len(pre) > best_len:
-                best_id, best_len = p["id"], len(pre)
-    return best_id
-
-
-def resolve_provider(image_provider: str, image_model: str) -> str:
-    """The active provider: an explicit, valid ``image_provider`` wins; otherwise
-    infer from the model id."""
+def resolve_provider(image_provider: str) -> str:
+    """The active image provider = EXACTLY the one selected in Settings · 模型 ·
+    生图模型 (``image_provider``). No inference, no fallback: an unset/invalid value
+    returns "" and the caller surfaces a plain error. The chosen model is used as
+    selected; we never guess a provider from the model id."""
     pid = str(image_provider or "").strip()
-    if pid in _BY_ID:
-        return pid
-    return provider_for_model(image_model)
+    return pid if pid in _BY_ID else ""
 
 
 def _keys_entries(raw_desktop: dict[str, Any]):
@@ -184,17 +147,12 @@ def _matched_entry(raw_desktop: dict[str, Any], provider_id: str) -> dict[str, A
 
 
 def resolve_key(raw_desktop: dict[str, Any], provider_id: str) -> str:
-    """The api_key for an image provider, from the named keyring (by provider id
-    or base_url host). Volcano additionally falls back to the legacy single
-    ``image_api_key`` field. "" if none. (Env / bare-file fallbacks for Volcano
-    are layered on in _image_gen, which owns process env.)"""
+    """The api_key for an image provider, from the named provider keyring (matched
+    by provider id OR base_url host) — the SAME unified path for every provider,
+    identical to how the text providers resolve their key. "" if none."""
     entry = _matched_entry(raw_desktop, provider_id)
     if entry and str(entry.get("api_key") or ""):
         return str(entry["api_key"])
-    if provider_id == "volcano":
-        legacy = str(raw_desktop.get("image_api_key") or "").strip()
-        if legacy:
-            return legacy
     return ""
 
 
@@ -240,8 +198,7 @@ def catalogue(raw_desktop: dict[str, Any],
     [{id,label}]`` the caller (the hub) supplies to fetch a provider's LIVE image
     models (only providers flagged ``dynamic`` in the catalogue ask for it). It is
     injected so this module stays pure (no network); failures fall back to curated."""
-    active = resolve_provider(str(raw_desktop.get("image_provider") or ""),
-                              str(raw_desktop.get("image_model") or ""))
+    active = resolve_provider(str(raw_desktop.get("image_provider") or ""))
     out: list[dict[str, Any]] = []
     for p in IMAGE_PROVIDERS:
         models = [dict(m) for m in p["models"]]

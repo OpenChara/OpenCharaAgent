@@ -16,7 +16,6 @@ import { rpcErrText } from "../../lib/status";
 import { deckToast } from "../ui/deckToast";
 
 interface KeyRowData { label: string; provider: string; base_url: string; model: string; has_key: boolean; active: boolean }
-interface ImageDefaults { has_image_key?: boolean; image_model?: string }
 
 /* Curated OpenAI-compatible providers offered as preset rows (one key each).
    base_url is editable later via a custom endpoint if a region/path differs. */
@@ -37,7 +36,6 @@ export function KeysPane() {
   const [busy, setBusy] = useState<string>("");
   const [addingCustom, setAddingCustom] = useState(false);
   const [cust, setCust] = useState({ name: "", base_url: "", key: "" });
-  const [imgHas, setImgHas] = useState(false);
   const [imgProviders, setImgProviders] = useState<ImageProviderRow[]>([]);
 
   const refreshImage = useCallback(async () => {
@@ -54,11 +52,6 @@ export function KeysPane() {
   }, [hub, t, refreshImage]);
 
   useEffect(() => { void refresh(); }, [refresh]);
-  useEffect(() => {
-    let on = true;
-    hub.call<ImageDefaults>("defaults.get", {}, 15000).then((d) => on && setImgHas(Boolean(d?.has_image_key))).catch(() => {});
-    return () => { on = false; };
-  }, [hub]);
 
   const saveKey = async (label: string, provider: string, base_url: string, api_key: string, makeActive: boolean) => {
     setBusy(label);
@@ -150,15 +143,6 @@ export function KeysPane() {
           </div>
         ))}
       </div>
-
-      <div className="prov-image-legacy">
-        <div className="sub">{t("prov-image-ark-note")}</div>
-        <div className="prov-list">
-          <ImageRow has={imgHas} onSave={async (k) => {
-            setBusy("__img"); try { const d = await hub.call<ImageDefaults>("defaults.set", { image_api_key: k }, 15000); setImgHas(Boolean(d?.has_image_key)); await refreshImage(); deckToast(t("saved")); } catch (e) { deckToast(rpcErrText(t, e as { message?: string }), true); } finally { setBusy(""); }
-          }} busy={busy === "__img"} />
-        </div>
-      </div>
     </div>
   );
 }
@@ -198,33 +182,6 @@ function ProviderRow({
               className="prov-input mono" type="password" placeholder={t("key-ph")} value={draft} autoFocus={editing}
               onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && save()}
             />
-            <button className="btn primary sm" disabled={busy || !draft.trim()} onClick={save}>{busy ? <span className="spin" /> : t("prov-save")}</button>
-            {editing && <button className="btn text sm" onClick={() => setEditing(false)}>{t("cancel")}</button>}
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ImageRow({ has, busy, onSave }: { has: boolean; busy: boolean; onSave: (key: string) => void }) {
-  const t = useT();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
-  const save = () => { if (draft.trim()) { onSave(draft.trim()); setDraft(""); setEditing(false); } };
-  return (
-    <div className="prov-row">
-      <span className={"prov-dot" + (has ? " set" : "")} />
-      <div className="prov-meta"><div className="prov-name">{t("prov-image-section")}</div></div>
-      <div className="prov-key">
-        {has && !editing ? (
-          <>
-            <span className="prov-masked">••••••••</span>
-            <button className="btn text sm" onClick={() => { setDraft(""); setEditing(true); }}>{t("prov-change-key")}</button>
-          </>
-        ) : (
-          <>
-            <input className="prov-input mono" type="password" placeholder={t("image-key-ph")} value={draft} autoFocus={editing} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => e.key === "Enter" && save()} />
             <button className="btn primary sm" disabled={busy || !draft.trim()} onClick={save}>{busy ? <span className="spin" /> : t("prov-save")}</button>
             {editing && <button className="btn text sm" onClick={() => setEditing(false)}>{t("cancel")}</button>}
           </>

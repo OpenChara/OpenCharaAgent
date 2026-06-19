@@ -83,19 +83,21 @@ def user_worlds_dir() -> Path:
 
 # ---- global model defaults -----------------------------------------------------
 
-# image_api_key/image_model: the GLOBAL image-generation credential + model, set in
-# Settings·生图 and read by tools/builtin/_image_gen.py (which reads desktop.json
-# directly — tools/ must not import server/). The secret never echoes back (see
-# _public_defaults → has_image_key), parallel to the text api_key/has_key.
+# image_provider/image_model: the GLOBAL image-generation selection (provider +
+# model), set in Settings · 模型 · 生图模型 and read by tools/builtin/_image_gen.py
+# (which reads desktop.json directly — tools/ must not import server/). The image
+# KEY is NOT a separate field: it is resolved from the named provider keyring (the
+# same unified path as text), surfaced via has_image_key (= the ACTIVE image
+# provider has a key).
 # matte_model: the active local matting (抠像) model id, set in Settings·生图 and
 # read by lunamoth.visuals.matte.selected_model(). Not a secret.
 _DEFAULT_FIELDS = ("provider", "base_url", "api_key", "model", "ui_lang", "ui_theme",
-                   "image_api_key", "image_provider", "image_model", "matte_model",
+                   "image_provider", "image_model", "matte_model",
                    "reasoning", "vision_model",
                    "card_model", "image_prompt_model", "model_context")
 # Default fields whose value is a secret: stripped from every public payload,
 # surfaced only as a has_<field> presence flag.
-_SECRET_FIELDS = ("api_key", "image_api_key")
+_SECRET_FIELDS = ("api_key",)
 
 
 def _read_desktop_raw() -> dict[str, Any]:
@@ -219,7 +221,11 @@ def _public_defaults(data: dict[str, str]) -> dict[str, Any]:
     """Defaults with every secret reduced to its presence (never echo secrets)."""
     out: dict[str, Any] = {k: v for k, v in data.items() if k not in _SECRET_FIELDS}
     out["has_key"] = bool(data.get("api_key"))
-    out["has_image_key"] = bool(data.get("image_api_key"))
+    # has_image_key = the ACTIVE image provider has a key in the unified keyring
+    # (drives the visuals editor's generate affordance + the 提供商 status).
+    raw = _read_desktop_raw()
+    active_img = image_providers.resolve_provider(str(raw.get("image_provider") or ""))
+    out["has_image_key"] = bool(active_img) and image_providers.has_key(raw, active_img)
     return out
 
 

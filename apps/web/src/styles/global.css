@@ -1718,7 +1718,6 @@ body.dark .sel-item:hover{background:rgba(91,159,212,.16)}
 .img-prov-tag{display:inline-block; margin-right:6px; padding:1px 6px; border-radius:4px; background:var(--hairline-2); color:var(--text-2); font-size:10.5px}
 .img-nokey-warn{margin-left:6px; color:var(--danger, #c0392b); font-size:10.5px}
 .img-prov-hint{font-size:10.5px; color:var(--danger, #c0392b)}
-.prov-image-legacy{margin-top:10px}
 
 /* 提供商 (Providers) — one row per provider, one key per provider */
 .prov-pane{max-width:720px}

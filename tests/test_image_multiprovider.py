@@ -63,23 +63,13 @@ def test_catalogue_merges_dynamic_models_for_flagged_provider():
     assert "doubao-seedream-4-0-250828" in [m["id"] for m in cat["volcano"]["models"]]
 
 
-def test_provider_routing_by_prefix_and_slash():
-    assert ip.provider_for_model("doubao-seedream-5-0-260128") == "volcano"
-    assert ip.provider_for_model("seedream-4") == "volcano"
-    assert ip.provider_for_model("wan2.6-image") == "dashscope"
-    assert ip.provider_for_model("wanx2.1-t2i") == "dashscope"
-    assert ip.provider_for_model("gpt-image-1") == "openai"
-    assert ip.provider_for_model("dall-e-3") == "openai"
-    assert ip.provider_for_model("google/gemini-2.5-flash-image-preview") == "openrouter"
-    assert ip.provider_for_model("") == "volcano"  # default
-
-
-def test_explicit_provider_wins_over_model_inference():
-    # an explicit, valid provider overrides what the model id would imply
-    assert ip.resolve_provider("openrouter", "doubao-seedream-5-0") == "openrouter"
-    # a blank/invalid provider falls back to inference
-    assert ip.resolve_provider("", "wan2.6-image") == "dashscope"
-    assert ip.resolve_provider("nonsense", "gpt-image-1") == "openai"
+def test_resolve_provider_is_selection_only_no_inference():
+    # the active provider is EXACTLY the selected one; never inferred from a model
+    assert ip.resolve_provider("openrouter") == "openrouter"
+    assert ip.resolve_provider("dashscope") == "dashscope"
+    # unset or invalid → "" (caller surfaces a plain error, no fallback)
+    assert ip.resolve_provider("") == ""
+    assert ip.resolve_provider("nonsense") == ""
 
 
 # ---------------------------------------------------------------------------
@@ -99,11 +89,11 @@ def test_key_matched_by_base_url_host():
     assert ip.resolve_key(raw, "openai") == "sk-oai"
 
 
-def test_volcano_falls_back_to_legacy_image_api_key():
+def test_no_legacy_image_api_key_path():
+    # the legacy single image_api_key field is NOT a key source any more — image
+    # keys come ONLY from the unified provider keyring
     raw = {"image_api_key": "ark-legacy"}
-    assert ip.resolve_key(raw, "volcano") == "ark-legacy"
-    # non-volcano providers do NOT borrow the legacy ark key
-    assert ip.resolve_key(raw, "openai") == ""
+    assert ip.resolve_key(raw, "volcano") == ""
 
 
 def test_base_url_prefers_keyring_entry_then_default():
@@ -216,7 +206,22 @@ def test_openrouter_adapter_data_url(home, monkeypatch):
 # ---------------------------------------------------------------------------
 def test_generate_bytes_no_key_raises(home, monkeypatch):
     _write_desktop(home, image_provider="openai", image_model="gpt-image-1")
-    with pytest.raises(RuntimeError, match="no image key"):
+    with pytest.raises(RuntimeError, match="no key"):
+        g.generate_bytes("p", "1024x1024")
+
+
+def test_generate_bytes_no_provider_selected_raises(home, monkeypatch):
+    # a model alone, no provider → plain error (no inference)
+    _write_desktop(home, image_model="gpt-image-1",
+                   keys={"o": {"provider": "openai", "api_key": "sk"}})
+    with pytest.raises(RuntimeError, match="no image provider"):
+        g.generate_bytes("p", "1024x1024")
+
+
+def test_generate_bytes_no_model_selected_raises(home, monkeypatch):
+    _write_desktop(home, image_provider="openai",
+                   keys={"o": {"provider": "openai", "api_key": "sk"}})
+    with pytest.raises(RuntimeError, match="no image model"):
         g.generate_bytes("p", "1024x1024")
 
 

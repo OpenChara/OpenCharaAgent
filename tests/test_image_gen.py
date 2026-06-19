@@ -2,8 +2,13 @@
 
 Pins the tool contract end to end with NO real network: registration,
 the two-layer gate (static check_fn = key present; runtime handler = network on),
-the happy path through MOCKED ark_generate/download_bytes, and the R7 write
-confinement (the saved file always stays under sandbox/workspace).
+the happy path through a MOCKED generate_bytes, and the R7 write confinement
+(the saved file always stays under sandbox/workspace).
+
+Image config is UNIFIED on the provider keyring: a key is "present" when the
+selected image provider has an entry in the desktop ``keys`` map. No ARK_API_KEY
+env, no legacy single image_api_key, no bare file — exactly the provider + model
+chosen in Settings · 模型 · 生图模型.
 """
 from __future__ import annotations
 
@@ -48,14 +53,23 @@ def sandbox(tmp_path):
     return Sandbox(tmp_path / "sandbox")
 
 
-def _key_present(monkeypatch):
-    monkeypatch.setenv("ARK_API_KEY", "sk-test-key")
+def _write_desktop(home: Path, **fields):
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "desktop.json").write_text(json.dumps(fields), encoding="utf-8")
+
+
+def _key_present(monkeypatch, tmp_path, *, provider="volcano",
+                 model="doubao-seedream-4-0-250828", key="sk-test-key"):
+    """Configure a complete, unified image selection: provider + model + a keyring
+    entry for that provider, in a temp LUNAMOTH_HOME."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("LUNAMOTH_HOME", str(home))
+    _write_desktop(home, image_provider=provider, image_model=model,
+                   keys={provider: {"provider": provider, "api_key": key}})
 
 
 def _no_key(monkeypatch, tmp_path):
-    monkeypatch.delenv("ARK_API_KEY", raising=False)
-    monkeypatch.delenv("ARK_IMAGE_MODEL", raising=False)
-    # Point LUNAMOTH_HOME at an empty dir so the file fallback finds nothing.
+    # Point LUNAMOTH_HOME at an empty dir so nothing resolves (no provider/key).
     monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "empty_home"))
 
 
@@ -78,10 +92,10 @@ def test_discover_imports_media():
 
 
 # ---------------------------------------------------------------------------
-# check_fn — static capability gate (key present / absent)
+# check_fn — static capability gate (selected provider has a key / not)
 # ---------------------------------------------------------------------------
-def test_check_fn_true_when_key_in_env(monkeypatch):
-    _key_present(monkeypatch)
+def test_check_fn_true_when_provider_key_configured(monkeypatch, tmp_path):
+    _key_present(monkeypatch, tmp_path)
     assert media._check_image_key() is True
 
 
@@ -91,75 +105,64 @@ def test_check_fn_false_with_no_key_and_empty_home(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# R10 — image key + model resolved from the GLOBAL keyring (desktop.json),
-# set in Settings·生图, not just env / the bare ark_api_key file.
+# provider + model + key resolved EXACTLY from the selection (no inference,
+# no env, no default) — Settings · 模型 · 生图模型.
 # ---------------------------------------------------------------------------
-def _write_desktop(home: Path, **fields):
-    home.mkdir(parents=True, exist_ok=True)
-    (home / "desktop.json").write_text(json.dumps(fields), encoding="utf-8")
-
-
-def test_image_key_reads_global_desktop_json(monkeypatch, tmp_path):
-    monkeypatch.delenv("ARK_API_KEY", raising=False)
+def test_active_provider_is_the_selected_one(monkeypatch, tmp_path):
     home = tmp_path / "home"
     monkeypatch.setenv("LUNAMOTH_HOME", str(home))
-    _write_desktop(home, image_api_key="ark-from-settings")
-    assert _image_gen.image_key() == "ark-from-settings"
-    assert media._check_image_key() is True
+    _write_desktop(home, image_provider="dashscope", image_model="wan2.6-image")
+    assert _image_gen.active_provider() == "dashscope"
 
 
-def test_image_model_reads_global_desktop_json(monkeypatch, tmp_path):
-    monkeypatch.delenv("ARK_IMAGE_MODEL", raising=False)
+def test_active_provider_blank_when_unset(monkeypatch, tmp_path):
+    # a model id alone NEVER infers a provider — selection is explicit
     home = tmp_path / "home"
     monkeypatch.setenv("LUNAMOTH_HOME", str(home))
-    _write_desktop(home, image_model="doubao-seedream-custom")
+    _write_desktop(home, image_model="doubao-seedream-4-0-250828")
+    assert _image_gen.active_provider() == ""
+
+
+def test_image_key_resolves_from_keyring(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    monkeypatch.setenv("LUNAMOTH_HOME", str(home))
+    _write_desktop(home, image_provider="volcano", image_model="m",
+                   keys={"火山": {"provider": "volcano", "api_key": "ark-from-keyring"}})
+    assert _image_gen.image_key() == "ark-from-keyring"
+
+
+def test_image_model_is_the_selected_model(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    monkeypatch.setenv("LUNAMOTH_HOME", str(home))
+    _write_desktop(home, image_provider="volcano", image_model="doubao-seedream-custom")
     assert _image_gen.image_model() == "doubao-seedream-custom"
 
 
-def test_image_model_falls_back_to_default(monkeypatch, tmp_path):
-    monkeypatch.delenv("ARK_IMAGE_MODEL", raising=False)
+def test_image_model_blank_when_unset(monkeypatch, tmp_path):
     monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "empty"))
-    assert _image_gen.image_model() == _image_gen.DEFAULT_MODEL
-
-
-def test_image_key_precedence_env_over_desktop(monkeypatch, tmp_path):
-    home = tmp_path / "home"
-    monkeypatch.setenv("LUNAMOTH_HOME", str(home))
-    _write_desktop(home, image_api_key="from-settings")
-    monkeypatch.setenv("ARK_API_KEY", "from-env")
-    assert _image_gen.image_key() == "from-env"
-
-
-def test_image_key_desktop_over_bare_file(monkeypatch, tmp_path):
-    monkeypatch.delenv("ARK_API_KEY", raising=False)
-    home = tmp_path / "home"
-    home.mkdir(parents=True)
-    (home / "ark_api_key").write_text("from-bare-file", encoding="utf-8")
-    monkeypatch.setenv("LUNAMOTH_HOME", str(home))
-    _write_desktop(home, image_api_key="from-settings")
-    assert _image_gen.image_key() == "from-settings"
+    assert _image_gen.image_model() == ""
 
 
 # ---------------------------------------------------------------------------
 # handler — network gate (runtime, in the handler)
 # ---------------------------------------------------------------------------
-def test_handler_network_off_errors(monkeypatch, sandbox):
-    _key_present(monkeypatch)
+def test_handler_network_off_errors(monkeypatch, tmp_path, sandbox):
+    _key_present(monkeypatch, tmp_path)
     ctx = GenCtx(sandbox, network=False)
     out = json.loads(media.generate_image({"prompt": "a cat"}, ctx))
     assert "error" in out
     assert "network" in out["error"].lower()
 
 
-def test_handler_empty_prompt_errors(monkeypatch, sandbox):
-    _key_present(monkeypatch)
+def test_handler_empty_prompt_errors(monkeypatch, tmp_path, sandbox):
+    _key_present(monkeypatch, tmp_path)
     ctx = GenCtx(sandbox, network=True)
     out = json.loads(media.generate_image({"prompt": "   "}, ctx))
     assert "error" in out and "prompt" in out["error"].lower()
 
 
 # ---------------------------------------------------------------------------
-# handler — happy path with MOCKED network (no real HTTP)
+# handler — happy path with MOCKED dispatch (no real HTTP)
 # ---------------------------------------------------------------------------
 _FAKE_PNG = b"\x89PNG\r\n\x1a\nFAKE"
 
@@ -172,8 +175,8 @@ def mock_network(monkeypatch):
     monkeypatch.setattr(media, "generate_bytes", lambda *a, **k: _FAKE_PNG)
 
 
-def test_handler_happy_path_default_path(monkeypatch, sandbox, mock_network):
-    _key_present(monkeypatch)
+def test_handler_happy_path_default_path(monkeypatch, tmp_path, sandbox, mock_network):
+    _key_present(monkeypatch, tmp_path)
     ctx = GenCtx(sandbox, network=True)
     out = json.loads(media.generate_image({"prompt": "a cat"}, ctx))
     assert out["ok"] is True
@@ -184,8 +187,8 @@ def test_handler_happy_path_default_path(monkeypatch, sandbox, mock_network):
     assert on_disk.read_bytes() == _FAKE_PNG
 
 
-def test_handler_happy_path_custom_path(monkeypatch, sandbox, mock_network):
-    _key_present(monkeypatch)
+def test_handler_happy_path_custom_path(monkeypatch, tmp_path, sandbox, mock_network):
+    _key_present(monkeypatch, tmp_path)
     ctx = GenCtx(sandbox, network=True)
     out = json.loads(media.generate_image({"prompt": "a cat", "path": "works/cat.png"}, ctx))
     assert out["ok"] is True and out["path"] == "works/cat.png"
@@ -195,8 +198,8 @@ def test_handler_happy_path_custom_path(monkeypatch, sandbox, mock_network):
 # ---------------------------------------------------------------------------
 # R7 confinement — the saved file ALWAYS stays under sandbox/workspace
 # ---------------------------------------------------------------------------
-def test_traversal_path_stays_in_workspace(monkeypatch, sandbox, mock_network):
-    _key_present(monkeypatch)
+def test_traversal_path_stays_in_workspace(monkeypatch, tmp_path, sandbox, mock_network):
+    _key_present(monkeypatch, tmp_path)
     ctx = GenCtx(sandbox, network=True)
     out = json.loads(media.generate_image({"prompt": "x", "path": "../escape.png"}, ctx))
     # write_bytes (resolve_inside) refuses the traversal → visible error.
@@ -205,8 +208,8 @@ def test_traversal_path_stays_in_workspace(monkeypatch, sandbox, mock_network):
     assert not (sandbox.root.parent / "escape.png").exists()
 
 
-def test_assets_path_does_not_write_assets(monkeypatch, sandbox, mock_network):
-    _key_present(monkeypatch)
+def test_assets_path_does_not_write_assets(monkeypatch, tmp_path, sandbox, mock_network):
+    _key_present(monkeypatch, tmp_path)
     ctx = GenCtx(sandbox, network=True)
     out = json.loads(media.generate_image({"prompt": "x", "path": "assets/x.png"}, ctx))
     # write_bytes anchors to workspace_dir: "assets/x.png" lands UNDER workspace,
@@ -231,10 +234,10 @@ def test_is_image_bytes_recognizes_formats():
     assert not _image_gen.is_image_bytes(b"")
 
 
-def test_handler_rejects_non_image_body(monkeypatch, sandbox):
+def test_handler_rejects_non_image_body(monkeypatch, tmp_path, sandbox):
     # generate_bytes validates the body and raises on a non-image response; the
     # handler surfaces that as a visible error and writes nothing.
-    _key_present(monkeypatch)
+    _key_present(monkeypatch, tmp_path)
 
     def _raise(*a, **k):
         raise RuntimeError("the generation endpoint did not return an image")
@@ -248,8 +251,8 @@ def test_handler_rejects_non_image_body(monkeypatch, sandbox):
     assert not works.exists() or not list(works.glob("*"))
 
 
-def test_handler_empty_result_errors(monkeypatch, sandbox):
-    _key_present(monkeypatch)
+def test_handler_empty_result_errors(monkeypatch, tmp_path, sandbox):
+    _key_present(monkeypatch, tmp_path)
 
     def _raise(*a, **k):
         raise RuntimeError("image generation returned no result")
@@ -282,7 +285,6 @@ def _httperror(code: int):
 
 
 def test_ark_generate_retries_transient_then_succeeds(monkeypatch):
-    _key_present(monkeypatch)
     calls = {"n": 0}
 
     def fake_urlopen(req, timeout=0):
@@ -298,7 +300,6 @@ def test_ark_generate_retries_transient_then_succeeds(monkeypatch):
 
 
 def test_ark_generate_4xx_raises_without_retry(monkeypatch):
-    _key_present(monkeypatch)
     calls = {"n": 0}
 
     def fake_urlopen(req, timeout=0):

@@ -6,6 +6,8 @@ the honest optional-matte behavior.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from lunamoth.visuals import pipeline
@@ -26,8 +28,16 @@ CARD = {
 
 
 @pytest.fixture(autouse=True)
-def key_present(monkeypatch):
-    monkeypatch.setenv("ARK_API_KEY", "sk-img-test")
+def key_present(monkeypatch, tmp_path):
+    # unified: an image key is "present" when the selected provider has a keyring
+    # entry (no ARK_API_KEY env path any more).
+    home = tmp_path / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "desktop.json").write_text(json.dumps({
+        "image_provider": "volcano", "image_model": "doubao-seedream-x",
+        "keys": {"火山": {"provider": "volcano", "api_key": "sk-img-test"}},
+    }), encoding="utf-8")
+    monkeypatch.setenv("LUNAMOTH_HOME", str(home))
 
 
 # --- brief --------------------------------------------------------------------

@@ -15,16 +15,17 @@ Providers (catalogue in ``content/image_providers.py``):
   - **openrouter** — image via chat/completions with ``modalities:[image,text]``;
     the image comes back as a ``data:`` URL in ``message.images[]``.
 
-The active provider is resolved from the global keyring (``~/.lunamoth/desktop.json``):
-the explicit ``image_provider`` field wins, else it is inferred from the model id.
-The per-provider key REUSES the named provider keyring (a single Volcano / Alibaba
-/ OpenAI / OpenRouter key serves both text and image); Volcano also honours the
-legacy ``image_api_key`` field, the ``ARK_API_KEY`` env var, and the bare
-``~/.lunamoth/ark_api_key`` file.
+The provider AND model are EXACTLY what Settings · 模型 · 生图模型 holds
+(``image_provider`` / ``image_model`` in ``~/.lunamoth/desktop.json``) — no
+inference, no default. The per-provider key REUSES the named provider keyring via
+ONE unified path (matched by provider id or base_url host), the same way the text
+providers resolve their key — a single Volcano / Alibaba / OpenAI / OpenRouter key
+serves both text and image. No env / legacy-file special-cases.
 
 No failure fallbacks: a transient connect/server error is retried (5 s × 5,
 matching the text client's policy); a hard failure raises a clear exception
-carrying the server's own message — never a fabricated success.
+carrying the server's own message — never a fabricated success, never a silent
+switch to another provider.
 """
 from __future__ import annotations
 
@@ -39,10 +40,9 @@ from pathlib import Path
 
 from ...content import image_providers as _ip
 
-# Kept for back-compat (tests + the Ark adapter): the Volcano Ark endpoint + the
-# bundled default model. Multi-provider routing uses the catalogue base URLs.
+# The Volcano Ark images endpoint (the ark adapter posts here; base_url is fixed
+# for Ark in practice). Other providers use the catalogue base URLs.
 ENDPOINT = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
-DEFAULT_MODEL = "doubao-seedream-4-0-250828"
 
 # Transient HTTP statuses worth retrying (rate-limit + upstream gateway errors).
 _RETRY_HTTP = (408, 429, 500, 502, 503, 504)
@@ -96,50 +96,28 @@ def _desktop_json() -> dict:
 # ---- provider / key / model resolution -------------------------------------------
 
 def active_provider() -> str:
-    """The selected image provider id: explicit ``image_provider`` if valid, else
-    inferred from the model id, else the default (Volcano Ark)."""
-    raw = _desktop_json()
-    return _ip.resolve_provider(str(raw.get("image_provider") or ""),
-                                str(raw.get("image_model") or ""))
+    """The selected image provider id = EXACTLY ``image_provider`` from Settings ·
+    模型 · 生图模型. No inference from the model id, no default — "" if unset."""
+    return _ip.resolve_provider(str(_desktop_json().get("image_provider") or ""))
 
 
 def image_key_for(provider_id: str) -> str:
-    """Resolve the api key for one image provider. Volcano layers env + legacy
-    file fallbacks on top of the shared keyring; other providers use the keyring
-    (matched by provider id or base_url host) only."""
-    if provider_id == "volcano":
-        env = (os.getenv("ARK_API_KEY") or "").strip()
-        if env:
-            return env
-    key = _ip.resolve_key(_desktop_json(), provider_id)
-    if key:
-        return key
-    if provider_id == "volcano":
-        p = _home() / "ark_api_key"
-        try:
-            if p.is_file():
-                return p.read_text(encoding="utf-8").strip()
-        except OSError:
-            pass
-    return ""
+    """The api key for one image provider, from the shared provider keyring — the
+    SAME unified path for every provider (no env / no legacy file special-cases).
+    "" if none."""
+    return _ip.resolve_key(_desktop_json(), provider_id)
 
 
 def image_key() -> str:
-    """The key for the ACTIVE image provider ("" if none). Back-compat name used
-    by the tool's capability gate and the visuals pipeline guard."""
+    """The key for the ACTIVE image provider ("" if none). Used by the tool's
+    capability gate and the visuals pipeline guard."""
     return image_key_for(active_provider())
 
 
 def image_model() -> str:
-    """Resolve the image-generation model. Order: env ``ARK_IMAGE_MODEL`` → the
-    global keyring ``image_model`` (set in Settings) → the bundled default."""
-    m = (os.getenv("ARK_IMAGE_MODEL") or "").strip()
-    if m:
-        return m
-    m = str(_desktop_json().get("image_model") or "").strip()
-    if m:
-        return m
-    return DEFAULT_MODEL
+    """The image-generation model = EXACTLY ``image_model`` from Settings · 模型 ·
+    生图模型. No env override, no default — "" if unset."""
+    return str(_desktop_json().get("image_model") or "").strip()
 
 
 def _base_url_for(provider_id: str) -> str:
@@ -423,18 +401,23 @@ def _openrouter_bytes(base: str, key: str, model: str, prompt: str,
 # ---- the unified entry point -----------------------------------------------------
 
 def generate_bytes(prompt: str, size: str, *, refs: list[str] | None = None) -> bytes:
-    """Generate one image with the ACTIVE provider and return validated image
-    bytes. Raises ``RuntimeError`` on any failure (no key, no result, a non-image
-    body) — never a fabricated success."""
+    """Generate one image with the SELECTED provider + model and return validated
+    image bytes. Uses exactly what Settings · 模型 · 生图模型 holds — no inference,
+    no fallback. Raises ``RuntimeError`` on any failure (no provider/model/key
+    selected, no result, a non-image body) — never a fabricated success."""
     pid = active_provider()
     sp = _ip.spec(pid)
     if sp is None:
-        raise RuntimeError(f"unknown image provider: {pid}")
+        raise RuntimeError(
+            "no image provider selected — choose one in Settings · 模型 · 生图模型.")
+    model = image_model()
+    if not model:
+        raise RuntimeError(
+            "no image model selected — choose one in Settings · 模型 · 生图模型.")
     key = image_key_for(pid)
     if not key:
         raise RuntimeError(
-            f"no image key configured for {sp['label']} — set it in Settings·提供商.")
-    model = image_model()
+            f"no key for {sp['label']} — add it in Settings · 提供商.")
     adapter = sp["adapter"]
     if adapter == "ark":
         data = _ark_bytes(model, key, prompt, size, refs)

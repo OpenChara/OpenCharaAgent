@@ -421,33 +421,38 @@ def test_keys_roundtrip_never_echoes_secrets():
     assert raw["keys"]["work"]["api_key"] == "sk-work-1"
 
 
-def test_image_key_and_model_global_defaults_never_echo_secret():
-    # R10: the image key + model live in the SAME global defaults store as the
-    # text key, set via defaults.set, and the secret is reduced to has_image_key.
+def test_image_selection_and_key_unified_on_keyring():
+    # The image SELECTION (provider + model) lives in the global defaults; the KEY
+    # comes from the SAME provider keyring as text (unified path). has_image_key =
+    # the ACTIVE image provider has a key. There is no legacy image_api_key field.
     set_defaults()
-    pub = result("defaults.set", {"image_api_key": "ark-secret-1",
-                                   "image_model": "doubao-seedream-x"})
-    assert pub["has_image_key"] is True
-    assert "image_api_key" not in pub  # secret never travels back
+    H.save_key("火山", provider="volcano",
+               base_url="https://ark.cn-beijing.volces.com/api/v3", api_key="ark-secret-1")
+    pub = result("defaults.set", {"image_provider": "volcano", "image_model": "doubao-seedream-x"})
+    assert pub["image_provider"] == "volcano"
     assert pub["image_model"] == "doubao-seedream-x"
+    assert pub["has_image_key"] is True            # active provider has a keyring key
+    assert "image_api_key" not in pub              # no legacy secret field at all
     # persisted to desktop.json (where _image_gen.py reads it)
     raw = json.loads(H.desktop_config_path().read_text(encoding="utf-8"))
-    assert raw["image_api_key"] == "ark-secret-1"
+    assert raw["image_provider"] == "volcano"
     assert raw["image_model"] == "doubao-seedream-x"
-    # defaults.get also hides the secret but reports presence + the model
+    assert "image_api_key" not in raw              # never written
     got = result("defaults.get")
     assert got["has_image_key"] is True and "image_api_key" not in got
     assert got["image_model"] == "doubao-seedream-x"
-    # setting the text key/model must not disturb the stored image secret
-    result("defaults.set", {"model": "other/model"})
-    raw = json.loads(H.desktop_config_path().read_text(encoding="utf-8"))
-    assert raw["image_api_key"] == "ark-secret-1"
+    # selecting a provider with NO key → has_image_key False (plain, no fallback)
+    result("defaults.set", {"image_provider": "openai", "image_model": "gpt-image-1"})
+    assert result("defaults.get")["has_image_key"] is False
 
 
 def test_card_visual_generate_preview(monkeypatch):
     # R9: brief (via the global default model — _complete) → image → preview.
     set_defaults()
-    monkeypatch.setenv("ARK_API_KEY", "sk-img-test")
+    # image key comes from the unified provider keyring + an explicit selection
+    H.save_key("火山", provider="volcano",
+               base_url="https://ark.cn-beijing.volces.com/api/v3", api_key="sk-img-test")
+    H.save_defaults({"image_provider": "volcano", "image_model": "doubao-seedream-x"})
     card = str(H.bundled_cards_dir() / "Quinn" / "card.json")
     monkeypatch.setattr(H, "_complete",
                         lambda *a, **k: '{"appearance":"a","palette":"p","world":"w","theme":"#1a2"}')

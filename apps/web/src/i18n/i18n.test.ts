@@ -29,9 +29,11 @@ describe("I18N strings map", () => {
   // Multi-provider image generation (Ark / DashScope / OpenAI / OpenRouter) added 7
   // (img-active, img-key-ready, img-key-missing-row, prov-image-ark-note,
   // img-unset, img-key-missing, img-prov-hint) → 555. (prov-openai-desc already
-  // existed; the OpenAI provider preset reuses it.)
-  it("preserves the full key set from the source dict (555 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(555);
+  // existed; the OpenAI provider preset reuses it.) Then unifying the image key on
+  // the provider keyring (no legacy single image_api_key input) dropped 2
+  // (prov-image-ark-note, image-key-ph) → 553.
+  it("preserves the full key set from the source dict (553 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(553);
   });
 
   it("every value is a [zh, en] string tuple", () => {
