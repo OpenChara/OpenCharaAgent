@@ -777,23 +777,52 @@ class LunaMothAgent:
                     out["follow_up"] = follow  # None when described (no pixels to inline)
                     seen = "attached to view" if follow else "described by the vision model"
                     out["display"] = f"🖼️ read {Path(relp).name} ({seen})"
+        elif name == "browser_vision" and result.get("ok"):
+            # hermes fast-path: when the MAIN model has native vision, the screenshot
+            # tool sets vision_native and defers the actual seeing to here — inline
+            # the pixels on a follow-up user message (no aux call). Without native
+            # vision the tool already returned an auxiliary text analysis.
+            try:
+                meta = _json.loads(result.get("data") or "{}")
+            except _json.JSONDecodeError:
+                meta = {}
+            sp = str(meta.get("screenshot_path") or "")
+            if meta.get("vision_native") and sp:
+                fp = Path(sp)
+                inj = (self._vision_followup_for_path(fp, fp.name, str(meta.get("question") or ""))
+                       if fp.is_file() else None)
+                if inj is not None:
+                    note, follow = inj
+                    out["content"] = note + f"\n(screenshot_path: {sp} — show the user with MEDIA:{sp})"
+                    out["follow_up"] = follow
+                    out["display"] = "🖼️ screenshot (attached to view)"
         return out
 
     def _image_vision_followup(self, relp: str):
-        """Make an image the chara read with ``read_file`` actually usable to it.
-        Fallback chain (mirrors core/attachments.py, hermes order):
+        """``read_file`` on a workspace image → the vision chain (see
+        ``_vision_followup_for_path``). Resolves the workspace-relative path first."""
+        try:
+            fp = self.sandbox.resolve_readable(relp)
+            if not fp.is_file():
+                return None
+        except Exception:  # noqa: BLE001 - any failure → keep the honest note
+            return None
+        return self._vision_followup_for_path(fp, relp)
+
+    def _vision_followup_for_path(self, fp: Path, label: str, question: str = ""):
+        """Make a concrete image file (workspace OR absolute — e.g. a browser
+        screenshot) usable to the chara. Fallback chain (mirrors core/attachments.py,
+        hermes order):
           (a) the MAIN model has vision → inline the pixels on a follow-up USER
               message (NEVER the tool message — APIs reject image parts there);
           (b) else → the configured ``vision_model`` describes it → inject the
               description as the tool note (no pixels; the main model can't see);
           (c) else (no vision_model / it failed / non-image / unreadable) → ``None``,
-              so read_file's honest "can't see it" note stands (no fabrication).
-        Returns ``(tool_note, follow_up_or_None)`` or ``None``. Oversized images are
-        shrunk reactively by the LLM layer (a) or proactively by describe_image (b)."""
+              so the caller's honest note stands (no fabrication).
+        ``question`` (browser screenshots) rides the inline text / the describe
+        prompt. Returns ``(tool_note, follow_up_or_None)`` or ``None``. Oversized
+        images are shrunk reactively by the LLM layer (a) or by describe_image (b)."""
         try:
-            fp = self.sandbox.resolve_readable(relp)
-            if not fp.is_file():
-                return None
             data = fp.read_bytes()
         except Exception:  # noqa: BLE001 - any failure → keep the honest note
             return None
@@ -812,11 +841,12 @@ class LunaMothAgent:
             # Tense-neutral DURABLE tool note (the pixels live only in the cross-turn
             # context; the newest image stays viewable, older ones collapse to a text
             # handle via compaction.strip_old_images).
-            note = (f"Image {relp} is attached for you to view — describe or use what is "
+            note = (f"Image {label} is attached for you to view — describe or use what is "
                     "actually in it, not a guess. (Kept viewable until a newer image "
                     "supersedes it, then dropped to a text reference.)")
+            text = f"[image: {label}]" + (f"\n{question}" if question else "")
             follow = {"role": "user", "content": [
-                {"type": "text", "text": f"[image: {relp}]"},
+                {"type": "text", "text": text},
                 {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}},
             ]}
             return note, follow
@@ -825,16 +855,16 @@ class LunaMothAgent:
         # describe_image handles its own oversized-shrink and returns None when no
         # vision_model is configured / not live / the call fails.
         try:
-            desc = self.llm.describe_image(data, mime)
+            desc = self.llm.describe_image(data, mime, question)
         except Exception:  # noqa: BLE001 - any failure → fall through to the honest note
             desc = None
         if desc:
-            note = (f"Image {relp} — your model can't see pixels directly, so a vision "
+            note = (f"Image {label} — your model can't see pixels directly, so a vision "
                     f"model looked at it for you. It describes the image as:\n{desc}\n"
                     "Use what is actually described, not a guess.")
             return note, None
 
-        # (c) no vision_model / it failed → keep read_file's honest no-vision note.
+        # (c) no vision_model / it failed → keep the caller's honest no-vision note.
         return None
 
     def _ingest_attachments(self, attachments) -> IngestResult:

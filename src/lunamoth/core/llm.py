@@ -710,9 +710,15 @@ class LLMClient:
         or block the turn."""
         if not self.is_live():
             return ""
-        import urllib.error
         import urllib.request
 
+        # Side-tasks OMIT the `reasoning` param entirely (hermes parity:
+        # auxiliary_client.call_llm never sets reasoning; trajectory_compressor's
+        # summary calls send none) — the provider/model default applies. We do NOT
+        # send reasoning:{enabled:false}: reasoning-MANDATORY routes (some vision
+        # models, e.g. stepfun step-3.7) reject that with HTTP 400 "Reasoning is
+        # mandatory… cannot be disabled". The main streaming path keeps its own
+        # reasoning handling (apple-to-apple with hermes); only side-tasks omit it.
         body = {
             "model": (model or self.cfg.model),
             "messages": messages,
@@ -720,35 +726,13 @@ class LLMClient:
             "max_tokens": int(max_tokens),
             "stream": False,
         }
-        body = self._reasoning_body(body, override="off")  # side-tasks don't need thinking
-        url = f"{self.cfg.base_url}/chat/completions"
-
-        def _post(b: dict) -> dict:
-            req = urllib.request.Request(
-                url, data=json.dumps(b).encode("utf-8"), headers=self._headers(), method="POST")
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode("utf-8", errors="replace"))
-
+        data = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self.cfg.base_url}/chat/completions", data=data, headers=self._headers(), method="POST"
+        )
         try:
-            try:
-                payload = _post(body)
-            except urllib.error.HTTPError as e:
-                # Some routes (e.g. reasoning-mandatory vision models) reject the
-                # cheap reasoning:{enabled:false} side-tasks send. Adapt the REQUEST
-                # to the model — reason internally but exclude it from the output —
-                # then retry once. Not a fabricated fallback; the request shape
-                # changes, the work is still real.
-                detail = ""
-                if "reasoning" in body and e.code == 400:
-                    try:
-                        detail = e.read().decode("utf-8", errors="replace")
-                    except Exception:  # noqa: BLE001
-                        detail = ""
-                if "reasoning" in detail.lower() and "reasoning" in body:
-                    body["reasoning"] = {"exclude": True}
-                    payload = _post(body)
-                else:
-                    raise
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                payload = json.loads(resp.read().decode("utf-8", errors="replace"))
             return str(payload.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
         except Exception as e:
             _log.warning("raw_complete failed (degrading to no-op): %s", e)

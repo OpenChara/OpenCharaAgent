@@ -466,6 +466,29 @@ def test_vision_uses_aux_vision_model(ctx, monkeypatch, tmp_path):
     assert out["analysis"] == "I see a login form."
 
 
+def test_vision_native_defers_to_agent_no_aux_call(ctx, monkeypatch, tmp_path):
+    # A main model WITH native vision: the tool must NOT spend an aux call — it sets
+    # vision_native + the path, and the agent inlines the pixels next turn.
+    shot = tmp_path / "shot.png"
+    shot.write_bytes(b"\x89PNG\r\n")
+
+    class LLM:
+        def vision_supported(self):
+            return True
+
+        def analyze_image(self, path, question):  # must never be called
+            raise AssertionError("native vision must not call the aux vision model")
+
+    ctx.llm = LLM()
+    stub = DriverStub(responses={"screenshot": {"success": True, "data": {"path": str(shot)}}})
+    monkeypatch.setattr(drv, "run_browser_command", stub)
+    out = json.loads(browser.browser_vision({"question": "what is here?"}, ctx))
+    assert out["success"] is True and out["vision_native"] is True
+    assert out["screenshot_path"] == str(shot)
+    assert out["question"] == "what is here?"
+    assert "analysis" not in out          # native → agent inlines; no aux text
+
+
 def test_vision_annotate_flag(ctx, monkeypatch, tmp_path):
     shot = tmp_path / "shot.png"
     shot.write_bytes(b"\x89PNG\r\n")

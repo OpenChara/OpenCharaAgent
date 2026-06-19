@@ -651,6 +651,20 @@ def browser_vision(args: dict, ctx) -> str:
             "('agent-browser install'), or a stale daemon process."
         )})
 
+    # hermes fast-path: when the ACTIVE model has native vision, don't spend an aux
+    # call — set vision_native and let the agent inline the screenshot pixels on the
+    # next turn (core/agent._vision_followup_for_path). Only a non-vision model falls
+    # back to the auxiliary vision model below.
+    if _model_has_native_vision(ctx):
+        return _dumps({
+            "success": True,
+            "screenshot_path": str(screenshot_path),
+            "vision_native": True,
+            "question": question,
+            "note": ("Screenshot captured and attached for you to view on the next "
+                     "turn. Share it with the user via MEDIA:" + str(screenshot_path)),
+        })
+
     # Auxiliary vision-model analysis (hermes falls back to AUXILIARY_VISION_MODEL
     # when the active model lacks native vision; LunaMoth has one provider client).
     analysis = _vision_analyze(ctx, screenshot_path, question)
@@ -795,6 +809,16 @@ def browser_dialog(args: dict, ctx) -> str:
 # ---------------------------------------------------------------------------
 # Aux helpers (vision analysis / content extraction / screenshot pruning)
 # ---------------------------------------------------------------------------
+
+def _model_has_native_vision(ctx) -> bool:
+    """True if the chara's MAIN model can see images directly — then the agent
+    inlines the screenshot (hermes native fast-path) instead of an aux describe."""
+    fn = getattr(getattr(ctx, "llm", None), "vision_supported", None)
+    try:
+        return bool(fn()) if callable(fn) else False
+    except Exception:  # noqa: BLE001 — capability probe is best-effort
+        return False
+
 
 def _vision_analyze(ctx, screenshot_path, question: str) -> Optional[str]:
     """Analyze the screenshot via the auxiliary vision model. Returns the text

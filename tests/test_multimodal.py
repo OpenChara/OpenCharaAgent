@@ -316,7 +316,12 @@ class _StubLLM:
 
 
 def _agent_stub(sandbox, vision, describe=None):
-    return _types.SimpleNamespace(sandbox=sandbox, llm=_StubLLM(vision, describe))
+    stub = _types.SimpleNamespace(sandbox=sandbox, llm=_StubLLM(vision, describe))
+    # _image_vision_followup delegates to _vision_followup_for_path on self; bind the
+    # real core so the unbound-method-with-stub-self calls resolve.
+    stub._vision_followup_for_path = (
+        lambda fp, label, question="": LunaMothAgent._vision_followup_for_path(stub, fp, label, question))
+    return stub
 
 
 def _png(nbytes=64):
@@ -341,6 +346,20 @@ def test_image_vision_followup_none_without_vision_or_vision_model():
     sb = _sandbox()
     rel = sb.write_bytes("look.png", _png())
     assert LunaMothAgent._image_vision_followup(_agent_stub(sb, False), rel) is None
+
+
+def test_vision_followup_for_absolute_path_inlines_with_question(tmp_path):
+    # the browser-screenshot native path: an ABSOLUTE image file + a question →
+    # inline the pixels with the question folded into the follow-up text.
+    fp = tmp_path / "shot.png"
+    fp.write_bytes(_png())
+    out = LunaMothAgent._vision_followup_for_path(
+        _agent_stub(None, True), fp, "shot.png", "what is on screen?")
+    assert out is not None
+    note, follow = out
+    assert "shot.png" in note
+    assert follow["content"][0]["text"].endswith("what is on screen?")
+    assert follow["content"][-1]["image_url"]["url"].startswith("data:image/png;base64,")
 
 
 def test_image_vision_followup_describes_via_vision_model_without_vision():
