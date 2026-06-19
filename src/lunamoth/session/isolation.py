@@ -120,6 +120,14 @@ def _macos_profile(workspace: Path, allow_network: bool, writable: list[Path], *
         # the ProcessSingleton socket; /private/tmp holds agent-browser's socket),
         # and (2) the secret home (global key / other sessions) unreadable.
         # Verified end-to-end on macOS 2026-06-19 (agent-browser + system Chrome).
+        #
+        # METADATA traversal: the workspace+assets sit UNDER the denied home, so
+        # opening an ABSOLUTE path there (file:///…/.lunamoth/…/workspace/x.html —
+        # the chara browsing its own generated files) requires stat/lookup on each
+        # ancestor (.lunamoth, sessions, <name>, sandbox). The shell escapes this
+        # by running with cwd=workspace (relative access from an open fd); Chrome
+        # can't. Re-allow metadata-ONLY on home so traversal works while file
+        # CONTENTS stay denied (file-read-data not re-allowed → the key is safe).
         b_writes = "\n".join(
             f'(allow file-write* (subpath "{p}"))'
             for p in [workspace, *writable, Path(_darwin_user_temp()), Path("/private/tmp")]
@@ -129,6 +137,7 @@ def _macos_profile(workspace: Path, allow_network: bool, writable: list[Path], *
 (version 1)
 (allow default)
 (deny file-read* (subpath "{home}"))
+(allow file-read-metadata (subpath "{home}"))
 (allow file-read* (subpath "{workspace}"))
 (allow file-read* (subpath "{assets}"))
 (deny file-write*)

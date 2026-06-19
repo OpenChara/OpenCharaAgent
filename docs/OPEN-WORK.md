@@ -267,6 +267,25 @@ run on the box is BLOCKED by a dead OpenRouter key in the box's `desktop.json`
 `lunamoth run quinn -p "use browser_navigate on file://…"` confirms it in one shot.
 Tests: `tests/test_browser_jail.py`, `tests/test_max_output.py`.
 
+**macOS crashpad close-out (2026-06-19, DONE):** mac's crashpad is IN-PROCESS
+(`crash_report_database_mac.mm`), so the Linux external-handler `--database` shim
+can't cover it — on a deep workspace path Chrome early-exited with an empty-db
+mkdir / `path_service` FATAL. Closed out two ways in `_browser_driver.py`:
+(1) export a SHORT `TMPDIR` (`/tmp`→`/private/tmp`) so agent-browser's derived
+`--user-data-dir` stays under macOS's 104-char AF_UNIX socket limit; (2) pass an
+explicit `--crash-dumps-dir=<short>` in `AGENT_BROWSER_ARGS` (no comma, survives
+the split) pinning crashpad's db on every platform. Deterministic dispatch +
+HTTPS now succeed on macOS. Residual: the pure-LLM-driven path can still flake on
+model behavior (not the tool) — accepted, within "stable for one conversation".
+
+**macOS `file://` workspace read (2026-06-19, DONE):** Chrome opens ABSOLUTE
+paths, so reading the chara's own generated file under the workspace required
+stat/traversal of each ancestor — all blocked by the Seatbelt `deny file-read*
+(subpath home)` (the shell escaped this via `cwd=workspace` relative access).
+Added `(allow file-read-metadata (subpath home))` to the browser profile:
+traversal works, file CONTENTS stay denied (verified: workspace `file://` reads
+content; `file://~/.lunamoth/desktop.json` → `ERR_ACCESS_DENIED`).
+
 ---
 
 # Part 4 — 2026-06-17 test-feedback triage (open items only)

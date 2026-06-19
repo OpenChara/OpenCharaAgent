@@ -341,6 +341,15 @@ def _build_command_string(cli: str, session_name: str, command: str,
     env_exports = [
         f"AGENT_BROWSER_SOCKET_DIR={shlex.quote(socket_dir)}",
         f"AGENT_BROWSER_IDLE_TIMEOUT_MS={_BROWSER_IDLE_TIMEOUT_SECONDS * 1000}",
+        # Override the jail's TMPDIR (=workspace) with a SHORT temp base for the
+        # browser only. agent-browser derives Chrome's --user-data-dir from
+        # os.tmpdir()=$TMPDIR; under a deep workspace (~/.lunamoth/sessions/<name>/
+        # sandbox/workspace) that overflows macOS's 104-char AF_UNIX socket limit
+        # → Chrome FATALs (path_service "Failed to get the path", crashpad empty
+        # mkdir). A short base (/tmp → /private/tmp on macOS) keeps Chrome's
+        # profile + ProcessSingleton socket short. The dir is writable in every
+        # browser jail (macOS allows /private/tmp; bwrap binds /tmp; Landlock rw /tmp).
+        f"TMPDIR={shlex.quote(_socket_safe_tmpdir())}",
     ]
     # Chromium can't nest its own sandbox inside our OS jail (bwrap/seatbelt), so
     # under `sandbox` isolation we MUST pass --no-sandbox — the outer jail is the
@@ -350,7 +359,19 @@ def _build_command_string(cli: str, session_name: str, command: str,
     if (not os.environ.get("AGENT_BROWSER_ARGS")
             and not os.environ.get("AGENT_BROWSER_CHROME_FLAGS")
             and needs_bypass):
-        env_exports.append("AGENT_BROWSER_ARGS=--no-sandbox,--disable-dev-shm-usage,--disable-gpu")
+        # Pin crashpad's database to a SHORT, jail-writable path. On macOS the
+        # crashpad handler is IN-PROCESS (crash_report_database_mac.mm): it derives
+        # its db from the user-data-dir and FATALs on an empty mkdir when that path
+        # is too long — the Linux external-handler --database shim
+        # (ensure_crashpad_db_fix) can't cover the in-process path. An explicit
+        # --crash-dumps-dir closes that out on every platform (no comma in the path,
+        # so it survives agent-browser's comma-split of AGENT_BROWSER_ARGS).
+        crash_dir = os.path.join(_socket_safe_tmpdir(), "lunamoth-crashpad")
+        flags = [
+            "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
+            f"--crash-dumps-dir={crash_dir}",
+        ]
+        env_exports.append("AGENT_BROWSER_ARGS=" + ",".join(flags))
 
     return " ".join(env_exports) + " " + cmd
 
