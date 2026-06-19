@@ -22,11 +22,15 @@ supervisor's PTY shell can share them without importing tools/.
 """
 from __future__ import annotations
 
+import errno
 import fcntl
 import os
 import re
+import select
 import signal
+import struct
 import subprocess
+import termios
 import time
 from pathlib import Path
 
@@ -312,4 +316,217 @@ def run_terminal(
         parts.append(f"STDOUT:\n{out}")
     if err:
         parts.append(f"STDERR:\n{err}")
+    return ("\n".join(parts) + note).strip()
+
+
+# ---- PTY path (interactive commands: vim/top/REPL/password prompts) ----------
+# hermes runs an interactive `pty=true` command under a pseudo-terminal so a tty
+# probe (`isatty`) sees a real terminal (hermes process_registry.spawn_local
+# use_pty + terminal_tool's pty option). hermes leans on the ptyprocess library;
+# LunaMoth is stdlib-only (macOS/Linux only), so we allocate the pty the same way
+# server/pty.py PtyBridge does — os.openpty() + TIOCSWINSZ + a controlling-tty
+# preexec — and run the SAME jailed argv build_jail_command produces, so the
+# isolation contract is byte-identical to the pipe path. There is no stdin: this
+# is a one-shot foreground run, not an attached session, so the child sees EOF on
+# read (a password prompt that blocks on input simply times out, exactly as the
+# pipe path would). Output is the merged tty stream (stdout+stderr share the
+# slave), ANSI-stripped + head/tail truncated like the pipe path.
+_PTY_COLS = 120   # hermes spawns its pty at 120x30; match it so wide TUIs lay out sanely
+_PTY_ROWS = 30
+
+
+def _pty_winsize(cols: int, rows: int) -> bytes:
+    # struct winsize: rows, cols, xpixel, ypixel (unsigned short), as in PtyBridge.
+    return struct.pack("HHHH", rows, cols, 0, 0)
+
+
+def _acquire_controlling_tty() -> None:
+    """preexec: make the pty slave (dup'd to fd 0) the controlling tty.
+
+    Mirrors server/pty.py: without it an interactive bash reports "no job
+    control in this shell". A single ioctl — safe between fork and exec.
+    """
+    try:
+        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+    except OSError:
+        pass
+
+
+def _pty_kill_group(proc: subprocess.Popen, master_fd: int) -> None:
+    """SIGHUP → SIGTERM → SIGKILL to the whole group, closing the master fd.
+
+    Same ladder as runner._kill_group, plus the PtyBridge.close discipline: a
+    pty session leader can hang in exit teardown until the master fd is closed
+    (macOS Darwin scar), and killpg can return EPERM for a group mid-exit — fall
+    back to signalling the leader directly.
+    """
+    try:
+        pgid = os.getpgid(proc.pid)
+    except OSError:
+        pgid = None
+    for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGKILL):
+        if proc.poll() is not None:
+            break
+        try:
+            if pgid is not None:
+                os.killpg(pgid, sig)
+            else:
+                proc.send_signal(sig)
+        except OSError:
+            try:
+                proc.send_signal(sig)
+            except OSError:
+                pass
+        deadline = time.monotonic() + _KILL_GRACE
+        while proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+    try:
+        os.close(master_fd)
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=_KILL_GRACE)
+    except subprocess.TimeoutExpired:
+        _log.error("pty terminal leader (pid %d) survived SIGKILL — abandoning", proc.pid)
+
+
+def run_terminal_pty(
+    command: str,
+    workspace: Path,
+    *,
+    isolation: str | None = None,
+    allow_network: bool = False,
+    writable_paths: "list[str] | tuple[str, ...]" = (),
+    timeout: int = DEFAULT_TIMEOUT,
+    workdir: str | None = None,
+) -> str:
+    """Execute *command* behind a real PTY, under the active isolation jail.
+
+    The pty variant of :func:`run_terminal`: the command runs INSIDE the same
+    sandbox/admin jail (``build_jail_command``), but on a pseudo-terminal so it
+    detects a tty (interactive REPLs, vim/top, tools that branch on
+    ``isatty``). Honors the same clamped timeout, ANSI strip, head/tail
+    truncate, and group-kill ladder. No stdin is attached (one-shot run).
+    """
+    workspace = workspace.resolve()
+    workspace.mkdir(parents=True, exist_ok=True)
+    isolation = (isolation or backend()).lower()
+    if isolation in {"dir", "local", "docker"}:  # legacy values → admin (no jail)
+        isolation = "admin"
+    requested = int(timeout)
+    timeout = max(MIN_TIMEOUT, min(MAX_TIMEOUT, requested))
+    clamp_note = (
+        f"\n[lunamoth: timeout clamped to {timeout}s (requested {requested}s; allowed {MIN_TIMEOUT}-{MAX_TIMEOUT}s)]"
+        if timeout != requested else ""
+    )
+    writable = [Path(p).resolve() for p in writable_paths]
+    cwd = workspace
+    if workdir:
+        cand = (workspace / workdir).resolve() if not os.path.isabs(workdir) else Path(workdir).resolve()
+        if isolation == "admin" or cand == workspace or workspace in cand.parents or cand in writable:
+            cwd = cand
+
+    note = clamp_note
+    try:
+        cmd, jail_cwd, jail_note = build_jail_command(
+            command, workspace, isolation, allow_network=allow_network, writable=writable,
+            interactive=True,  # the child sits on a pty slave; macOS needs ttys ioctl
+        )
+    except JailUnavailableError as e:
+        return (f"[lunamoth: refused — {e}]" + note).strip()
+    note += jail_note
+    run_cwd = str(cwd) if jail_cwd is not None else None
+
+    env = _base_env(workspace)
+    env.setdefault("TERM", "xterm-256color")  # pty-hosted programs expect a TERM
+
+    master, slave = os.openpty()
+    try:
+        fcntl.ioctl(master, termios.TIOCSWINSZ, _pty_winsize(_PTY_COLS, _PTY_ROWS))
+    except OSError:
+        pass
+    t0 = time.monotonic()
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=run_cwd,
+            env=env,
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            start_new_session=True,   # own group so the timeout path can killpg it
+            preexec_fn=_acquire_controlling_tty,
+            close_fds=True,
+        )
+    except FileNotFoundError as e:
+        os.close(master)
+        os.close(slave)
+        _log.error("pty terminal runner unavailable (%s): %s", isolation, e)
+        return f"[runner error: {e}]{note}"
+    except Exception:  # noqa: BLE001
+        os.close(master)
+        os.close(slave)
+        raise
+    os.close(slave)  # the child holds the only other ref; we read the master end
+
+    chunks: list[bytes] = []
+    total = 0
+    deadline = time.monotonic() + timeout
+    timed_out = False
+    # Read the merged tty stream until EOF (child gone, master EIO) or timeout.
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            timed_out = True
+            break
+        try:
+            readable, _, _ = select.select([master], [], [], min(remaining, 0.2))
+        except (OSError, ValueError):
+            break
+        if not readable:
+            if proc.poll() is not None:
+                break  # child exited and the buffer is drained
+            continue
+        try:
+            data = os.read(master, 65536)
+        except OSError as exc:
+            # EIO = slave side closed (child exited, Linux); EBADF = master closed.
+            if exc.errno in {errno.EIO, errno.EBADF}:
+                break
+            raise
+        if not data:
+            break  # EOF
+        # Cap the retained bytes so a runaway emitter can't blow memory; we keep
+        # head+tail at the byte level, truncate_middle does the final clean cut.
+        chunks.append(data)
+        total += len(data)
+        if total > _OUTPUT_CAP * 4 and len(chunks) > 64:
+            chunks = chunks[:32] + chunks[-32:]  # coarse middle-drop, refined below
+
+    out_b = b"".join(chunks)
+    if timed_out or proc.poll() is None:
+        _log.warning("pty terminal command timed out after %ds (%s): %.120s", timeout, isolation, command)
+        _pty_kill_group(proc, master)
+        out = truncate_middle(strip_ansi(out_b.decode("utf-8", errors="replace")), _OUTPUT_CAP).strip()
+        parts = [f"[timed out after {timeout}s]"]
+        if out:
+            parts.append(f"partial OUTPUT:\n{out}")
+        return ("\n".join(parts) + note).strip()
+
+    try:
+        os.close(master)
+    except OSError:
+        pass
+    try:
+        proc.wait(timeout=_KILL_GRACE)
+    except subprocess.TimeoutExpired:
+        pass
+    rc = proc.poll()
+    rc = rc if rc is not None else -1
+    _log.info("pty terminal (%s, net=%s) exit=%d in %.1fs: %.120s",
+              isolation, "on" if allow_network else "off", rc, time.monotonic() - t0, command)
+    out = truncate_middle(strip_ansi(out_b.decode("utf-8", errors="replace")), _OUTPUT_CAP)
+    parts = [f"exit={rc}" + _exit_code_note(command, rc, "")]
+    if out:
+        parts.append(f"OUTPUT:\n{out}")
     return ("\n".join(parts) + note).strip()

@@ -38,6 +38,21 @@ with, not a clone on disk.)
   hermes's scars are the maturity we lack. Architecture stays ours; never
   inherit its fallback-model logic. Parity checklist:
   `docs/OPEN-WORK.md` (Part 1).
+  CLARIFIED (owner, 2026-06-19): **"behave apple-to-apple with hermes" is the
+  default for the WHOLE tool/harness layer**, not just the four context
+  subsystems — including behavioral GUARDS (hard-block a foreground long-running
+  command, NOT an advisory note; a real PTY for interactive programs; parallel
+  sub-agent fan-out). These are mechanical, value-NEUTRAL harness decisions with
+  mature solutions, so adopt hermes's directly. The NEUTRALITY principle (below)
+  is about the **chara's WORLDVIEW/VALUES only** — keeping a chara free of a
+  built-in value-direction so it can play ANY role — it does NOT license
+  re-shaping the harness toward a "gentler" agent. The ONLY legitimate tool
+  divergences are ARCHITECTURALLY FORCED and must preserve hermes's capability +
+  contract: one-process-one-chara maps hermes's GLOBAL `~/.hermes/{skills,
+  memories}` to PER-CHARA storage (a host runs many charas; global would
+  cross-contaminate); macOS sandbox-exec `deny network*` makes execute_code use
+  hermes's OWN file-RPC transport instead of a UDS; the macOS/Linux-only scope
+  drops Windows fallbacks. Everything else tracks hermes — when in doubt, match it.
   STRENGTHENED (owner, 2026-06-18): four subsystems are now **apple-to-apple
   IDENTICAL** to hermes — copy the algorithm, the numbers, and the prompt text
   verbatim, then run a comparison agent each pass until they match: (1) the
@@ -93,9 +108,15 @@ example) and Quinn 小Q (the default).)
   Failed request = visible error (retry 5s×5 for transient connect errors,
   then surface). Best-effort no-ops exist only where a backstop exists
   (compaction → trim).
-- **Respect for the chara.** Rules text is neutral operating standard
-  (your work must be real; act through tools; unattended time is yours) —
-  never a personality, never commands about what to want. 注意类似于默认卡，presence和角色扮演提醒提示词这种也是中立的，并非需要修改的bug。
+- **Respect for the chara = VALUE-neutrality, not a gentler harness.** The
+  neutrality principle governs the chara's WORLDVIEW: Rules text is a neutral
+  operating standard (your work must be real; act through tools; unattended time
+  is yours) — never a personality, never commands about what to want — so a chara
+  carries no built-in value-direction and can play ANY role. It does NOT extend
+  to the TOOL/HARNESS layer: mechanical, value-neutral harness behaviors (e.g.
+  hard-blocking a foreground long-running command, PTY, parallel delegation) take
+  the mature hermes solution directly (see the apple-to-apple RULE above) — a
+  "softer" tool is not a chara value. 注意类似于默认卡，presence和角色扮演提醒提示词这种也是中立的，并非需要修改的bug。
 - **Language is never a setting** — it's a property of the active card.
 - **The model's real context window is never a setting for KNOWN models**
   (providers.py resolves it from the provider catalogue). The ONE exception

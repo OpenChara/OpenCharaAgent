@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 from typing import Any, Callable
 
@@ -76,6 +77,16 @@ class ToolGateway:
         self._guard_exact_failures: dict[str, int] = {}
         self._guard_tool_streaks: dict[str, int] = {}
         self._ctx_obj: ToolContext | None = None
+        # Serializes the mutable state shared by concurrent dispatchers — the
+        # loop-guardrail counters and the audit trail. The parent's tool loop is
+        # single-threaded, but delegate_task fans out N in-process workers that
+        # each call back through THIS gateway (shared sandbox = shared chara);
+        # without the lock those concurrent dispatches would interleave guardrail
+        # mutations and corrupt the parent's counters. (Each worker is also given
+        # its OWN guardrail scope via spawn_worker_dispatch so a worker's failures
+        # never touch the parent's streaks at all — the lock here only protects
+        # the parent counters + the audit during true overlap.)
+        self._dispatch_lock = threading.RLock()
 
     # ---- runtime binding (llm/transcript are built after the gateway) ----------------
 
@@ -95,6 +106,8 @@ class ToolGateway:
                 permission_hook=self.permission_hook, clarify_hook=self.clarify_hook,
                 dispatch=self._code_dispatch,
                 enabled_tool_names=self._effective,  # single source: execute_code asks the gate
+                spawn_worker_dispatch=self.spawn_worker_dispatch,
+                delegate_depth=0,
             )
         # permission/clarify hooks are set after construction — keep them live.
         self._ctx_obj.permission_hook = self.permission_hook
@@ -152,18 +165,77 @@ class ToolGateway:
 
     def call(self, name: str, /, **kwargs: Any) -> dict[str, Any]:
         """Run one tool: loop-guard refusal → dispatch → audit → guard record.
-        Returns {"ok": bool, "data": <json str>} or {"ok": False, "error": str}."""
-        signature = self._guard_signature(name, kwargs)
-        refusal = self._guard_refusal(name, signature)
-        if refusal is not None:
-            self.audit.write("tool_loop_refused", tool=name, args=self._safe_args(kwargs), result=refusal)
-            _log.warning("%s refused by loop guard: %s", name, refusal["error"])
-            return refusal
-        if name.startswith("mcp__"):
-            result = self._call_mcp(name, kwargs)
-        else:
-            result = self._dispatch(name, kwargs)
-        return self._guard_record(name, signature, result)
+        Returns {"ok": bool, "data": <json str>} or {"ok": False, "error": str}.
+
+        The whole sequence holds ``_dispatch_lock`` so that, when delegate_task
+        workers dispatch concurrently, the parent's guardrail counters and the
+        audit trail are never interleaved. The lock is re-entrant: a tool whose
+        handler calls back into the gateway on the same thread won't deadlock."""
+        with self._dispatch_lock:
+            signature = self._guard_signature(name, kwargs)
+            refusal = self._guard_refusal(name, signature)
+            if refusal is not None:
+                self.audit.write("tool_loop_refused", tool=name, args=self._safe_args(kwargs), result=refusal)
+                _log.warning("%s refused by loop guard: %s", name, refusal["error"])
+                return refusal
+            if name.startswith("mcp__"):
+                result = self._call_mcp(name, kwargs)
+            else:
+                result = self._dispatch(name, kwargs)
+            return self._guard_record(name, signature, result)
+
+    # ---- delegate_task worker isolation ----------------------------------------------
+
+    def spawn_worker_dispatch(self) -> "Callable[[str, dict], str]":
+        """A dispatch callable for ONE delegate_task worker, with its OWN
+        loop-guardrail scope but sharing this gateway's pack gate, MCP, and
+        (lock-serialized) audit + registry dispatch.
+
+        Why a separate scope: a worker is a short-lived sub-turn; its repeated
+        failures are the worker's problem, not the parent chara's — they must
+        not bleed into ``_guard_tool_streaks`` and block the parent's next real
+        turn. Why still go through this gateway: the worker shares the chara's
+        ONE sandbox/state/registry, so the gate (registered ∩ pack), the audit
+        trail, and tool bodies must be the chara's. Concurrent workers each get
+        a fresh scope; the shared registry.dispatch + audit are serialized by
+        ``_dispatch_lock`` inside ``_dispatch``/``_call_mcp``."""
+        exact: dict[str, int] = {}
+        streaks: dict[str, int] = {}
+
+        def _worker_call(name: str, args: dict) -> str:
+            kwargs = dict(args or {})
+            with self._dispatch_lock:
+                signature = self._guard_signature(name, kwargs)
+                # Worker-local guard scope (mirrors the parent's logic, own dicts).
+                streak = streaks.get(name, 0)
+                failures = exact.get(signature, 0)
+                refusal: dict[str, Any] | None = None
+                if streak >= GUARD_STREAK_REFUSE_AT:
+                    refusal = {"ok": False, "error": (
+                        f"{name} is blocked for this subagent: it failed {streak} times in a "
+                        f"row. Take a different approach.")}
+                elif failures >= GUARD_EXACT_REFUSE_AT - 1:
+                    refusal = {"ok": False, "error": (
+                        f"refusing to run {name}: this exact call already failed {failures} "
+                        f"times for this subagent. Change the arguments or strategy.")}
+                if refusal is not None:
+                    self.audit.write("tool_loop_refused", tool=name,
+                                     args=self._safe_args(kwargs), result=refusal)
+                    return json.dumps({"error": refusal["error"]}, ensure_ascii=False)
+                if name.startswith("mcp__"):
+                    result = self._call_mcp(name, kwargs)
+                else:
+                    result = self._dispatch(name, kwargs)
+                # Record into the worker-local scope, not the parent's.
+                if result.get("ok"):
+                    exact.pop(signature, None)
+                    streaks.pop(name, None)
+                    return result.get("data", "")
+                exact[signature] = failures + 1
+                streaks[name] = streak + 1
+                return json.dumps({"error": result.get("error", "")}, ensure_ascii=False)
+
+        return _worker_call
 
     def _dispatch(self, name: str, kwargs: dict[str, Any]) -> dict[str, Any]:
         """Run one builtin tool: allowlist gate, registry dispatch, classify the

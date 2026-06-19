@@ -201,3 +201,58 @@ def test_mcp_calls_are_guarded_too(gw):
     fifth = gw.call("mcp__srv__fetch", url="http://x")
     assert "refusing to run mcp__srv__fetch" in fifth["error"]
     assert DeadMcp.calls == 4
+
+
+# ---------------------------------------------------------------------------
+# delegate_task worker isolation (parallel fan-out concurrency-safety)
+# ---------------------------------------------------------------------------
+def test_worker_dispatch_has_isolated_guard_scope(gw):
+    """A delegate_task worker's dispatch carries its OWN loop-guardrail scope:
+    a worker hammering a failing tool must NOT corrupt the parent's streaks, so
+    the parent's next real dispatch still works."""
+    _set_terminal(gw, FakeTool(ValueError("boom")))
+    worker = gw.spawn_worker_dispatch()
+    # Drive the worker's guard to the streak-block threshold on its own scope.
+    for _ in range(8):
+        worker("terminal", {"command": "x"})
+    # The parent's guard counters are untouched.
+    assert gw._guard_tool_streaks == {}
+    assert gw._guard_exact_failures == {}
+    # And the parent can still dispatch a fresh (now-succeeding) tool.
+    _set_terminal(gw, FakeTool())
+    res = gw.call("terminal", command="ok")
+    assert res["ok"] is True
+
+
+def test_concurrent_workers_dont_corrupt_parent_guardrails(gw):
+    """Run N worker dispatchers concurrently against the shared gateway, then
+    confirm the parent's guardrail state is clean and a normal call still works
+    (the #24 guard + audit must be thread-safe under the parallel fan-out)."""
+    import threading
+
+    _set_terminal(gw, FakeTool())  # succeeds
+    start = threading.Barrier(4)
+    errors: list = []
+
+    def run_worker(i):
+        try:
+            disp = gw.spawn_worker_dispatch()
+            start.wait()
+            for j in range(20):
+                disp("terminal", {"command": f"{i}-{j}"})
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run_worker, args=(i,)) for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert not errors, f"worker threads raised: {errors}"
+    # Parent guardrails never touched by worker traffic.
+    assert gw._guard_tool_streaks == {}
+    assert gw._guard_exact_failures == {}
+    # A normal parent dispatch still works after the concurrent storm.
+    res = gw.call("terminal", command="final")
+    assert res["ok"] is True

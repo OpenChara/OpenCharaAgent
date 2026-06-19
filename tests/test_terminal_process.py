@@ -114,11 +114,22 @@ def test_terminal_blocked_workdir(ctx):
     assert "disallowed character" in res["error"]
 
 
-def test_terminal_foreground_advisory_note(ctx):
+def test_terminal_foreground_longlived_hard_blocked(ctx):
+    # hermes parity (owner 2026-06-19): a long-lived / self-backgrounding command
+    # in the foreground is HARD-BLOCKED (not run), with guidance to background it.
     from lunamoth.tools.builtin.terminal import terminal
+    import json
 
-    out = terminal({"command": "nohup python -m http.server 8000"}, ctx)
-    assert "hint:" in out  # advisory, not a block — command still ran
+    res = json.loads(terminal({"command": "nohup python -m http.server 8000"}, ctx))
+    assert res["status"] == "blocked"
+    assert "background=true" in res["error"]
+
+    res2 = json.loads(terminal({"command": "python -m http.server 8000"}, ctx))
+    assert res2["status"] == "blocked"
+
+    # A normal foreground command is unaffected.
+    out = terminal({"command": "echo hi"}, ctx)
+    assert "blocked" not in out
 
 
 def test_terminal_foreground_timeout_clamped(ctx):

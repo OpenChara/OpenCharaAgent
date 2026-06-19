@@ -174,8 +174,9 @@ def _macos_profile(workspace: Path, allow_network: bool, writable: list[Path], *
 
 
 def _macos_jail(command: str, workspace: Path, allow_network: bool, writable: list[Path],
-                *, browser: bool = False) -> list[str]:
-    return ["sandbox-exec", "-p", _macos_profile(workspace, allow_network, writable, browser=browser),
+                *, browser: bool = False, interactive: bool = False) -> list[str]:
+    return ["sandbox-exec", "-p",
+            _macos_profile(workspace, allow_network, writable, browser=browser, interactive=interactive),
             "/bin/bash", "-c", command]
 
 
@@ -296,6 +297,7 @@ def build_jail_command(
     allow_network: bool = False,
     writable: Sequence[Path] = (),
     browser: bool = False,
+    interactive: bool = False,
 ) -> tuple[list[str], str | None, str]:
     """The ONE isolation-ladder selector for a non-interactive ``bash -c`` run.
 
@@ -319,6 +321,12 @@ def build_jail_command(
     a native jail NOR Landlock is available — the command must NOT run unconfined
     (a chara could read the global key in ~/.lunamoth). NEVER degrades to
     directory trust; callers turn the refusal into a visible error.
+
+    ``interactive=True`` is for the PTY path (``run_terminal_pty``): the child
+    sits on a pty SLAVE (``/dev/ttysNN`` on macOS), so the macOS Seatbelt
+    profile must also allow ioctl/read/write on that device node (the default
+    profile only opens ``/dev/tty``). No-op on Linux (bwrap's ``--dev`` provides
+    a devpts) and under ``admin``.
     """
     isolation = (isolation or backend()).lower()
     if isolation in {"dir", "local", "docker"}:  # legacy values → admin (no jail)
@@ -329,9 +337,11 @@ def build_jail_command(
     if isolation == "sandbox":
         # Isolation ladder: native OS jail (bwrap/seatbelt) → Landlock → refuse.
         if os_sandbox_available():
-            cmd = (_macos_jail if sys.platform == "darwin" else _linux_jail)(
-                command, workspace, allow_network, writable_list, browser=browser
-            )
+            if sys.platform == "darwin":
+                cmd = _macos_jail(command, workspace, allow_network, writable_list,
+                                  browser=browser, interactive=interactive)
+            else:
+                cmd = _linux_jail(command, workspace, allow_network, writable_list, browser=browser)
             run_cwd = str(workspace) if sys.platform == "darwin" else None
             return cmd, run_cwd, ""
         if landlock_available():

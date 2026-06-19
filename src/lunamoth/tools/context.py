@@ -42,6 +42,14 @@ class ToolContext:
     # The gateway's effective tool set (registry ∩ pack) — the ONE source of
     # which tools are callable; execute_code mirrors it to its sandbox.
     enabled_tool_names: Optional[Callable[[], "set[str]"]] = None
+    # Factory: a per-worker dispatch with its OWN loop-guardrail scope, sharing
+    # the gateway's gate + audit (lock-serialized). delegate_task hands one to
+    # each concurrent subagent so workers can't corrupt the parent's guardrails.
+    spawn_worker_dispatch: Optional[Callable[[], "Callable[[str, dict], str]"]] = None
+    # Delegation depth (0 = the chara itself; 1 = a delegate_task worker). The
+    # cap (MAX_DEPTH=1) is enforced by delegate_task: a worker's context carries
+    # depth=1, and a worker may not itself spawn workers (grandchild rejected).
+    delegate_depth: int = 0
 
     # ---- ephemeral per-session stores (lazily created, persist across calls) ----
     todo: list = field(default_factory=list)          # todo tool's task list

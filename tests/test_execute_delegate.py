@@ -114,8 +114,9 @@ def test_delegate_schema_shape():
     props = schema["parameters"]["properties"]
     assert set(props) >= {"goal", "context", "toolsets", "tasks"}
     assert schema["parameters"]["required"] == []
-    # The honest divergence is documented in the description.
-    assert "SEQUENTIAL" in schema["description"].upper()
+    # The new reality: true parallel in-process fan-out (no "SEQUENTIAL" claim).
+    assert "PARALLEL" in schema["description"].upper()
+    assert "SEQUENTIAL" not in schema["description"].upper()
 
 
 # ---------------------------------------------------------------------------
@@ -324,14 +325,109 @@ def test_delegate_single_goal_runs_subturn(tmp_path):
     assert "tool_trace" in r
 
 
-def test_delegate_batch_sequential(tmp_path):
+def test_delegate_batch_parallel_in_order(tmp_path):
     from lunamoth.protocol.events import TextDelta
     llm = _FakeLLM(events=[TextDelta("ok", "muse")])
     ctx = make_ctx(tmp_path, dispatch=lambda n, a: "{}", llm=llm)
     out = json.loads(dt_mod.delegate_task(
-        {"tasks": [{"goal": "a"}, {"goal": "b"}]}, ctx))
-    assert [r["task_index"] for r in out["results"]] == [0, 1]
+        {"tasks": [{"goal": "a"}, {"goal": "b"}, {"goal": "c"}]}, ctx))
+    # N tasks -> N results, re-ordered to original task index.
+    assert [r["task_index"] for r in out["results"]] == [0, 1, 2]
     assert all(r["status"] == "completed" for r in out["results"])
+
+
+def test_delegate_batch_actually_concurrent(tmp_path):
+    """Workers run on separate threads concurrently: a barrier that needs all
+    workers present to release only completes if they overlap."""
+    import threading
+    from lunamoth.protocol.events import TextDelta
+
+    n = 3
+    barrier = threading.Barrier(n, timeout=5)
+    seen_threads: set[int] = set()
+
+    class _BarrierLLM:
+        cfg = _FakeLLMCfg()
+
+        def is_live(self):
+            return True
+
+        def stream_agent(self, user_text, context, stable, volatile, tools,
+                         execute, record=None, max_steps=8, in_context=True,
+                         channel="say"):
+            seen_threads.add(threading.get_ident())
+            barrier.wait()  # only releases if all n workers are here at once
+            yield TextDelta("done", channel)
+
+    ctx = make_ctx(tmp_path, dispatch=lambda n, a: "{}", llm=_BarrierLLM())
+    out = json.loads(dt_mod.delegate_task(
+        {"tasks": [{"goal": f"t{i}"} for i in range(n)]}, ctx))
+    assert len(out["results"]) == n
+    assert all(r["status"] == "completed" for r in out["results"])
+    # Each worker ran on its own thread (true fan-out, not the caller thread).
+    assert len(seen_threads) == n
+
+
+def test_delegate_depth_cap_rejects_grandchild(tmp_path):
+    """A ctx already at delegate_depth>=MAX_DEPTH (i.e. inside a worker) refuses
+    to spawn — no grandchildren."""
+    from lunamoth.protocol.events import TextDelta
+    llm = _FakeLLM(events=[TextDelta("ok", "muse")])
+    ctx = make_ctx(tmp_path, dispatch=lambda n, a: "{}", llm=llm)
+    ctx.delegate_depth = dt_mod.MAX_DEPTH
+    out = json.loads(dt_mod.delegate_task({"goal": "spawn more"}, ctx))
+    assert "error" in out and "nested" in out["error"].lower()
+
+
+def test_delegate_spawn_pause(tmp_path):
+    from lunamoth.protocol.events import TextDelta
+    llm = _FakeLLM(events=[TextDelta("ok", "muse")])
+    ctx = make_ctx(tmp_path, dispatch=lambda n, a: "{}", llm=llm)
+    assert dt_mod.set_spawn_paused(True) is True
+    try:
+        out = json.loads(dt_mod.delegate_task({"goal": "x"}, ctx))
+        assert "error" in out and "paused" in out["error"].lower()
+    finally:
+        dt_mod.set_spawn_paused(False)
+    # Unpaused again, it runs.
+    out2 = json.loads(dt_mod.delegate_task({"goal": "x"}, ctx))
+    assert out2["results"][0]["status"] == "completed"
+
+
+def test_delegate_per_worker_llm_client(tmp_path):
+    """Each worker gets its OWN LLMClient (cloned from cfg) so concurrent workers
+    never share the client's mutable per-stream state. We patch the LLMClient
+    symbol delegate_task imports and count constructions. The parent ctx.llm must
+    itself be (an instance of) the patched LLMClient so the clone path engages."""
+    constructed = []
+
+    class _SpyClient:
+        def __init__(self, cfg):
+            self.cfg = cfg
+            constructed.append(self)  # hold the object so ids can't be reused
+
+        def is_live(self):
+            return True
+
+        def stream_agent(self, *a, **k):
+            from lunamoth.protocol.events import TextDelta
+            yield TextDelta("done", k.get("channel", "say"))
+
+    import lunamoth.core.llm as llm_mod
+    orig = llm_mod.LLMClient
+    llm_mod.LLMClient = _SpyClient
+    try:
+        parent = _SpyClient(_FakeLLMCfg())   # ctx.llm IS an LLMClient (the spy)
+        constructed.clear()                  # ignore the parent's construction
+        ctx = make_ctx(tmp_path, dispatch=lambda n, a: "{}", llm=parent)
+        json.loads(dt_mod.delegate_task(
+            {"tasks": [{"goal": "a"}, {"goal": "b"}]}, ctx))
+    finally:
+        llm_mod.LLMClient = orig
+    # Two workers -> two distinct fresh clients, neither is the parent.
+    assert len(constructed) == 2
+    assert len({id(c) for c in constructed}) == 2
+    assert parent not in constructed
 
 
 def test_delegate_blocks_forbidden_tool(tmp_path):

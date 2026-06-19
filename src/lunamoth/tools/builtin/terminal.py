@@ -10,11 +10,17 @@ off to the process registry (builtin/_process_registry.py).
 Divergences from hermes, per the spec (.codex-fleet/spec-terminal-process.md):
   * Foreground over-limit timeout is CLAMPED (with a note), not rejected — the
     runner already does this. No "failure fallback" for a too-large timeout.
-  * PTY is deferred (the runner has no PTY; the supervisor owns the PTY shell).
-    A ``pty=true`` request is accepted but ignored, with a note.
+  * PTY (``pty=true``) runs the foreground command under a real pseudo-terminal
+    INSIDE the chara's isolation jail (``runner.run_terminal_pty``) so
+    interactive tools (REPLs, vim/top, isatty-branching commands) work. Same
+    clamp/ANSI-strip/truncate/group-kill as the pipe path. Background PTY is not
+    supported (the process registry runs over pipes) — surfaced with a note.
   * task_id / multi-backend env machinery is dropped (one process = one chara).
-  * The foreground-backgrounding guard is an ADVISORY note, never a hard block
-    (the chara curriculum's "neutral suggestions, never orders" principle).
+  * The foreground-backgrounding guard is a HARD BLOCK, apple-to-apple with
+    hermes (a long-lived/self-backgrounding command in the foreground is refused
+    with guidance to use background=true). This is a mature, value-NEUTRAL
+    harness behavior — the chara-VALUE neutrality principle does not apply to it
+    (CLAUDE.md, owner 2026-06-19).
 """
 from __future__ import annotations
 
@@ -90,7 +96,7 @@ TERMINAL_SCHEMA = {
             },
             "pty": {
                 "type": "boolean",
-                "description": "Run in pseudo-terminal (PTY) mode for interactive CLI tools like Codex, Claude Code, or Python REPL. Only works with local and SSH backends. Default: false.",
+                "description": "Run in pseudo-terminal (PTY) mode for interactive CLI tools (a REPL, vim/top, or any command that behaves differently when it detects a real terminal). Foreground only; no stdin is attached, so a command that blocks waiting for typed input will hit the timeout. Default: false.",
                 "default": False,
             },
             "notify_on_complete": {
@@ -129,32 +135,28 @@ def _strip_quotes(command: str) -> str:
     return re.sub(r"""(['"])(?:\\.|(?!\1).)*\1""", "", command)
 
 
-def _foreground_background_advisory(command: str) -> str:
-    """A soft note (not a block) when a foreground command looks long-lived.
+def _foreground_block_reason(command: str) -> str:
+    """Why a foreground command must be REFUSED (empty string = allowed).
 
-    hermes hard-blocks (status:error); LunaMoth's chara curriculum prefers a
-    neutral suggestion — return a hint string, never reject.
+    A long-lived server/watcher/daemon in the foreground blocks the whole turn
+    until the timeout kills it; shell-level self-backgrounding (nohup/disown/
+    setsid/trailing &) escapes the runner's process-group tracking. Both are
+    HARD-BLOCKED with guidance to use ``terminal(background=true)`` — apple-to-
+    apple with hermes (terminal_tool.py:1683-1726). This is a mature, value-
+    NEUTRAL harness behavior, not a chara-value choice (CLAUDE.md, owner
+    2026-06-19): the harness adopts hermes's solution directly.
     """
     unquoted = _strip_quotes(command)
     if _HELP_VERSION_RE.search(unquoted):
         return ""
     low = unquoted.lower()
-    matched = None
     if _SHELL_LEVEL_BACKGROUND_RE.search(unquoted):
-        matched = "shell-level backgrounding (nohup/disown/setsid)"
-    elif re.search(r"(?:^|\s)&(?:\s|$)|&\s*$", unquoted):
-        matched = "a trailing '&'"
-    else:
-        for pat in _LONG_LIVED_FOREGROUND_PATTERNS:
-            if pat in low:
-                matched = f"a long-lived server pattern ({pat})"
-                break
-    if matched:
-        return (
-            f"\n[hint: this looks like {matched} run in the foreground. For "
-            "servers/watchers/daemons, prefer terminal(background=true) so the "
-            "process is tracked and its output stays readable.]"
-        )
+        return "shell-level backgrounding (nohup/disown/setsid)"
+    if re.search(r"(?:^|\s)&(?:\s|$)|&\s*$", unquoted):
+        return "a trailing '&'"
+    for pat in _LONG_LIVED_FOREGROUND_PATTERNS:
+        if pat in low:
+            return f"a long-lived server/watcher pattern ({pat})"
     return ""
 
 
@@ -190,19 +192,46 @@ def terminal(args: dict, ctx) -> str:
         )
 
     # ---- foreground ----
-    advisory = _foreground_background_advisory(command)
+    # Hard-block (hermes parity): a long-lived/self-backgrounding command in the
+    # foreground would wedge the turn — refuse and point at background=true.
+    blocked = _foreground_block_reason(command)
+    if blocked:
+        return tool_error(
+            f"Refused: this looks like {blocked} run in the foreground, which would "
+            "block this turn until the timeout. Use terminal(background=true) "
+            "(pair with notify_on_complete=true) for servers / watchers / daemons / "
+            "long-running tasks.",
+            output="", exit_code=-1, status="blocked",
+        )
     from pathlib import Path
     wd: Path | None = None
     if workdir:
         wd = Path(workdir) if str(workdir).startswith("/") else (ctx.workspace / workdir)
+    eff = effective_timeout or DEFAULT_TIMEOUT
     # The runner already clamps the timeout into [1, 600] and appends a note, so
     # an over-limit foreground timeout is clamped (not rejected) — no fallback.
-    out = ctx.run_terminal(command, timeout=effective_timeout or DEFAULT_TIMEOUT, workdir=wd)
-    note = ""
     if pty:
-        note += "\n[note: pty mode is not yet supported by the one-shot terminal; ran without a pseudo-terminal]"
-    note += advisory
-    return (out + note).strip()
+        out = _run_foreground_pty(command, ctx, timeout=eff, workdir=wd)
+    else:
+        out = ctx.run_terminal(command, timeout=eff, workdir=wd)
+    return out.strip()
+
+
+def _run_foreground_pty(command, ctx, *, timeout, workdir) -> str:
+    """Foreground PTY run: same isolation/clamp/strip/truncate as the pipe path,
+    but on a real pseudo-terminal (``runner.run_terminal_pty``). Env facts come
+    from the live state snapshot (ctx.run_terminal isn't pty-aware)."""
+    from ..runner import run_terminal_pty
+    status = ctx.state.load()
+    return run_terminal_pty(
+        command,
+        ctx.workspace,
+        isolation=str(status.get("isolation") or "") or None,
+        allow_network=bool(status.get("network_access", False)),
+        writable_paths=status.get("writable_paths", []) or [],
+        timeout=timeout,
+        workdir=str(workdir) if workdir else None,
+    )
 
 
 def _run_background(command, ctx, *, workdir, notify_on_complete, watch_patterns, pty) -> str:
@@ -257,7 +286,7 @@ def _run_background(command, ctx, *, workdir, notify_on_complete, watch_patterns
             "watch_patterns dropped because notify_on_complete is also set (mutually exclusive)"
         )
     if pty:
-        result["pty_note"] = "pty mode is not yet supported for background processes; ran without a pseudo-terminal"
+        result["pty_note"] = "pty mode applies to foreground commands only; this background process ran without a pseudo-terminal"
     if not notify_on_complete and not watch_patterns:
         result["hint"] = (
             "This background process runs SILENTLY — you'll only learn its outcome "
