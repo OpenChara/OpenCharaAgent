@@ -13,6 +13,11 @@ class AuditLog:
 
     def write(self, event: str, **data: Any) -> None:
         record = {"ts": datetime.now(timezone.utc).isoformat(), "event": event, **data}
+        # Ensure the directory exists AT WRITE TIME, not just at construction: a
+        # session's sandbox/logs/ can be created lazily or wiped (reset/cleanup)
+        # between constructing this log and the first tool call, and the audit
+        # trail must never crash the tool loop.
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
