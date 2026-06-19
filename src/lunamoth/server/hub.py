@@ -2010,8 +2010,10 @@ def set_modules(meta: S.SessionMeta, force_roleplay: Any = None,
     """
     try:
         cfg = json.loads(meta.config_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        cfg = dataclasses.asdict(Settings())
+    except (OSError, json.JSONDecodeError) as e:
+        # A corrupt/unreadable config must NOT be silently reset to fresh defaults
+        # (that would wipe the chara's model/isolation/etc). Surface it instead.
+        raise RpcError(-32031, f"cannot read session config for {meta.name!r}: {e}") from e
     if force_roleplay is not None:
         cfg["embodiment_override"] = "actor" if bool(force_roleplay) else "literal"
     if website is not None:
