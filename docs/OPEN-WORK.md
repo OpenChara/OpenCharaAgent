@@ -49,6 +49,22 @@ backlog.)
 > Still genuinely open: the allowlist `tool_access` force-reset note is obsolete
 > (that owner was retired); `mode`/autonomy double-write, `execute_code` double-cd,
 > and the P2 set (patience_override, card wishes re-seed) remain.
+>
+> **UPDATE 2026-06-20b (second audit round — three fresh-context reviews):**
+> ✅ macOS shell jail now denies the operator's whole `$HOME` (was: only
+> `~/.lunamoth`), so a chara's terminal/read_file can no longer read `~/.ssh`/
+> `~/.aws`; the browser jail surgically denies the same secret dirs; opted-in
+> writable paths stay read+write. ✅ Redaction unified — `execute_code` and the
+> audit `_safe_args` use the central `core.redact` (~30 shapes) not a 7-prefix
+> regex. ✅ Adversarial test batteries added for `_pathsec` (traversal/symlink/
+> null-byte) and the real `is_safe_url` (metadata/private/CGNAT; was monkeypatched).
+> ✅ messaging emits a loud warning when a gateway starts with an OPEN allow-list.
+> ✅ `server/supervisor.py` (2151 lines) and `server/hub/cards.py` (1173) split
+> into packages/sibling modules. ✅ CI gained a macOS runner so the Seatbelt/PTY
+> jail tests run on their native OS. Still open / owner-decision: adopting a Python
+> type-checker (mypy/pyright) in CI; surfacing "Landlock can't enforce /net off"
+> in the UI (it already logs an operator warning); and the product bets (packaged
+> DMG/AppImage, card market, chara-curriculum eval cards).
 
 **Smell A — one fact owned in several places that drift:**
 - **Tool allowlist has FOUR owners**, the worst offender. `FULL_TOOL_ACCESS`

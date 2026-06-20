@@ -355,10 +355,11 @@ zero internal deps; `obs/` imports only `config`.
   `stdio.py`/`ws.py` (transports for `lunamoth serve <name>`), `hub/` — a PACKAGE
   since 2026-06-20 (split from the old 2844-line `hub.py` god-module): `config.py`
   (defaults/keys), `models.py` (provider HTTP/test_key/_complete), `cards.py`
-  (card CRUD/draft/avatars/assets), `sessions.py` (lifecycle/transcript/messaging/
-  wake/export), `dispatch.py` (`HubDispatcher` with a `{method: handler}` table,
-  NOT an if-ladder), `_common.py` (leaf helpers), `__init__.py` (re-exports the
-  full public API, so `from ..server import hub as H` is unchanged)
+  (card CRUD/listing/sanitize), `card_draft.py` (LLM draft/rewrite/transcribe/
+  draft_to_card), `avatars.py` (avatar + art-asset I/O), `sessions.py` (lifecycle/
+  transcript/messaging/wake/export), `dispatch.py` (`HubDispatcher` with a
+  `{method: handler}` table, NOT an if-ladder), `_common.py` (leaf helpers),
+  `__init__.py` (re-exports the full public API, so `from ..server import hub as H` is unchanged)
   (board-level RPC: roster/cards/wake/export/defaults/key-test/transcribe plus
   supervisor child/gateway state; reads session dirs + transcript SQLite directly —
   one process = one activated session, so the hub NEVER hosts an agent.
@@ -375,9 +376,14 @@ zero internal deps; `obs/` imports only `config`.
   deferred follow-up — selecting it is a no-op for now). Avatar generation + field
   rewrite still use the system default model. Avatars are NEVER auto-generated (upload
   or an explicit generate → sidecar, stored separately from the card)),
-  `supervisor.py` (lunamothd: long-lived `serve --stdio` child registry; the
-  messaging host now runs INSIDE that child sharing its agent, so `GatewayChild`
-  just toggles it over RPC — no separate gateway process; seq/rejoin, life.state,
+  `supervisor/` (a PACKAGE since 2026-06-20, split from the 2151-line module:
+  `core.py` Supervisor + WS/PTY routing, `http.py` WebHandler + start_http +
+  serve_home/asset, `children.py` CharaChild/GatewayChild, `lifestate.py` the
+  policy classes, `observability.py` shutdown forensics, `daemon.py`, `paths.py`;
+  `from ..server import supervisor` unchanged) (lunamothd: long-lived `serve
+  --stdio` child registry; the messaging host now runs INSIDE that child sharing
+  its agent, so `GatewayChild` just toggles it over RPC — no separate gateway
+  process; seq/rejoin, life.state,
   idle driving, `/chara/<name>/pty` operator
   shell — audited, not a driver), `pty.py` (stdlib PtyBridge: a shell inside the
   chara's jail behind a pty, streamed as binary WS frames), `desktop.py` (thin
@@ -533,9 +539,13 @@ into the session's card, key stripped.)
   (sandbox-exec on macOS, bwrap on Linux) → **Landlock LSM** (Linux ≥5.13, the
   no-userns fallback that works inside Docker, where bwrap can't create a user
   namespace) → **refuse** (the `terminal` tool NEVER silently degrades to directory
-  trust — only an explicit `admin` runs unconfined). Confinement = read workspace+assets,
-  write workspace only; the chara can't read `~/.lunamoth` (the global key/login hash)
-  or `/proc/<pid>/environ`. **Servers: prefer a SYSTEM-LEVEL install** (install.sh /
+  trust — only an explicit `admin` runs unconfined). Confinement = read workspace+assets
+  (+ opted-in writable paths) + system libs, write workspace only; the chara can't
+  read the operator's whole `$HOME` — `~/.ssh`, `~/.aws`, `~/.lunamoth` (the global
+  key/login hash), other charas' sessions — nor `/proc/<pid>/environ`. (macOS shell
+  jail tightened 2026-06-20 to deny all of `$HOME`, matching Linux bwrap which never
+  exposes it; the browser jail, allow-default for Chromium, surgically denies the
+  high-value secret dirs.) **Servers: prefer a SYSTEM-LEVEL install** (install.sh /
   `lunamoth desktop`) so bwrap gives the full jail; Docker is also supported (Landlock
   confines the chara, the container is the outer boundary) but is the heavier option.
   Verified on a Landlock kernel 2026-06-17; minor follow-ups (no `/proc` ergonomics,
