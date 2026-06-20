@@ -124,6 +124,10 @@ def test_interactive_argv_legacy_docker_maps_to_admin(tmp_path):
 
 def test_jail_unavailable_raises_no_degrade(tmp_path, monkeypatch):
     monkeypatch.setattr(I.shutil, "which", lambda name: None)
+    # Also force Landlock off: on a Linux kernel with Landlock (e.g. CI runners)
+    # the sandbox tier would fall to Landlock instead of refusing, so "no jail"
+    # must mock BOTH the native jail (via shutil.which) AND Landlock.
+    monkeypatch.setattr(I, "landlock_available", lambda: False)
     with pytest.raises(I.JailUnavailableError):
         I.interactive_shell_argv("sandbox", tmp_path / "ws")
     with pytest.raises(I.JailUnavailableError):
@@ -250,6 +254,9 @@ def test_pty_ws_jail_unavailable_fails_visibly(pty_home, monkeypatch):
 
     S.create_session("jailed", isolation="sandbox")
     monkeypatch.setattr(I, "os_sandbox_available", lambda: False)
+    # On a Landlock-capable kernel (CI), the sandbox tier would use Landlock
+    # instead of refusing; force it off so "no jail available" actually holds.
+    monkeypatch.setattr(I, "landlock_available", lambda: False)
 
     async def scenario():
         port = free_port()

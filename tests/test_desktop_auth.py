@@ -88,7 +88,31 @@ def test_ws_handshake_authenticates_via_cookie():
 # ---- live HTTP server: auth gate + cookie path ------------------------------
 
 @pytest.fixture()
-def http_server():
+def _webui_stub():
+    """The SPA shell is served from SV.WEB_DIR (front/webui), a BUILD ARTIFACT
+    that's gitignored — present locally after `npm run build`, ABSENT in a clean
+    checkout / CI backend job. Lay down a minimal index.html if it's missing so
+    the static-serving + auth-gate tests are hermetic; clean up only what we made."""
+    index = SV.WEB_DIR / "index.html"
+    created_file = not index.exists()
+    created_dir = not SV.WEB_DIR.exists()
+    if created_file:
+        SV.WEB_DIR.mkdir(parents=True, exist_ok=True)
+        index.write_text("<!doctype html><title>stub</title>", encoding="utf-8")
+    try:
+        yield
+    finally:
+        if created_file:
+            index.unlink(missing_ok=True)
+        if created_dir:
+            try:
+                SV.WEB_DIR.rmdir()
+            except OSError:
+                pass
+
+
+@pytest.fixture()
+def http_server(_webui_stub):
     port = SV.free_port()
     srv = SV.start_http("127.0.0.1", port, token="sekret", supervisor=None)
     try:
