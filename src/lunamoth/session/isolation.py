@@ -169,13 +169,16 @@ def _macos_profile(workspace: Path, allow_network: bool, writable: list[Path], *
     # own workspace + assets. Previously only ~/.lunamoth was denied, so a chara's
     # terminal/read_file could read the operator's ~/.ssh — the macOS shell jail
     # is now as tight as the Linux bwrap jail, which never exposes $HOME. PATH is
-    # system-only (_base_env), so interpreters still resolve under /usr.
+    # system-only (_base_env), so interpreters still resolve under /usr. The
+    # operator-opted-in `writable` paths are re-allowed for READ too (they may sit
+    # under the denied $HOME; last-match-wins restores parity with Linux, which
+    # --binds them read+write — otherwise /allow-dir would be write-but-not-read).
     reads = (
         '(allow file-read*)\n'
         f'(deny file-read* (subpath "{user_home}"))\n'
         f'(deny file-read* (subpath "{home}"))\n'
-        f'(allow file-read* (subpath "{workspace}"))\n'
-        f'(allow file-read* (subpath "{assets}"))'
+        + "".join(f'(allow file-read* (subpath "{p}"))\n' for p in [workspace, *writable])
+        + f'(allow file-read* (subpath "{assets}"))'
     )
     # An interactive shell sits on a pty SLAVE (/dev/ttysNN on macOS): job
     # control (TIOCSPGRP/TIOCGWINSZ) and termios need ioctl plus read/write on

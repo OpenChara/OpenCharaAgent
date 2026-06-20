@@ -242,6 +242,15 @@ def test_macos_sandbox_hides_user_home_secrets(tmp_path, monkeypatch):
                            isolation="sandbox", allow_network=True, timeout=15)
     assert "SYSREAD_OK" in sysread  # system libs/binaries still readable (shell works)
 
+    # An operator-opted-in writable path UNDER $HOME must be READable too (parity
+    # with Linux --bind), not just writable — else /allow-dir is write-but-no-read.
+    shared = fake_home / "shared"
+    shared.mkdir()
+    (shared / "in.txt").write_text("OPTED_IN_READABLE")
+    optread = run_terminal(f"cat {shared / 'in.txt'}", ws, isolation="sandbox",
+                           allow_network=True, writable_paths=[str(shared)], timeout=15)
+    assert "OPTED_IN_READABLE" in optread
+
 
 def _q(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
