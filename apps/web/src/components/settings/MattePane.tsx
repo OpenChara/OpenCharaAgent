@@ -7,14 +7,18 @@ import { deckToast } from "../ui/deckToast";
 
 /* Background-removal (抠像 → 背景去除) local models — an embeddable section shown
    at the BOTTOM of the Model pane. Each model has a one-click Install button that
-   downloads in-app with a live progress bar (% + bytes, advances by polling
-   matte.status) — no manual `uv`. The larger model is recommended; the Lite one
-   is fine too. Make-default / delete once installed. */
+   does EVERYTHING: it installs the matting engine (rembg/onnxruntime) the first
+   time if needed, then downloads the weights — with a live progress bar (% +
+   bytes, advanced by polling matte.status). No separate "install deps" step, no
+   manual uv. The larger model is recommended; the Lite one is fine too. */
 
 interface MatteProgress { state?: string; done?: number; total?: number; error?: string }
 interface MatteModel { id: string; label: string; note: string; size: number; installed: boolean; active: boolean; progress?: MatteProgress | null }
-interface DepsProgress { state?: string; error?: string }
-interface MatteStatus { deps: boolean; deps_progress?: DepsProgress; home: string; active: string; models: MatteModel[] }
+interface MatteStatus { deps: boolean; home: string; active: string; models: MatteModel[] }
+
+// states where the install is still working (keep polling + show busy/progress)
+const ACTIVE_STATES = ["preparing", "installing_deps", "downloading"];
+const inFlight = (m: MatteModel) => !!m.progress && ACTIVE_STATES.includes(m.progress.state || "");
 
 export function MatteSection() {
   const t = useT();
@@ -33,9 +37,7 @@ export function MatteSection() {
     const tick = async () => {
       const s = await refresh();
       if (!alive) return;
-      const downloading = !!s && s.models.some((m) => m.progress && m.progress.state === "downloading");
-      const installing = s?.deps_progress?.state === "installing";
-      if (downloading || installing) poll.current = setTimeout(tick, 1500);
+      if (s && s.models.some(inFlight)) poll.current = setTimeout(tick, 1500);
     };
     void tick();
     return () => { alive = false; if (poll.current) clearTimeout(poll.current); };
@@ -50,23 +52,11 @@ export function MatteSection() {
     try {
       const s = await hub.call<MatteStatus>(method, { model: id }, 20000);
       setSt(s);
-      if (s.models.some((m) => m.progress && m.progress.state === "downloading") && !poll.current) poll.current = setTimeout(() => void refresh(), 1500);
+      if (s.models.some(inFlight) && !poll.current) poll.current = setTimeout(() => void refresh(), 1500);
     } catch (e) { deckToast(rpcErrText(t, e as { message?: string }), true); }
     finally { setBusyId(id, false); }
   };
 
-  const installDeps = async () => {
-    if (busy.has("__deps")) return;
-    setBusyId("__deps", true);
-    try {
-      const s = await hub.call<MatteStatus>("matte.install_deps", {}, 20000);
-      setSt(s);
-      if (s.deps_progress?.state === "installing" && !poll.current) poll.current = setTimeout(() => void refresh(), 1500);
-    } catch (e) { deckToast(rpcErrText(t, e as { message?: string }), true); }
-    finally { setBusyId("__deps", false); }
-  };
-
-  const depsState = st?.deps_progress?.state;
   // the larger model is the recommended one
   const recId = (st?.models || []).reduce<string>((best, m) => (!best || m.size > (st!.models.find((x) => x.id === best)?.size || 0) ? m.id : best), "");
 
@@ -75,28 +65,12 @@ export function MatteSection() {
       <h3 className="aux-title">{t("matte-title")}</h3>
       <div className="aux-subline">{t("matte-sub")}</div>
 
-      {st && !st.deps && (
-        <div className="aux-row matte-deps-row">
-          <div className="aux-main">
-            <div className="aux-head"><b>{t("matte-deps-title")}</b></div>
-            <div className="aux-cur">
-              {depsState === "installing" ? <span className="lm-thinking">{t("matte-deps-installing")}</span>
-                : depsState === "error" ? <span className="okline bad small">{st.deps_progress?.error || t("matte-dl-failed")}</span>
-                : t("matte-deps-sub")}
-            </div>
-          </div>
-          <div className="aux-acts">
-            <button className="btn soft sm" disabled={busy.has("__deps") || depsState === "installing"} onClick={() => void installDeps()}>
-              {depsState === "installing" ? <span className="spin" /> : t("matte-deps-install")}
-            </button>
-          </div>
-        </div>
-      )}
-
       {(st?.models || []).map((m) => {
         const prog = m.progress || {};
+        const preparing = prog.state === "preparing" || prog.state === "installing_deps";
         const downloading = prog.state === "downloading";
         const failed = prog.state === "error";
+        const working = preparing || downloading;
         const isBusy = busy.has(m.id);
         const pct = prog.total ? Math.floor(((prog.done || 0) / prog.total) * 100) : 0;
         return (
@@ -107,7 +81,9 @@ export function MatteSection() {
                 {m.id === recId && <span className="prov-badge">{t("model-recommended")}</span>}
                 <span className="aux-desc">{m.note} · {fmtSize(m.size)}</span>
               </div>
-              {downloading ? (
+              {preparing ? (
+                <div className="matte-prog"><span className="lm-thinking">{t("matte-deps-installing")}</span></div>
+              ) : downloading ? (
                 <div className="matte-prog">
                   <div className="matte-bar"><div className="matte-fill" style={{ width: `${pct}%` }} /></div>
                   <span className="muted small">{t("matte-downloading")} {pct}% · {fmtSize(prog.done || 0)} / {fmtSize(prog.total || 0)}</span>
@@ -120,8 +96,8 @@ export function MatteSection() {
             </div>
             <div className="aux-acts">
               {!m.installed ? (
-                <button className="btn soft sm" disabled={isBusy || downloading || !st?.deps} title={!st?.deps ? t("matte-deps-first") : undefined} onClick={() => void act(m.id, "matte.download")}>
-                  {downloading ? <span className="spin" /> : t("matte-install")}
+                <button className="btn soft sm" disabled={isBusy || working} onClick={() => void act(m.id, "matte.download")}>
+                  {working ? <span className="spin" /> : t("matte-install")}
                 </button>
               ) : (
                 <>

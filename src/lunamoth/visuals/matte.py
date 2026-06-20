@@ -117,12 +117,14 @@ def deps_available() -> bool:
         return False
 
 
-# --- optional-deps install (background; `uv sync --extra visuals`) ------------
-# The visuals extra (rembg/onnxruntime) is heavy + platform-specific, so it is
-# installed on demand from the Settings UI rather than bundled. We run the
-# project's own `uv sync --extra visuals` (respects the lock, no pip/lock drift)
-# in the project root (config.ROOT = the installed app dir or the dev checkout)
-# and surface a coarse installing/done/error state (uv gives no per-step %).
+# --- optional-deps install ----------------------------------------------------
+# The visuals extra (rembg[cpu] = rembg + onnxruntime, pillow, numpy) is heavy +
+# platform-specific, so it is installed ON DEMAND — and TRANSPARENTLY, as the first
+# phase of installing a matte model (the user never installs deps separately). We
+# install directly into the RUNNING interpreter's environment with
+# `uv pip install --python <this python>` (else `pip install`), NEVER `uv sync`:
+# `uv sync` needs a pyproject.toml in cwd and fails for a packaged/relocated
+# install ("No pyproject.toml found").
 _deps_progress: dict = {}
 
 
@@ -136,9 +138,36 @@ def _uv_bin() -> str:
     return shutil.which("uv") or str(Path.home() / ".lunamoth" / "bin" / "uv")
 
 
+def _visuals_pkgs() -> list[str]:
+    """The packages of pyproject's ``visuals`` extra — installed directly so no
+    project checkout / pyproject.toml is required."""
+    return ["rembg[cpu]>=2.0.50", "pillow>=10", "numpy>=1.24"]
+
+
+def _install_deps_blocking(timeout: int = 1800) -> None:
+    """Install the visuals stack INTO THE RUNNING interpreter's environment so
+    ``import rembg`` works at runtime. Blocks until done; raises ``RuntimeError``
+    carrying the output tail on failure (never a silent/fake success)."""
+    import importlib
+    import shutil
+    import subprocess
+    import sys
+    uv = _uv_bin()
+    if Path(uv).exists() or shutil.which("uv"):
+        cmd = [uv, "pip", "install", "--python", sys.executable, *_visuals_pkgs()]
+    else:
+        cmd = [sys.executable, "-m", "pip", "install", "--break-system-packages", *_visuals_pkgs()]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    importlib.invalidate_caches()  # make the freshly-installed package importable now
+    if proc.returncode != 0 or not deps_available():
+        tail = (proc.stderr or proc.stdout or "dependency install failed").strip()[-400:]
+        raise RuntimeError(f"could not install background-removal dependencies: {tail}")
+
+
 def install_deps_async() -> dict:
-    """Start `uv sync --extra visuals` in the background (idempotent). The hub
-    polls :func:`status` (which carries ``deps_progress``). Never raises."""
+    """Install the visuals stack in the background (idempotent). Kept for the
+    legacy ``matte.install_deps`` RPC; the model-install flow now installs deps
+    itself, so the UI no longer needs a separate step. Never raises."""
     with _lock:
         if deps_available():
             _deps_progress.clear(); _deps_progress.update({"state": "done"})
@@ -148,24 +177,10 @@ def install_deps_async() -> dict:
         _deps_progress.clear(); _deps_progress.update({"state": "installing"})
 
     def _run() -> None:
-        import subprocess
-        from ..config import ROOT
         try:
-            uv = _uv_bin()
-            if not (Path(uv).exists() or __import__("shutil").which("uv")):
-                raise RuntimeError("uv not found — install.sh provides one")
-            proc = subprocess.run(
-                [uv, "sync", "--extra", "visuals"], cwd=str(ROOT),
-                capture_output=True, text=True, timeout=1800,
-            )
-            ok = proc.returncode == 0 and deps_available()
+            _install_deps_blocking()
             with _lock:
-                _deps_progress.clear()
-                if ok:
-                    _deps_progress.update({"state": "done"})
-                else:
-                    tail = (proc.stderr or proc.stdout or "install failed").strip()[-400:]
-                    _deps_progress.update({"state": "error", "error": tail})
+                _deps_progress.clear(); _deps_progress.update({"state": "done"})
         except Exception as exc:  # noqa: BLE001 — surface, never crash the hub
             with _lock:
                 _deps_progress.clear(); _deps_progress.update({"state": "error", "error": str(exc)[:400]})
@@ -227,16 +242,19 @@ def download(model_id: str, *, progress_cb=None, chunk: int = 1 << 20) -> Path:
 
 
 def download_async(model_id: str) -> dict:
-    """Start a background download (idempotent while one is running) and return
-    this model's progress record. The hub polls :func:`status`/:func:`progress`."""
+    """Install a matte model in the background — ONE click does everything: first
+    the matting engine (rembg/onnxruntime) if it isn't present yet, then the model
+    weights with byte-level progress. Idempotent while one is running. The hub
+    polls :func:`status`/:func:`progress`. Progress ``state`` walks
+    preparing → installing_deps (if needed) → downloading → done | error."""
     if model_id not in MODELS:
         raise KeyError(f"unknown matte model: {model_id}")
+    size = MODELS[model_id].size
     with _lock:
         if model_id in _active:
             return dict(_progress.get(model_id) or {})
         _active.add(model_id)
-        _progress[model_id] = {"state": "downloading", "done": 0,
-                               "total": MODELS[model_id].size}
+        _progress[model_id] = {"state": "preparing", "done": 0, "total": size}
 
     def _cb(done: int, total: int) -> None:
         with _lock:
@@ -244,13 +262,22 @@ def download_async(model_id: str) -> dict:
             if rec is not None:
                 rec["done"], rec["total"] = done, total
 
+    def _set(state: str) -> None:
+        with _lock:
+            _progress[model_id] = {"state": state, "done": 0, "total": size}
+
     def _run() -> None:
         try:
+            # 1. ensure the matting engine is installed (one-time, ~100MB+) — done
+            #    transparently so the user never installs deps as a separate step.
+            if not deps_available():
+                _set("installing_deps")
+                _install_deps_blocking()
+            # 2. download the model weights, reporting byte progress
+            _set("downloading")
             download(model_id, progress_cb=_cb)
             with _lock:
-                _progress[model_id] = {"state": "done",
-                                       "done": MODELS[model_id].size,
-                                       "total": MODELS[model_id].size}
+                _progress[model_id] = {"state": "done", "done": size, "total": size}
         except Exception as e:  # noqa: BLE001 — surfaced to the UI, never swallowed
             with _lock:
                 _progress[model_id] = {"state": "error", "error": str(e)}

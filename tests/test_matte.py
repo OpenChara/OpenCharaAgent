@@ -151,17 +151,56 @@ def test_download_noop_when_already_installed(tiny_model, monkeypatch):
     assert matte.download("test-tiny") == p
 
 
+def _join_matte_worker(model_id="test-tiny", timeout=5):
+    for th in list(__import__("threading").enumerate()):
+        if th.name == f"matte-dl-{model_id}":
+            th.join(timeout=timeout)
+
+
 def test_download_async_records_done(tiny_model, monkeypatch):
     spec, payload = tiny_model
+    # deps already present → install goes straight to the weights download
+    monkeypatch.setattr(matte, "deps_available", lambda: True)
     monkeypatch.setattr(matte.urllib.request, "urlopen", lambda req, timeout=0: _Resp(payload))
     matte.download_async("test-tiny")
-    # join the worker thread deterministically
-    for th in list(__import__("threading").enumerate()):
-        if th.name == "matte-dl-test-tiny":
-            th.join(timeout=5)
+    _join_matte_worker()
     prog = matte.progress("test-tiny")
     assert prog and prog["state"] == "done"
     assert matte.is_installed("test-tiny") is True
+
+
+def test_download_async_installs_deps_first_when_missing(tiny_model, monkeypatch):
+    # ONE click: with deps absent, the worker installs the engine FIRST (the
+    # installing_deps phase), then downloads the weights — no separate deps step.
+    spec, payload = tiny_model
+    monkeypatch.setattr(matte, "deps_available", lambda: False)
+    phases = []
+
+    def fake_install_deps(timeout=1800):
+        phases.append(matte.progress("test-tiny")["state"])  # should be 'installing_deps'
+
+    monkeypatch.setattr(matte, "_install_deps_blocking", fake_install_deps)
+    monkeypatch.setattr(matte.urllib.request, "urlopen", lambda req, timeout=0: _Resp(payload))
+    matte.download_async("test-tiny")
+    _join_matte_worker()
+    assert phases == ["installing_deps"]                  # deps installed first
+    prog = matte.progress("test-tiny")
+    assert prog and prog["state"] == "done"               # then weights downloaded
+    assert matte.is_installed("test-tiny") is True
+
+
+def test_download_async_surfaces_deps_install_failure(tiny_model, monkeypatch):
+    monkeypatch.setattr(matte, "deps_available", lambda: False)
+
+    def boom(timeout=1800):
+        raise RuntimeError("could not install background-removal dependencies: pip exploded")
+
+    monkeypatch.setattr(matte, "_install_deps_blocking", boom)
+    matte.download_async("test-tiny")
+    _join_matte_worker()
+    prog = matte.progress("test-tiny")
+    assert prog and prog["state"] == "error" and "dependencies" in prog["error"]
+    assert matte.is_installed("test-tiny") is False  # never downloaded the weights
 
 
 def test_delete_removes_file(tiny_model):

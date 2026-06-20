@@ -269,13 +269,13 @@ class HubDispatcher:
         return matte.status()
 
     def _matte_download(self, p: dict[str, Any]) -> Any:
+        # Installs the matte model in the background: the matting engine
+        # (rembg/onnxruntime) first if it isn't present, then the weights — one
+        # click, no separate deps step. Progress is polled via matte.status.
         from ...visuals import matte
         mid = str(p.get("model") or "")
         if mid not in matte.MODELS:
             raise RpcError(-32602, f"unknown matte model: {mid}")
-        if not matte.deps_available():
-            raise RpcError(-32050, "the visuals extra isn't installed — run "
-                           "`uv sync --extra visuals` (rembg/onnxruntime) first")
         matte.download_async(mid)
         return matte.status()
 
