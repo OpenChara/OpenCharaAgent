@@ -507,35 +507,46 @@ def run_terminal_pty(
     total = 0
     deadline = time.monotonic() + timeout
     timed_out = False
-    # Read the merged tty stream until EOF (child gone, master EIO) or timeout.
+    # Grace after the child exits: keep reading buffered bytes, but if the master
+    # never EOFs (it can stay open on macOS after the slave closes — the session /
+    # controlling-tty keeps a ref) stop once the child has been gone this long with
+    # nothing new, instead of hanging to the timeout. Reset on each fresh read so an
+    # actively-draining child isn't cut off.
+    _EXIT_GRACE = 0.4
+    exited_at: float | None = None
+    # Read the merged tty stream until EOF (child gone, master EIO), the post-exit
+    # grace elapses, or the timeout fires.
     while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
+        now = time.monotonic()
+        if now >= deadline:
             timed_out = True
             break
+        if exited_at is not None and now - exited_at >= _EXIT_GRACE:
+            break  # child gone + grace drained, even if the master never EOFed
         try:
-            readable, _, _ = select.select([master], [], [], min(remaining, 0.2))
+            readable, _, _ = select.select([master], [], [], 0.1)
         except (OSError, ValueError):
             break
-        if not readable:
-            if proc.poll() is not None:
-                break  # child exited and the buffer is drained
+        if readable:
+            try:
+                data = os.read(master, 65536)
+            except OSError as exc:
+                # EIO = slave side closed (child exited, Linux); EBADF = master closed.
+                if exc.errno in {errno.EIO, errno.EBADF}:
+                    break
+                raise
+            if not data:
+                break  # EOF
+            chunks.append(data)
+            total += len(data)
+            if total > _OUTPUT_CAP * 4 and len(chunks) > 64:
+                chunks = chunks[:32] + chunks[-32:]  # coarse middle-drop, refined below
+            if exited_at is not None:
+                exited_at = time.monotonic()  # got data after exit → extend the grace
             continue
-        try:
-            data = os.read(master, 65536)
-        except OSError as exc:
-            # EIO = slave side closed (child exited, Linux); EBADF = master closed.
-            if exc.errno in {errno.EIO, errno.EBADF}:
-                break
-            raise
-        if not data:
-            break  # EOF
-        # Cap the retained bytes so a runaway emitter can't blow memory; we keep
-        # head+tail at the byte level, truncate_middle does the final clean cut.
-        chunks.append(data)
-        total += len(data)
-        if total > _OUTPUT_CAP * 4 and len(chunks) > 64:
-            chunks = chunks[:32] + chunks[-32:]  # coarse middle-drop, refined below
+        # nothing readable this slice → start the post-exit grace once the child is gone
+        if exited_at is None and proc.poll() is not None:
+            exited_at = time.monotonic()
 
     out_b = b"".join(chunks)
     if timed_out or proc.poll() is None:
