@@ -54,9 +54,11 @@ describe("I18N strings map", () => {
   // (keyvisual + stickers generation, async polling, identity anchor) added 3
   // (vis-kind-stickers, vis-anchor-hint, vis-gen-progress) → 592. The runtime
   // sandbox⇄admin isolation toggle in chara settings added 2 (p-sandbox-sub,
-  // iso-admin-confirm) → 594.
-  it("preserves the full key set from the source dict (594 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(594);
+  // iso-admin-confirm) → 594. Then the wake sheet's isolation picker became a plain
+  // on/off 沙盒 switch (like the other wake toggles): removed 5 (wake-iso, iso-dir,
+  // iso-sandbox, iso-dir-d, iso-sandbox-d), added wake-iso-sub → 590.
+  it("preserves the full key set from the source dict (590 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(590);
   });
 
   it("every value is a [zh, en] string tuple", () => {

@@ -25,13 +25,6 @@ import { deckToast } from "../ui/deckToast";
 import { DeckModal } from "../ui/DeckModal";
 import type { DeckCard, ModelInfo } from "./types";
 
-const ISO_OPTS: ReadonlyArray<readonly [string, string, string]> = [
-  ["sandbox", "iso-sandbox", "iso-sandbox-d"],
-  // canonical backend name is "admin"; "dir" was the legacy value (normalized
-  // server-side) — send the real one so we don't rely on the compat shim.
-  ["admin", "iso-dir", "iso-dir-d"],
-] as const;
-
 export function WakeSheet({ card, onClose }: { card: DeckCard; onClose: () => void }) {
   const t = useT();
   const { hub, snapshot, refresh } = useHub();
@@ -172,14 +165,13 @@ export function WakeSheet({ card, onClose }: { card: DeckCard; onClose: () => vo
             </div>
           </div>
           <div className="field-row">
-            <label>{t("wake-iso")}</label>
-            <div className="iso-seg">
-              {ISO_OPTS.map(([key, label, desc]) => (
-                <div key={key} className={key === iso ? "on" : ""} onClick={() => setIso(key)}>
-                  <b>{t(label)}</b>
-                  <span>{t(desc)}</span>
-                </div>
-              ))}
+            <div className="switch-row" style={{ fontSize: "12.5px" }}>
+              <b style={{ fontWeight: 550 }}>{t("p-sandbox")}</b>
+              <small>{t("wake-iso-sub")}</small>
+              <button
+                className={"switch" + (iso === "sandbox" ? " on" : "")}
+                onClick={() => setIso((v) => (v === "sandbox" ? "admin" : "sandbox"))}
+              />
             </div>
           </div>
         </div>

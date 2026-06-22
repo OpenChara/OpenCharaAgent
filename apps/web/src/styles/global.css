@@ -1475,11 +1475,6 @@ details.cv-raw pre{
   border:none; outline:none; background:none; font:inherit; flex:1; color:var(--text); min-width:0;
 }
 .input-like .cue{margin-left:auto; color:var(--text-3); font-size:11px; flex:none}
-.iso-seg{display:flex; gap:6px; margin-bottom:6px}
-.iso-seg>div{flex:1; border:1px solid var(--hairline); border-radius:9px; padding:8px 10px; cursor:pointer}
-.iso-seg>div.on{border-color:var(--accent); background:var(--accent-soft); box-shadow:0 0 0 1px var(--accent)}
-.iso-seg b{font-size:12.5px; display:flex; align-items:center; gap:5px}
-.iso-seg span{font-size:10.5px; color:var(--text-3); display:block; margin-top:2px; line-height:1.45}
 .amber-note{font-size:11.5px; color:var(--amber); margin-top:6px}
 /* toolpack picker (toolpacks.list): selectable packs above the free-text input */
 .pack-list{display:flex; flex-direction:column; gap:6px; margin-top:8px; max-height:30vh; overflow:auto}
@@ -1982,7 +1977,6 @@ body.dark .capbadge{background:rgba(47,191,90,.16); color:#5BD389}
 body.dark .capbadge.star{background:rgba(127,182,222,.16)}
 body.dark .capbadge.off{background:rgba(255,255,255,.07)}
 body.dark .capbadge.warn{background:rgba(217,147,13,.18)}
-body.dark .iso-seg>div{border-color:var(--hairline)}
 body.dark .goal i{border-color:rgba(255,255,255,.3)}
 body.dark .provider .radio{border-color:rgba(255,255,255,.3)}
 body.dark .fr-dots i{background:rgba(255,255,255,.18)}
