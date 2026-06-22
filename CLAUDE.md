@@ -188,7 +188,10 @@ outside `front/` imports `front/` or textual/rich; `front/` reaches the backend
 only through `protocol/` (CharaHandle); `protocol/events.py`+`codec.py` have
 zero internal deps; `obs/` imports only `config`.
 
-- `config.py` — root constants (ROOT, SANDBOX_ROOT, LLMConfig). The only flat module.
+- `config.py` — root constants (ROOT, SANDBOX_ROOT, LLMConfig) + `openrouter_attribution_headers()`
+  (the `HTTP-Referer`=lunamoth.ai + `X-Title`=LunaMoth app-attribution headers sent on every
+  OpenRouter request — chat/llm.py, hub/models.py and image/_image_gen.py all use it; env-overridable).
+  The only flat module.
 - `core/` — the agent backend:
   - `agent.py` — `LunaMothAgent`: three-zone prompt assembly (`_stable_prefix`
     cached per session / `_volatile_tail` per turn), streaming loop, tool exec,
@@ -329,12 +332,25 @@ zero internal deps; `obs/` imports only `config`.
   from diagnostics; never merge them). transcript/audit/logs = three records,
   three jobs.
 - `visuals/` — the chara-visuals pipeline (merged from the sibling's R9/R11):
-  `pipeline.py` (card → visual brief → Volcano Ark Seedream image-gen → optional
-  local matte → staged preview; the `card.visual_brief`/`card.visual_generate`
-  hub RPCs), `matte.py` (local background-removal models — download/install/select,
+  `pipeline.py` (card → ONE shared visual brief → image-gen → optional local matte →
+  staged preview). FIVE kinds: keyvisual / avatar / sprite / stickers / background.
+  `keyvisual` is the IDENTITY ANCHOR — generated/confirmed first, then its image is
+  reused as a reference for the other kinds so the whole set stays one character (the
+  ref-chaining lives in the web VisualEditor, confirm-gated, not server-side). The
+  brief RECOMMENDS the anime/二游 look by DEFAULT but the brief LM still picks a
+  per-character `style` and may depart (avatar + stickers stay chibi by design).
+  `stickers` is a 3x3 sheet → `content.imaging.slice_grid` (white-gutter detection +
+  per-cell content-trim) → per-cell matte (or the keyless PIL `matte.cut_white_bg`
+  border-flood fallback — sheets are WHITE-backed now, not green) → saved as a LIST via
+  `card.stickers_save`. Generation is ASYNC (it's slow): `card.visual_generate` returns
+  a `job_id`; the client polls `card.visual_job` (`visuals/jobs.py`, a module-level job
+  registry mirroring the `matte.*` poll pattern). Hub RPCs: `card.visual_brief` (sync) +
+  `card.visual_generate`/`card.visual_job` (async) + `card.stickers_save`.
+  `matte.py` (local background-removal models — download/install/select,
   the `matte.*` hub RPCs; the heavy `rembg`/`onnxruntime` stack is the OPTIONAL
   `visuals` extra, `uv sync --extra visuals`). The web side is the deck card
-  editor's 视觉 tab + the 生图 Settings pane (matte models). IMAGE GEN is
+  editor's 视觉 tab (all five kinds; confirm-gated prompt → anchor → rest flow with
+  async progress + 一键生成全部, anchor-first) + the 生图 Settings pane (matte models). IMAGE GEN is
   MULTI-PROVIDER (2026-06-19): `content/image_providers.py` is the provider
   catalogue (火山方舟 Ark / 阿里云 DashScope / OpenAI / OpenRouter), and
   `tools/builtin/_image_gen.py` dispatches to per-provider adapters (ark sync,

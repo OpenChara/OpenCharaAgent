@@ -162,17 +162,21 @@ background thread, so a flapping endpoint can't freeze a turn). Remaining LOW:
   fs-only under that tier.
 
 ## R5-followup (LOW) — card-view art editing + richer world/expressions
-R5 shipped the multi-page card view (display + 设定/世界 editing). Deferred:
-per-asset upload for 立绘/主视觉/背景 + stickers (need upload RPCs like avatar_upload);
-a labeled-expression data model (`assets.stickers` → `[{label,file}]`, back-compat with
-bare strings) so 表情 becomes a named set; and the per-entry world editor for EDITABLE
-cards (read-only cards already show per-entry cards; editable still uses the text editor).
+R5 shipped the multi-page card view (display + 设定/世界 editing). DONE (2026-06-22 visuals
+pass): per-asset generate + save for 立绘/主视觉/头像/表情/背景 — the 视觉 tab now generates
+all five kinds (async), `card.asset_save` + the new `card.stickers_save`, so 表情 is a
+generatable + saveable set. STILL DEFERRED: the labeled-expression data model
+(`assets.stickers` → `[{label,file}]`, back-compat with the current bare-string list) so
+表情 becomes a NAMED set; and the per-entry world editor for EDITABLE cards (read-only
+cards already show per-entry cards; editable still uses the text editor).
 
 ## R6 (P3) — Blank card → auto-generate a visual set via the image key (opt-in)
-Well-designed interaction, now fully UNBLOCKED (R9 in-app visuals pipeline + R4
-generate_image both landed). Reuse `visuals/pipeline.py` + the brief approach to
-fill a blank card's 立绘/主视觉/头像/背景 set — the "auto-fill a blank card" entry
-point into the existing visuals pipeline. Spends real money; opt-in/cost UX.
+Largely BUILT (2026-06-22): the 视觉 tab generates the full set — keyvisual ANCHOR first,
+then avatar/sprite/stickers/background referencing it for identity-lock, async polling +
+一键生成全部 (anchor-first). What REMAINS is the "blank card → auto-fill at CREATION"
+entry point (a one-click "give this new card a face" from the create/wake flow) + the
+opt-in/cost UX; the generation machinery (`visuals/pipeline.py` + the brief + anchor
+reuse) is done.
 
 ---
 
@@ -183,8 +187,10 @@ fixes are on main and not retained here):
 
 ## Live verification (visuals + messaging) — needs real credentials/a host
 The visuals pipeline + global keys + matte shipped but were never exercised
-end-to-end: needs a real ARK image key (full card visual-set generation) and a
-downloaded matte model (the cutout path). Same shape as the WeChat/QQ messaging
+end-to-end: needs a real image key (full card visual-set generation — now incl. the
+keyvisual anchor → identity-locked avatar/sprite/stickers/background, async job polling,
+and the white-bg sticker slice) and a downloaded matte model (the cutout path; without it
+the keyless `cut_white_bg` fallback runs). Same shape as the WeChat/QQ messaging
 live-test (roadmap C.1). Budget one verification round with real keys.
 
 ## (2)(5)(6)(7) — deferred to the UI/feel refactor
