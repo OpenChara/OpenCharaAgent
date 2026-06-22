@@ -1,7 +1,7 @@
 {
   "name": "lunamoth-desktop",
   "productName": "LunaMoth",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "LunaMoth desktop shell — a thin Electron window around `lunamoth desktop`",
   "private": true,
   "license": "MIT",
