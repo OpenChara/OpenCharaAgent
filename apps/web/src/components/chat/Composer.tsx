@@ -22,7 +22,7 @@ import { readAttachment, humanSize, ATTACH_MAX_BYTES, ATTACH_ACCEPT_ALL } from "
  * backend registry. */
 type Cmd = { name: string; usage: string; en: string; zh: string };
 const COMMANDS: Cmd[] = [
-  { name: "polaris", usage: "/polaris [text | clear]", en: "the chara's north-star ideal (yours to set; never finished)", zh: "角色的北极星理想（你来设定，永不完成）" },
+  { name: "aspiration", usage: "/aspiration [text | clear]", en: "the chara's lifelong ideal (yours to set)", zh: "角色一生追寻的理想（你来设定）" },
   { name: "mode", usage: "/mode live|chat", en: "live: keeps creating while you watch; chat: replies only", zh: "live：边看边自主创作；chat：只回应你" },
   { name: "model", usage: "/model <id>", en: "session-scoped model hot-swap (empty: show current)", zh: "本会话临时换模型（留空查看当前）" },
   { name: "provider", usage: "/provider <label>", en: "switch this chara to a saved provider key", zh: "切换到已保存的供应商 key" },

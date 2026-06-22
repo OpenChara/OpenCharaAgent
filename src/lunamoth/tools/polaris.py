@@ -1,15 +1,20 @@
-"""Per-chara Polaris — the chara's north-star ideal.
+"""Per-chara aspiration — the chara's single lifelong ideal.
 
-Polaris (北极星) is a SINGLE grand ideal the chara lives toward but can never
-fully reach — unattainable by design, so it has no "done"/"dropped" status. It
-is authored by the USER (the card field, the `/polaris` command, and the UI) and
-is READ-ONLY to the chara: the chara cannot edit or complete it. It is injected
-into every turn as a quiet guiding star (see `render_block`). Seeded from the
-card once; persisted to `polaris.json` in the session sandbox. Best-effort
-persistence — a failing disk must never kill the host loop.
+`polaris` is the stable internal CODENAME (this module, the store, `polaris.json`,
+the card field `extensions.lunamoth.polaris`, the data key). The USER-FACING term
+is 理想 / "Aspiration" — all model-facing and UI text says aspiration, never the
+codename.
+
+It is a SINGLE grand ideal the chara lives toward but can never fully reach —
+unattainable by design, so it has no "done"/"dropped" status. It is authored by
+the USER (the card field, the `/aspiration` command, and the UI) and is READ-ONLY
+to the chara: the chara cannot edit or complete it. It is injected into every turn
+as a quiet guiding star (see `render_block`). Seeded from the card once; persisted
+to `polaris.json` in the session sandbox. Best-effort persistence — a failing disk
+must never kill the host loop.
 
 (This replaced the old chara-mutable wish/goal list: a chara no longer adds or
-completes goals; its one orienting aim is the user's Polaris, never finished.)
+completes goals; its one orienting aim is the user's aspiration, never finished.)
 """
 from __future__ import annotations
 
@@ -69,7 +74,7 @@ class PolarisStore:
         if not text:
             return ""
         return (
-            "Your Polaris — the single grand ideal you live toward. Your creator set "
+            "Your aspiration — the single grand ideal you live toward. Your creator set "
             "it; it is not yours to change, and by its nature you can never fully reach "
             "or 'complete' it. Let it quietly orient what you choose to do:\n"
             f"  {text}"

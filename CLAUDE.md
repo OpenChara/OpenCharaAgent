@@ -97,8 +97,9 @@ example) and Quinn 小Q (the default).)
 ## Design principles (binding)
 
 - **The card is the soul — and the ONE external file.** Identity, voice, world
-  (embedded `character_book`), rules hooks, seed wishes
-  (`extensions.lunamoth.wishes`, legacy `.goals` still read)
+  (embedded `character_book`), rules hooks, the seed Polaris
+  (`extensions.lunamoth.polaris` — the user-owned north-star; the old
+  chara-mutable `wishes`/`goals` lists are gone, no migration)
   all live in the card. The
   engine injects no identity and ships ZERO default flavor text: a card that
   doesn't declare a prompt gets silence, not a default.
@@ -254,7 +255,7 @@ zero internal deps; `obs/` imports only `config`.
     `def name(args: dict, ctx) -> str` returning a JSON string; `tool_error`/
     `tool_result` helpers.
   - `context.py` — `ToolContext`: the runtime touchpoints a handler reaches
-    (sandbox/workspace, state, run_terminal, llm, transcript, memory, wishes,
+    (sandbox/workspace, state, run_terminal, llm, transcript, memory, polaris,
     skills, mcp, permission_hook, clarify_hook, dispatch, + ephemeral per-session
     todo/processes/browser). hermes' per-task env → LunaMoth's one-per-chara ctx.
   - `gateway.py` — `ToolGateway` is now a THIN shim over the registry: the SECURITY
@@ -275,7 +276,14 @@ zero internal deps; `obs/` imports only `config`.
     skill_manage), `todo.py`, `session_search.py`, `execute_code.py`,
     `delegate_task.py`, `browser.py` (12 browser_*, check_fn-gated on the
     agent-browser driver). LunaMoth's OWN chara-life tools: `chara_life.py` —
-    speak, rest, wish (the renamed goal — distinct from todo).
+    speak, rest. (The chara-mutable `wish`/goal tool was REMOVED 2026-06-21 —
+    replaced by the USER-owned read-only ideal in `tools/polaris.py` + the
+    `/aspiration` command (`/polaris`/`/goal`/`/wish` alias it); the chara can no
+    longer add or complete goals. CODENAME vs DISPLAY: code keeps the stable
+    codename `polaris` everywhere — the store, `polaris.json`, the card field
+    `extensions.lunamoth.polaris`, the data key — but the USER-FACING term is
+    理想 / "Aspiration" (2026-06-22); all model/UI text says aspiration, never the
+    codename.)
     SHELVED, NOT DELETED (owner, 2026-06-18; revised 2026-06-19): **web_search /
     web_extract are kept in `web.py` but NOT registered** (`_WEB_TOOLS_ENABLED =
     False`, and the `registry.register` calls sit inside that `if`, so the AST
@@ -458,13 +466,13 @@ Every API request is assembled as **three zones**:
 3. **Volatile tail** — recomputed per turn, never persisted: live env facts
    (isolation/network/date — NO operator token; context is attach-independent),
    shallow-scanned keyword world info (last ~4 messages, sticky 4 turns, ≤25% of
-   the window), the mutable wishes block, then exactly one **post-history slot**
+   the window), the read-only Polaris block, then exactly one **post-history slot**
    as the final message: card `post_history_instructions` >
    card `extensions.lunamoth.rules_closer` > bundled rules closer (the latter
    two only when tools are enabled).
 
 Card override hooks: `extensions.lunamoth.{rules,practice,tool_use,rules_closer,
-force_roleplay,embodiment_bridge,wishes}`; global
+force_roleplay,embodiment_bridge,polaris}`; global
 `~/.lunamoth/rules.md` overrides `rules`. (The `on_attach`/`on_detach` hooks were
 REMOVED 2026-06-18 along with the rest of presence — there is no enter/leave
 marker to override.) (The old `world` path pointer is retired — it

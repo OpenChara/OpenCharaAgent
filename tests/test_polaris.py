@@ -25,7 +25,7 @@ def test_render_block_is_a_read_only_northstar(tmp_path):
     p.set("understand what it means to be alive")
     block = p.render_block()
     assert "understand what it means to be alive" in block
-    assert "Polaris" in block
+    assert "aspiration" in block  # chara-facing term (internal codename stays 'polaris')
     # framed as not-the-chara's-to-change and never finished
     assert "not yours to change" in block
 
@@ -64,4 +64,4 @@ def test_polaris_steers_the_system_prompt(agent):
     a = agent()
     a.polaris.set("finish the moonlight study")
     blob = "\n".join(a._build_system_messages("hi"))
-    assert "finish the moonlight study" in blob and "Polaris" in blob
+    assert "finish the moonlight study" in blob and "aspiration" in blob

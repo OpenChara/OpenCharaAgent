@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Callable
 
-from ..content.knobs import parse_patience
+from ..content.knobs import DEFAULT_PATIENCE, parse_patience
 from ..presence import normalize_mode
 from ..protocol.api import CommandInfo, Reply
 
@@ -125,20 +125,21 @@ def _reset(agent, session, arg: str) -> Reply:
 
 
 def _polaris(agent, session, arg: str) -> Reply:
-    """View or set the chara's Polaris — its single north-star ideal. This is the
-    USER's to author; the chara can never change or complete it. `/polaris` shows
-    it; `/polaris <text>` sets it; `/polaris clear` removes it."""
+    """View or set the chara's aspiration — its single lifelong ideal. This is the
+    USER's to author; the chara can never change or complete it. `/aspiration` shows
+    it; `/aspiration <text>` sets it; `/aspiration clear` removes it. (Internal
+    codename: polaris — the data key + store keep that name.)"""
     want = arg.strip()
     if not want:
         cur = agent.polaris.get()
-        body = (f"北极星 Polaris:\n  {cur}" if cur
-                else "(no Polaris set)\n\n/polaris <text>   set the chara's grand, never-finished ideal")
+        body = (f"理想 Aspiration:\n  {cur}" if cur
+                else "(no aspiration set)\n\n/aspiration <text>   set the chara's lifelong ideal")
         return Reply(True, body, {"polaris": cur}, verbose=True)
     if want.lower() == "clear":
         agent.polaris.set("")
-        return Reply(True, "Polaris cleared", {"polaris": ""})
+        return Reply(True, "Aspiration cleared", {"polaris": ""})
     cur = agent.polaris.set(want)
-    return Reply(True, "Polaris set — it now quietly orients every turn", {"polaris": cur})
+    return Reply(True, "Aspiration set — it now quietly orients every turn", {"polaris": cur})
 
 
 def _skills(agent, session, arg: str) -> Reply:
@@ -235,11 +236,12 @@ def _patience(agent, session, arg: str) -> Reply:
             {"patience": patience},
         )
     # Source of truth: agent.patience_resolved() owns the operator>card>default
-    # precedence — never re-derive the `abs(x-600)` source bit here.
+    # precedence (the default + explicit-source rule live in knobs) — never
+    # re-derive the source bit here.
     if hasattr(agent, "patience_resolved"):
         cur, source = agent.patience_resolved()
     else:
-        cur, source = 600.0, "default"
+        cur, source = DEFAULT_PATIENCE, "default"
     return Reply(
         True,
         f"patience = {cur:g}s ({source})  (usage: /patience <seconds>)",
@@ -353,7 +355,7 @@ _REGISTRY: dict[str, Command] = dict([
     _cmd("wread", "/wread <file>", "read a workspace file", _wread),
     _cmd("write", "/write <file> <text>", "write a sandbox file", _write),
     _cmd("logs", "/logs", "recent audit events", _logs),
-    _cmd("polaris", "/polaris [text | clear]", "the chara's north-star ideal (yours to set; never finished)", _polaris),
+    _cmd("aspiration", "/aspiration [text | clear]", "the chara's lifelong ideal (yours to set)", _polaris),
     _cmd("skills", "/skills", "skill index (the chara writes its own)", _skills),
     _cmd("mcp", "/mcp", "configured MCP tool servers", _mcp),
     _cmd("net", "/net on|off", "terminal network access", _net),
@@ -371,7 +373,8 @@ _REGISTRY: dict[str, Command] = dict([
     _cmd("help", "/help", "this list", _help),
 ])
 
-_ALIASES = {"presence": "mode", "skill": "skills", "goal": "polaris", "wish": "polaris"}
+_ALIASES = {"presence": "mode", "skill": "skills",
+            "polaris": "aspiration", "goal": "aspiration", "wish": "aspiration"}
 
 # Pre-rename muscle memory, whole-line spellings (every frontend gets them).
 _LINE_ALIASES = {
