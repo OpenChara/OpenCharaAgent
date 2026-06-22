@@ -17,6 +17,7 @@ import { rpcErrText } from "../lib/status";
 import { gwPlatLabel, gwStatusBits } from "../components/gateways/status";
 import { GatewayModal } from "../components/gateways/GatewayModal";
 import { deckToast } from "../components/ui/deckToast";
+import { BrandLoader } from "../components/ui/BrandLoader";
 import { togglePlatform, type GwPlatformRow, type MessagingConfig } from "../components/gateways/gatewayModel";
 
 interface GatewayRow {
@@ -162,7 +163,9 @@ export function Gateways() {
       </div>
 
       <div className="gw-overview">
-        {err ? (
+        {!snapshot ? (
+          <BrandLoader />
+        ) : err ? (
           <div className="gw-error">{err}</div>
         ) : !platRows.length ? (
           <div className="empty-state">

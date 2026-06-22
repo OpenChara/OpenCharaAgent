@@ -14,9 +14,9 @@
  * Embedded inside the open CardEditor modal — it never closes the editor; after a
  * save it refreshes the hub snapshot (live deck cards) so the new art shows. */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { assetUrl } from "../../rpc";
-import { useT, type TFn } from "../../i18n";
+import { useT, type TFn, type TKey } from "../../i18n";
 import { useHubApi, useHubState } from "../../state/hub";
 import { useNavigate } from "../../hooks/useHashRoute";
 import { rpcErrText } from "../../lib/status";
@@ -44,11 +44,22 @@ interface Ref {
 
 interface Brief {
   appearance?: string;
+  style?: string;
   palette?: string;
   world?: string;
   theme?: string;
   [k: string]: unknown;
 }
+
+// The editable fields shown in the "image brief" panel (long → textarea). `style`
+// is the LM-chosen rendering style — editing it is how a user overrides the look.
+const BRIEF_FIELDS: { k: string; labelKey: TKey; long?: boolean }[] = [
+  { k: "appearance", labelKey: "vis-brief-appearance", long: true },
+  { k: "style", labelKey: "vis-brief-style", long: true },
+  { k: "palette", labelKey: "vis-brief-palette" },
+  { k: "world", labelKey: "vis-brief-world", long: true },
+  { k: "theme", labelKey: "vis-brief-theme" },
+];
 
 interface GenResult {
   data_b64: string;
@@ -129,15 +140,64 @@ export function VisualEditor({
   // "generate all" pays for ONE brief, not one per asset.
   const cachedBrief = useRef<Brief | null>(null);
   const refInput = useRef<HTMLInputElement>(null);
+  // The brief is the cached intermediate "image description" (incl. the LM-chosen
+  // art style): built once, reused across the whole set, and now shown + editable
+  // here so the user can steer looks/style before paying to generate. Edits live in
+  // cachedBrief.current (what generate reads), mirrored into `brief` for rendering.
+  const [briefOpen, setBriefOpen] = useState(false);
+  const [brief, setBrief] = useState<Brief | null>(null);
+  const [briefBusy, setBriefBusy] = useState(false);
+  const [briefErr, setBriefErr] = useState("");
 
   const refData = () => refs.map((r) => `data:${r.mime};base64,${r.data_b64}`);
-  const getBrief = async (): Promise<Brief> => {
-    if (!cachedBrief.current) {
-      const r = await hub.call<{ brief?: Brief }>("card.visual_brief", { path: cardPath }, 180000);
-      cachedBrief.current = (r && r.brief) || {};
+
+  // Fetch (or force-rebuild) the brief via the LM. Slots call getBrief() lazily;
+  // the panel's 重新生成 forces a fresh one. Either path fills the cache + the view.
+  const loadBrief = async (force: boolean): Promise<Brief> => {
+    if (cachedBrief.current && !force) {
+      setBrief(cachedBrief.current);
+      return cachedBrief.current;
     }
-    return cachedBrief.current;
+    setBriefBusy(true);
+    setBriefErr("");
+    try {
+      const r = await hub.call<{ brief?: Brief }>("card.visual_brief", { path: cardPath }, 180000);
+      const b = (r && r.brief) || {};
+      cachedBrief.current = b;
+      setBrief(b);
+      return b;
+    } catch (e) {
+      setBriefErr(rpcErrText(t, e as { message?: string }));
+      throw e;
+    } finally {
+      setBriefBusy(false);
+    }
   };
+  const getBrief = (): Promise<Brief> => loadBrief(false);
+  const toggleBrief = () => {
+    setBriefOpen((v) => !v);
+    if (!cachedBrief.current && !briefBusy) void loadBrief(false).catch(() => {});
+  };
+  const editBrief = (k: string, v: string) => {
+    const next: Brief = { ...(cachedBrief.current || {}), [k]: v };
+    cachedBrief.current = next;
+    setBrief(next);
+  };
+
+  // Background-removal readiness — only relevant when a sprite (the kind that wants
+  // a transparent cut) is in this set. We do NOT block generation on it; we surface
+  // a one-line nudge so the user can install it if they want the cutout.
+  const wantsSprite = kinds.includes("sprite");
+  const [matteReady, setMatteReady] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!wantsSprite || !hasImageKey) return;
+    let live = true;
+    void hub
+      .call<{ deps?: boolean; models?: { installed?: boolean }[] }>("matte.status", {}, 15000)
+      .then((s) => { if (live) setMatteReady(!!(s.deps && (s.models || []).some((m) => m.installed))); })
+      .catch(() => { if (live) setMatteReady(null); });
+    return () => { live = false; };
+  }, [wantsSprite, hasImageKey, hub]);
 
   const addRef = async (f: File) => {
     if (refs.length >= REF_MAX) return;
@@ -160,7 +220,8 @@ export function VisualEditor({
   const generateAll = async () => {
     if (!confirm(t("vis-gen-all-confirm", { n: genKinds.length }))) return;
     setGenAllBusy(true);
-    cachedBrief.current = null; // a fresh set → a fresh brief
+    // Reuse the current brief (built lazily by the first slot, or the user's edits)
+    // so "generate all" honors any tweaks; 重新生成描述 is the explicit refresh.
     try {
       for (const k of genKinds) {
         const fn = slotApi.current[k];
@@ -190,6 +251,74 @@ export function VisualEditor({
           </button>
         </div>
       )}
+
+      {/* Non-blocking matte nudge: only when a sprite is in the set and the cutout
+          model isn't installed. Generation still proceeds (un-matted) — installing
+          is optional, surfaced here rather than gating the whole pipeline on it. */}
+      {wantsSprite && hasImageKey && matteReady === false && !disabled && (
+        <div className="vis-invite">
+          <div className="vis-invite-text">{t("vis-matte-hint")}</div>
+          <button className="btn soft sm" onClick={() => nav("#/settings")}>
+            {t("vis-matte-cta")}
+          </button>
+        </div>
+      )}
+
+      {/* The cached "image brief" — the per-card visual description (incl. the
+          LM-chosen art style) reused across the whole set. View/edit it before
+          generating; the un-locked style means non-anime cards render in a fitting
+          look instead of being forced into 二次元. */}
+      {hasImageKey && (
+        <div className="vis-brief-sec">
+          <div className="vis-brief-head">
+            <h4>{t("vis-brief-title")}</h4>
+            <button className="btn text sm" disabled={disabled} onClick={toggleBrief}>
+              {briefOpen ? t("vis-brief-hide") : t("vis-brief-edit")}
+            </button>
+          </div>
+          <div className="av-note">{t("vis-brief-sub")}</div>
+          {briefOpen && (
+            <div className="vis-brief-body">
+              {briefBusy && !brief ? (
+                <div className="av-note thinking">{t("vis-brief-loading")}</div>
+              ) : (
+                <>
+                  {BRIEF_FIELDS.map(({ k, labelKey, long }) => (
+                    <label className="vis-brief-field" key={k}>
+                      <span>{t(labelKey)}</span>
+                      {long ? (
+                        <textarea
+                          value={String((brief?.[k] as string) || "")}
+                          rows={k === "appearance" ? 4 : 2}
+                          disabled={disabled || briefBusy}
+                          onChange={(e) => editBrief(k, e.target.value)}
+                        />
+                      ) : (
+                        <input
+                          value={String((brief?.[k] as string) || "")}
+                          disabled={disabled || briefBusy}
+                          onChange={(e) => editBrief(k, e.target.value)}
+                        />
+                      )}
+                    </label>
+                  ))}
+                  <div className="vis-brief-acts">
+                    <button
+                      className="btn soft sm"
+                      disabled={disabled || briefBusy}
+                      onClick={() => void loadBrief(true).catch(() => {})}
+                    >
+                      {briefBusy ? <span className="spin" /> : t("vis-brief-rebuild")}
+                    </button>
+                  </div>
+                  {briefErr && <div className="av-note err">{briefErr}</div>}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="vis-ref-sec">
         <h4>{t("vis-ref-title")}</h4>
         <div className="av-note">{t("vis-ref-sub")}</div>
@@ -325,8 +454,32 @@ function VisualSlot({
     setStaged(null);
   };
 
+  // Download the shown image (staged candidate if any, else the saved one) — the
+  // user's backup before an overwrite. Works for both data-URIs (avatar) and the
+  // same-origin asset URLs (sprite/background/keyvisual).
+  const downloadName = () => {
+    if (staged) return `${kind}.${staged.ext || "png"}`;
+    const m = curSrc.match(/^data:image\/(\w+)/);
+    if (m) return `${kind}.${m[1] === "jpeg" ? "jpg" : m[1]}`;
+    const ext = (curSrc.split("?")[0].split(".").pop() || "png").toLowerCase();
+    return `${kind}.${ext.length <= 4 ? ext : "png"}`;
+  };
+  const download = () => {
+    if (!previewSrc) return;
+    const a = document.createElement("a");
+    a.href = previewSrc;
+    a.download = downloadName();
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
   // generate → stage a preview (the user confirms with 保存).
   const generate = async () => {
+    // Regenerating over an existing image: the new result replaces it once saved
+    // (and "generate all" auto-saves). Warn + suggest a download backup first. The
+    // staged "重新生成" path (staged set) skips this — it only swaps the candidate.
+    if (curSrc && !staged && !confirm(t("vis-regen-overwrite"))) return;
     setWorking(t("vis-generating"));
     try {
       const out = await hubCall<GenResult>(
@@ -444,6 +597,11 @@ function VisualSlot({
         <button className="btn soft sm" disabled={disabled || busy} onClick={() => fileInput.current?.click()}>
           {t("av-upload")}
         </button>
+        {previewSrc && (
+          <button className="btn text sm" disabled={busy} onClick={download}>
+            {t("vis-download")}
+          </button>
+        )}
         <button className="btn text sm" disabled={disabled || busy} onClick={() => void onDelete()}>
           {t("del-word")}
         </button>

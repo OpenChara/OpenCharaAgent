@@ -7,6 +7,7 @@ import { statusOf, rpcErrText } from "../lib/status";
 import { modeLabel, paletteClass } from "../lib/format";
 import { deckToast } from "../components/ui/deckToast";
 import { CardFace } from "../components/deck/visual";
+import { BrandLoader } from "../components/ui/BrandLoader";
 import type { DeckCard } from "../components/deck/types";
 
 /* Board — the roster of living charas. Faithful to index.html #view-board +
@@ -127,7 +128,15 @@ export function Board() {
       </div>
 
       <div className="board">
-        <div className="grid" id="board-grid">
+        {/* Until the FIRST hub.state lands, snapshot is null — that is "loading",
+            NOT "no charas". Show the flit loader instead of the empty-state, so a
+            new user no longer sees a blank board flash before the first-run
+            overlay (which itself waits for snapshot) opens. */}
+        {!snapshot ? (
+          <BrandLoader />
+        ) : (
+          <>
+            <div className="grid" id="board-grid">
           {sessions.map((s) => {
             const st = statusOf(t, s);
             // on/off == autonomy (!paused), with the optimistic override applied.
@@ -175,15 +184,17 @@ export function Board() {
           })}
         </div>
 
-        {sessions.length === 0 && (
-          <div className="empty-state" style={{ display: "flex" }}>
-            <div className="empty-title">{t("empty-board")}</div>
-            <div className="acts">
-              <button className="btn primary" onClick={() => overlay.open({ kind: "firstrun" })}>
-                {t("meet-luna")}
-              </button>
-            </div>
-          </div>
+            {sessions.length === 0 && (
+              <div className="empty-state" style={{ display: "flex" }}>
+                <div className="empty-title">{t("empty-board")}</div>
+                <div className="acts">
+                  <button className="btn primary" onClick={() => overlay.open({ kind: "firstrun" })}>
+                    {t("meet-luna")}
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

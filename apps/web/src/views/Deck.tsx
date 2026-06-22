@@ -18,6 +18,7 @@ import { useOverlay } from "../state/overlay";
 import { paletteClass } from "../lib/format";
 import { rpcErrText } from "../lib/status";
 import { CardFace } from "../components/deck/visual";
+import { BrandLoader } from "../components/ui/BrandLoader";
 import { CardEditor } from "../components/deck/CardEditor";
 import { WakeSheet } from "../components/deck/WakeSheet";
 import { deckToast } from "../components/ui/deckToast";
@@ -110,7 +111,12 @@ export function Deck() {
       </div>
 
       <div className="deck">
-        {!total ? (
+        {/* snapshot null = the first roster load hasn't returned yet ("loading"),
+            distinct from "loaded, no cards match the filter" — show the loader
+            for the former so the deck doesn't flash an empty-state on cold open. */}
+        {!snapshot ? (
+          <BrandLoader />
+        ) : !total ? (
           <div className="empty-state deck-empty">{t(filter === "woken" ? "deck-empty-woken" : "deck-empty-unwoken")}</div>
         ) : (
           <div className="deck-grid">

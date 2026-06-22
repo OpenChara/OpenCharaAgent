@@ -43,6 +43,26 @@ export function MatteSection() {
     return () => { alive = false; if (poll.current) clearTimeout(poll.current); };
   }, [refresh]);
 
+  // Trickle a climbing percent during the deps/prepare phase. `uv sync --extra
+  // visuals` (~100MB+) reports no real progress, so without this the longest step
+  // shows a frozen bar and the install "feels dead". It eases toward a cap and
+  // never reaches 100 — the real download phase below reports true byte progress
+  // and takes over. (Cosmetic-but-honest: clearly a "working…" indicator.)
+  const prepId = (st?.models || []).find((m) => {
+    const s = m.progress?.state;
+    return s === "preparing" || s === "installing_deps";
+  })?.id || "";
+  const [prepPct, setPrepPct] = useState(0);
+  const prepIdRef = useRef("");
+  useEffect(() => {
+    if (!prepId) { prepIdRef.current = ""; setPrepPct(0); return; }
+    if (prepIdRef.current !== prepId) { prepIdRef.current = prepId; setPrepPct(6); }
+    const iv = setInterval(() => {
+      setPrepPct((p) => Math.min(90, p + Math.max(0.6, (90 - p) * 0.07)));
+    }, 450);
+    return () => clearInterval(iv);
+  }, [prepId]);
+
   const setBusyId = (id: string, on: boolean) =>
     setBusy((prev) => { const next = new Set(prev); on ? next.add(id) : next.delete(id); return next; });
 
@@ -82,7 +102,10 @@ export function MatteSection() {
                 <span className="aux-desc">{m.note} · {fmtSize(m.size)}</span>
               </div>
               {preparing ? (
-                <div className="matte-prog"><span className="lm-thinking">{t("matte-deps-installing")}</span></div>
+                <div className="matte-prog">
+                  <div className="matte-bar"><div className="matte-fill indet" style={{ width: `${Math.round(prepPct)}%` }} /></div>
+                  <span className="muted small">{t("matte-deps-installing")} · {Math.round(prepPct)}%</span>
+                </div>
               ) : downloading ? (
                 <div className="matte-prog">
                   <div className="matte-bar"><div className="matte-fill" style={{ width: `${pct}%` }} /></div>
