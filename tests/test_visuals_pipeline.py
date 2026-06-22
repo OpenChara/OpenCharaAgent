@@ -97,14 +97,15 @@ def test_prompt_for_honors_brief_style_over_anime_default():
     # prompt and the anime house default is NOT injected — so a realistic/other
     # card is no longer forced into 二次元.
     brief = {"appearance": "AAA", "palette": "PPP", "world": "WWW", "theme": "#123",
-             "style": "cinematic photorealistic portrait, 50mm, soft key light"}
-    for kind in ("avatar", "sprite", "background"):
-        out = pipeline.prompt_for(kind, brief)
-        assert "photorealistic portrait" in out
+             "style": "cinematic photorealistic rendering, soft key light"}
+    # sprite + background follow the chosen style; avatar/stickers stay chibi by design.
+    for kind in ("sprite", "background"):
+        assert "photorealistic" in pipeline.prompt_for(kind, brief)
     sp = pipeline.prompt_for("sprite", brief)
-    assert pipeline.STYLE_REAL not in sp  # anime default suppressed
+    assert pipeline.STYLE_REAL not in sp  # anime default suppressed when a style is set
+    # avatar is intentionally ALWAYS chibi (an app icon), regardless of the chosen style
     av = pipeline.prompt_for("avatar", brief)
-    assert pipeline.CHIBI not in av       # chibi default suppressed
+    assert pipeline.CHIBI in av and "photorealistic" not in av
 
 
 def test_build_brief_normalizes_style_key():
@@ -224,14 +225,14 @@ def test_generate_passes_refs_to_image_client():
 
 # --- restored kinds: keyvisual (anchor) + stickers ----------------------------
 
-def _green_sheet(rows: int = 3, cols: int = 3, cell: int = 120) -> bytes:
-    """A flat chroma-green sheet with a red blob centered in each cell — so the
-    chroma-key fallback keeps the blob and drops the green (a realistic slice fixture)."""
+def _white_sheet(rows: int = 3, cols: int = 3, cell: int = 120) -> bytes:
+    """A flat WHITE sheet with a red blob centered in each cell — so the white-bg
+    removal keeps the blob and drops the white (a realistic slice fixture)."""
     import io
 
     from PIL import Image, ImageDraw
 
-    im = Image.new("RGB", (cols * cell, rows * cell), (0, 208, 0))
+    im = Image.new("RGB", (cols * cell, rows * cell), (255, 255, 255))
     d = ImageDraw.Draw(im)
     for i in range(rows):
         for j in range(cols):
@@ -259,25 +260,26 @@ def test_prompt_for_keyvisual_is_identity_settei_sheet():
     assert "reference" in kv.lower()          # it's the identity anchor
 
 
-def test_prompt_for_stickers_has_nine_expressions_on_green():
+def test_prompt_for_stickers_has_nine_expressions_on_white():
     brief = {"appearance": "AAA", "palette": "PPP", "theme": "#123"}
     st = pipeline.prompt_for("stickers", brief)
-    assert "3x3" in st and pipeline.CHIBI in st and pipeline.GREEN in st
+    assert "3x3" in st and pipeline.CHIBI in st and "#FFFFFF" in st  # white bg, not green
+    assert "do NOT draw" in st  # the no-label guard
     for e in pipeline.EXPR9:
         assert e in st
 
 
 def test_generate_stickers_slices_nine_cells(monkeypatch):
-    # no matte model → chroma-key fallback; the sheet is sliced into 9 PNG cells.
+    # no matte model → white-bg fallback; the sheet is sliced into 9 PNG cells.
     monkeypatch.setattr(pipeline._matte, "deps_available", lambda: False)
     out = pipeline.generate(
         CARD, "stickers", llm_call=lambda s, u: "{}", brief=_fixed_brief(),
         ark_generate=lambda prompt, size, refs=None: ["http://x/sheet.png"],
-        download_bytes=lambda url: _green_sheet(),
+        download_bytes=lambda url: _white_sheet(),
     )
     assert out["kind"] == "stickers" and "data" not in out
     assert len(out["stickers"]) == 9
-    assert out["matted"] is False and "chroma-key" in out["note"]
+    assert out["matted"] is False and "white-background" in out["note"]
     for c in out["stickers"]:
         assert c[:8] == b"\x89PNG\r\n\x1a\n"
 
@@ -296,31 +298,31 @@ def test_generate_stickers_mattes_each_cell_when_available(monkeypatch):
     out = pipeline.generate(
         CARD, "stickers", llm_call=lambda s, u: "{}", brief=_fixed_brief(),
         ark_generate=lambda prompt, size, refs=None: ["http://x/sheet.png"],
-        download_bytes=lambda url: _green_sheet(),
+        download_bytes=lambda url: _white_sheet(),
     )
     assert cuts["n"] == 9 and out["matted"] is True and len(out["stickers"]) == 9
 
 
 def test_slice_grid_cuts_equal_cell_count():
     from lunamoth.content import imaging
-    cells = imaging.slice_grid(_green_sheet(rows=3, cols=3, cell=99), 3, 3)
+    cells = imaging.slice_grid(_white_sheet(rows=3, cols=3, cell=99), 3, 3)
     assert len(cells) == 9
     assert all(c[:8] == b"\x89PNG\r\n\x1a\n" for c in cells)
 
 
-def test_chroma_key_drops_green_keeps_subject():
+def test_cut_white_bg_removes_white_keeps_subject():
     import io
 
     from PIL import Image
 
     from lunamoth.visuals import matte
 
-    img = Image.new("RGB", (60, 60), (0, 208, 0))
+    img = Image.new("RGB", (60, 60), (255, 255, 255))
     for x in range(20, 40):
         for y in range(20, 40):
             img.putpixel((x, y), (200, 30, 30))
     buf = io.BytesIO()
     img.save(buf, "PNG")
-    res = Image.open(io.BytesIO(matte.chroma_key(buf.getvalue()))).convert("RGBA")
+    res = Image.open(io.BytesIO(matte.cut_white_bg(buf.getvalue()))).convert("RGBA")
     assert res.size[0] <= 24 and res.size[1] <= 24          # autocropped to the blob
     assert res.getpixel((res.size[0] // 2, res.size[1] // 2))[3] == 255  # subject opaque

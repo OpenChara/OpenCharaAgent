@@ -179,24 +179,79 @@ def reencode_to_webp(src: "Path", max_px: int) -> bytes:
         return _encode(im, "WEBP")
 
 
+def _axis_cuts(im: "Image.Image", axis: str, n: int, full: int, samples: int = 192) -> list[int]:
+    """Find n+1 boundary positions along an axis by detecting the white GUTTERS of a
+    sheet (a fast averaged 1-D brightness profile). Returns the content start, the
+    centers of the n-1 widest internal white runs, and the content end. Falls back to
+    an even split when a clean grid can't be read — so a messy sheet still yields n
+    bands rather than garbage."""
+    even = [round(k * full / n) for k in range(n + 1)]
+    try:
+        gray = im.convert("L")
+        prof = gray.resize((samples, 1), Image.BOX) if axis == "x" else gray.resize((1, samples), Image.BOX)
+        vals = list(prof.tobytes())  # brightness 0..255 per bucket (high = white bg); "L" → 1 byte/px
+    except Exception:  # noqa: BLE001
+        return even
+    bg = [v >= 240 for v in vals]
+    lo = 0
+    while lo < len(bg) and bg[lo]:
+        lo += 1
+    hi = len(bg) - 1
+    while hi > lo and bg[hi]:
+        hi -= 1
+    if hi <= lo:
+        return even
+    runs: list[tuple[int, int]] = []
+    k = lo + 1
+    while k < hi:
+        if bg[k]:
+            s = k
+            while k < hi and bg[k]:
+                k += 1
+            runs.append((s, k))
+        else:
+            k += 1
+    if len(runs) < n - 1:
+        return even
+    gutters = sorted(sorted(runs, key=lambda r: r[1] - r[0], reverse=True)[:n - 1])
+    scale = full / len(vals)
+    bounds = [lo * scale] + [((s + e) / 2) * scale for s, e in gutters] + [(hi + 1) * scale]
+    cuts = [max(0, min(full, round(b))) for b in bounds]
+    # guard against degenerate (non-increasing) boundaries → even split
+    return cuts if all(cuts[i] < cuts[i + 1] for i in range(n)) else even
+
+
+def _trim_white(cell: "Image.Image", tol: int = 18, margin: int = 2) -> "Image.Image":
+    """Tighten a cell to its non-white content bbox (+ a small margin) so a sticker is
+    centered, not floating in white. Returns the cell unchanged if it looks empty."""
+    mask = cell.convert("L").point(lambda v: 255 if v < 255 - tol else 0)
+    bbox = mask.getbbox()
+    if not bbox:
+        return cell
+    x0, y0, x1, y1 = bbox
+    return cell.crop((max(0, x0 - margin), max(0, y0 - margin),
+                      min(cell.width, x1 + margin), min(cell.height, y1 + margin)))
+
+
 def slice_grid(sheet: bytes, rows: int = 3, cols: int = 3, pad_frac: float = 0.04) -> list[bytes]:
-    """Slice a uniform rows x cols sheet into cells → one PNG (bytes) per cell in
-    row-major order (left→right, top→bottom). A small inset (`pad_frac` of the short
-    cell side) trims the gutters so adjacent cells don't bleed; alpha is preserved.
-    Raises on an undecodable sheet so the caller surfaces a real error (no fake
-    stickers). Used by the sticker pipeline to cut a 3x3 expression sheet."""
+    """Slice a rows x cols sheet into cells → one PNG (bytes) per cell in row-major
+    order (left→right, top→bottom), alpha preserved. Detects the white gutters to place
+    the cuts (robust to an imperfect grid), then trims each cell to its content bbox so
+    a sticker is centered. Falls back to an even split when no clean grid is found.
+    Raises on an undecodable sheet so the caller surfaces a real error (no fake stickers).
+    `pad_frac` is retained for compatibility but detection + trim supersede it."""
     with Image.open(io.BytesIO(sheet)) as im:
         im.load()
         im = im.convert("RGBA")
         w, h = im.size
-        cw, ch = w // cols, h // rows
-        pad = int(min(cw, ch) * pad_frac)
+        xs = _axis_cuts(im, "x", cols, w)
+        ys = _axis_cuts(im, "y", rows, h)
         out: list[bytes] = []
         for i in range(rows):
             for j in range(cols):
-                box = (j * cw + pad, i * ch + pad, (j + 1) * cw - pad, (i + 1) * ch - pad)
+                cell = im.crop((xs[j], ys[i], xs[j + 1], ys[i + 1]))
                 buf = io.BytesIO()
-                im.crop(box).save(buf, format="PNG")
+                _trim_white(cell).save(buf, format="PNG")
                 out.append(buf.getvalue())
     return out
 

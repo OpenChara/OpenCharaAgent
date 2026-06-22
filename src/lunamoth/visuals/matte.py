@@ -394,12 +394,17 @@ def cut(src, *, model_id: str | None = None, despill: bool = True) -> bytes:
     return buf.getvalue()
 
 
-def chroma_key(src) -> bytes:
-    """Keyless cutout fallback: key out a flat green-screen background → transparent
-    PNG (autocropped). PIL-ONLY — no rembg/numpy — so it works WITHOUT the visuals
-    extra. Used for sticker cells when no matte model is installed; expects a sheet
-    generated on flat chroma green. Raises on an undecodable input (no fake output)."""
+def cut_white_bg(src, tol: int = 32) -> bytes:
+    """Keyless cutout fallback: remove a flat WHITE background → transparent PNG
+    (autocropped). PIL-ONLY (no rembg/numpy), so it works WITHOUT the visuals extra.
+
+    Floods transparency INWARD from the four borders over near-white pixels, so
+    interior whites (eyes, highlights, white clothing) are preserved because they are
+    not border-connected — unlike a naive "all white → transparent" key. Used for
+    sticker cells when no matte model is installed; expects a flat-white sheet. Raises
+    on an undecodable input (no fake output)."""
     import io
+    from collections import deque
 
     from PIL import Image
 
@@ -410,14 +415,33 @@ def chroma_key(src) -> bytes:
     else:
         im = Image.open(src)
     im = im.convert("RGBA")
-    raw = bytearray(im.tobytes())               # RGBA, 4 bytes per pixel
-    for i in range(0, len(raw), 4):
-        r, g, b = raw[i], raw[i + 1], raw[i + 2]
-        if g > 90 and (g - r) > 40 and (g - b) > 40:
-            raw[i + 3] = 0                       # green → transparent
-        elif g > r and g > b:
-            raw[i + 1] = (r + b) // 2            # tame green spill on kept pixels
-    im = Image.frombytes("RGBA", im.size, bytes(raw))
+    w, h = im.size
+    px = bytearray(im.tobytes())  # RGBA row-major
+    thresh = 255 - tol
+
+    def near_white(idx: int) -> bool:
+        return px[idx] >= thresh and px[idx + 1] >= thresh and px[idx + 2] >= thresh
+
+    seen = bytearray(w * h)            # visited flags
+    dq: deque[int] = deque()
+    for x in range(w):                 # seed top + bottom rows
+        for p in (x, (h - 1) * w + x):
+            if not seen[p] and near_white(p * 4):
+                seen[p] = 1; dq.append(p)
+    for y in range(h):                 # seed left + right columns
+        for p in (y * w, y * w + w - 1):
+            if not seen[p] and near_white(p * 4):
+                seen[p] = 1; dq.append(p)
+    while dq:                          # flood inward over connected near-white
+        p = dq.popleft()
+        px[p * 4 + 3] = 0              # → transparent
+        y, x = divmod(p, w)
+        for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+            if 0 <= nx < w and 0 <= ny < h:
+                q = ny * w + nx
+                if not seen[q] and near_white(q * 4):
+                    seen[q] = 1; dq.append(q)
+    im = Image.frombytes("RGBA", (w, h), bytes(px))
     bbox = im.getbbox()
     if bbox:
         im = im.crop(bbox)

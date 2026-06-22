@@ -645,7 +645,7 @@ def test_card_visual_generate_stickers_async(monkeypatch):
     from lunamoth.tools.builtin import _image_gen
     from lunamoth.visuals import pipeline
     monkeypatch.setattr(pipeline._matte, "deps_available", lambda: False)
-    sheet = Image.new("RGB", (300, 300), (0, 208, 0))
+    sheet = Image.new("RGB", (300, 300), (255, 255, 255))
     buf = io.BytesIO(); sheet.save(buf, "PNG")
     monkeypatch.setattr(_image_gen, "generate_bytes", lambda prompt, size, refs=None: buf.getvalue())
     sub = result("card.visual_generate", {"path": card, "kind": "stickers",

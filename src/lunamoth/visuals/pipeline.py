@@ -40,7 +40,8 @@ BRIEF_SYSTEM = (
     "photoreal), render them in the style that actually fits (e.g. cinematic photorealism, oil painting, "
     "ink wash, flat vector, watercolor, pixel art, 3D render); if the card names or implies a medium, era, "
     "or genre, honor it over the default. You are the judge of style — start from the anime default and "
-    "depart from it only with a real reason in the card.\n\n"
+    "depart from it whenever the character's genre, era or tone genuinely fits another medium better; an "
+    "explicit instruction in the card is NOT required, trust your judgment.\n\n"
     "PRINCIPLES:\n"
     "- Stay strictly in-character. Mine the card for concrete, specific details and honor them exactly: "
     "named institutions and their real insignia, specific accessories, signature props, clothing styles, "
@@ -59,17 +60,19 @@ BRIEF_SYSTEM = (
     "the character iconic. End with a short clause naming the single most memorable visual hook. Describe "
     "only what an artist would draw — no name, no backstory prose, no rendering technique (that goes in "
     '"style").\n'
-    '  "style": ONE rich English phrase naming the rendering style you chose for THIS character and that '
-    "an image model can act on — the medium and technique, linework/shading, lighting, finish and quality "
-    'cues (e.g. "polished anime gacha illustration, clean lineart, cel shading, soft rim light, ultra '
-    'detailed" OR "cinematic photorealistic portrait, 50mm, soft key light, fine skin detail" OR '
-    '"painterly storybook gouache, warm and hand-made"). Choose it to fit the character, not a fixed house '
-    "look. This phrase drives every image the pipeline makes.\n"
+    '  "style": ONE rich English phrase naming ONLY the rendering style for THIS character — the medium '
+    "and technique, linework/shading, lighting quality and finish. Name NO composition, framing, shot-type, "
+    'lens or subject words (no "portrait", "close-up", "full-body", "50mm") — those are decided per-image '
+    'by the pipeline, and this phrase is reused for the avatar, full-body art AND the scene background. '
+    'E.g. "polished anime gacha illustration, clean lineart, cel shading, soft rim light, ultra detailed" '
+    'OR "cinematic photorealistic rendering, soft directional key light, fine skin and fabric detail, '
+    'filmic grade" OR "painterly storybook gouache, warm and hand-made". Choose it to fit the character, '
+    "not a fixed house look. This phrase drives every image the pipeline makes.\n"
     '  "palette": a short phrase like "color palette of X, Y and Z" naming 3-4 key colors (include the '
     "signature accent).\n"
     '  "world": one vivid English sentence describing an establishing environment that embodies the '
     "character's world, suitable as a visual-novel / chat background, with NO people.\n"
-    '  "theme": a single #RRGGBB hex string for the character\'s primary signature color.\n'
+    '  "theme": exactly seven characters — a leading # and six hex digits (e.g. #1a6b6b), nothing else.\n'
     "Describe the CHARACTER, their world, and the fitting style — the pipeline composes the final "
     "per-image prompt from these fields."
 )
@@ -84,7 +87,7 @@ STYLE_REAL = (
     "quality and Hypergryph Arknights aesthetic, anime illustration, clean confident lineart, "
     "cel shading with soft gradients, exquisitely detailed ornate costume, highly detailed "
     "expressive eyes, delicate rendering, soft cinematic rim light, refined elegant color "
-    "harmony, masterpiece, best quality, ultra detailed"
+    "harmony, ultra detailed"
 )
 CHIBI = (
     "chibi sticker style, super-deformed, about 2.5 heads tall, big round head, large "
@@ -93,8 +96,12 @@ CHIBI = (
 )
 WHITE_BG = ("a clean flat pure white seamless studio background (#FFFFFF), evenly lit, no colored "
             "light, no cast shadow on the floor")
-GREEN = ("a perfectly flat solid chroma-key green screen background (pure #00d000 green), no green "
-         "color anywhere on the character")
+
+# Shared inline negatives. Not every image provider exposes a negative-prompt field,
+# so these guards ride the POSITIVE prompt in natural language (model-agnostic).
+_GUARDS_FIGURE = ("No watermark, no signature, no logo, no text or lettering. Avoid extra or missing "
+                  "limbs, extra fingers and malformed hands.")
+_GUARDS_SCENE = "No text or lettering, no watermark, no signature, no logo."
 
 # Standardized 9-expression set (3x3), fixed left-to-right / top-to-bottom order. Ported
 # from the dev pipeline so a sticker sheet is always sliceable into the same nine emotes.
@@ -148,10 +155,16 @@ def card_theme(card: dict) -> str | None:
 
 
 def parse_brief(txt: str) -> dict:
-    """Parse the brief JSON, tolerating markdown fences / prose around the object."""
+    """Parse the brief JSON, tolerating ```json fences / prose around the object."""
     txt = (txt or "").strip()
     if not txt:
         raise RuntimeError("the brief model returned no content")
+    if txt.startswith("```"):
+        # peel a ```json … ``` fence, keep the inside
+        parts = txt.split("```")
+        if len(parts) >= 2:
+            inner = parts[1].strip()
+            txt = inner[4:].strip() if inner.lower().startswith("json") else inner
     try:
         return json.loads(txt)
     except json.JSONDecodeError:
@@ -202,34 +215,42 @@ def prompt_for(kind: str, brief: dict) -> str:
                 f"off-white sheet. {a}. {pal}. {style or STYLE_REAL}. Lay out, clearly separated: one "
                 f"large full-body standing pose; a clean FRONT / SIDE / BACK three-view turnaround; one "
                 f"dynamic action pose; a small study of the signature props/accessories; and a row of "
-                f"color swatches for the key palette. Identical character design, outfit and colors in "
-                f"every panel, coherent lighting, crisp and highly detailed. This sheet is the canonical "
-                f"identity reference for all of the character's other art.")
+                f"color swatches as pure color blocks. The SAME face, hairstyle and outfit repeated "
+                f"exactly in every panel — this is ONE person shown several times, never different "
+                f"characters. Coherent lighting, crisp and highly detailed; this sheet is the canonical "
+                f"identity reference for all the character's other art. No labels, no panel titles, no "
+                f"numbers, no UI frames. {_GUARDS_FIGURE}")
     if kind == "stickers":
         expr = "; ".join(f"{i+1}) {e}" for i, e in enumerate(EXPR9))
-        return (f"ONE single image: a perfectly even 3x3 grid of 9 chibi expression stickers of the SAME "
-                f"character. {a}. {CHIBI}. Nine cells, each cell exactly the same size with uniform even "
-                f"spacing and clear gutters, one clear distinct expression per cell, in this exact order "
-                f"(left to right, top to bottom): {expr}. Each is a die-cut sticker with a thick clean "
-                f"white outline and a subtle drop shadow. {GREEN}. Consistent character across all 9 "
-                f"cells, same colors and design. No text captions.")
+        return (f"ONE single image: a clean 3x3 grid of exactly nine chibi expression stickers of the "
+                f"SAME character — no more, no fewer, one per cell. {a}. {CHIBI}. A strict 3-row by "
+                f"3-column lattice on a flat pure white background (#FFFFFF), with generous even white "
+                f"gutters between every cell and a white margin around the whole sheet; each cell the "
+                f"same square size. Assign expressions to cells in reading order (left to right, top to "
+                f"bottom): {expr}. Render ONLY the facial expression in each cell — do NOT draw the "
+                f"numbers, words, captions or labels; the numbering only tells you which expression goes "
+                f"where. Each sticker has a subtle soft drop shadow. Consistent character across all nine "
+                f"cells, same colors and design. No text anywhere. {_GUARDS_FIGURE}")
     if kind == "avatar":
-        look = style or CHIBI
-        return (f"A clean app avatar icon: bust portrait of the character, head and shoulders, "
-                f"friendly warm expression, facing the viewer, centered. {a}. {look}. "
-                f"Simple smooth background of a soft gradient tinted {brief.get('theme', '') or '#888'} "
-                f"with a faint sparkle. Iconic and clean, no text.")
+        # Avatars are intentionally chibi (a cute app-icon bust) regardless of the
+        # character's main art style — a tiny realistic bust reads oddly as an icon.
+        return (f"A clean app avatar icon: chibi bust of the SAME character, head and shoulders, "
+                f"friendly warm expression, facing the viewer, centered. {a}. {CHIBI}. A single "
+                f"character. Simple smooth background of a soft gradient tinted "
+                f"{brief.get('theme', '') or '#888'} with a faint sparkle. Iconic and clean. {_GUARDS_FIGURE}")
     if kind == "sprite":
-        return (f"A single full-body character standing illustration (full-body character art). {a}. {pal}. "
-                f"One elegant three-quarter standing pose, the whole body from head to toe fully inside the "
-                f"frame, looking at the viewer, confident relaxed posture. {style or STYLE_REAL}. {WHITE_BG}, "
-                f"no cast shadow, no extra props, no text, no border, centered with generous margin.")
+        return (f"A single full-body character standing illustration (full-body character art) of one "
+                f"character alone, no other people. {a}. {pal}. One elegant three-quarter standing pose, "
+                f"the whole body from head to toe fully inside the frame, looking at the viewer, confident "
+                f"relaxed posture. {style or STYLE_REAL}. {WHITE_BG}, no cast shadow, no extra props, no "
+                f"border, centered with generous margin. {_GUARDS_FIGURE}")
     if kind == "background":
-        render = style or "atmospheric painterly anime game background"
+        render = style or "atmospheric painterly game background"
         return (f"Wide environment background art, visual-novel / chat-app backdrop. Scene: "
-                f"{brief.get('world', '')}. Rendered to match the character art ({render}), soft depth of field. "
-                f"Keep the CENTER open and uncluttered for overlaying chat bubbles, detail pushed to the edges. "
-                f"No characters, no people, no text, no logos.")
+                f"{brief.get('world', '')}. Rendered in the same artistic medium and finish as the "
+                f"character (matching: {render}) but as a wide establishing SCENE, not a portrait — soft "
+                f"depth of field. Keep the CENTER open and uncluttered for overlaying chat bubbles, detail "
+                f"pushed to the edges. No characters, no people. {_GUARDS_SCENE}")
     raise ValueError(f"unknown visual kind: {kind}")
 
 
@@ -306,8 +327,9 @@ def generate(
 def _slice_and_cut(sheet: bytes, rows: int, cols: int, want_matte: bool) -> tuple[list[bytes], bool, str]:
     """Slice a grid sheet into rows*cols cells, cut each to a transparent PNG, and
     compress to the sticker cap. Prefers the semantic matte model; falls back to a
-    chroma-key (the sheet is generated on flat green) when no model is installed —
-    so stickers still come out keyed without the heavy ``visuals`` extra. Every
+    white-background removal (the sheet is generated on flat white) that floods
+    transparency inward from the borders — so interior whites (eyes, highlights) are
+    kept and stickers still come out cut without the heavy ``visuals`` extra. Every
     step is best-effort per cell: a cell that can't be cut is kept as-is."""
     from ..content import imaging as _imaging
 
@@ -321,15 +343,15 @@ def _slice_and_cut(sheet: bytes, rows: int, cols: int, want_matte: bool) -> tupl
             try:
                 c = _matte.cut(c, model_id=mid)
                 matted = True
-            except Exception:  # noqa: BLE001 — fall back to chroma-key for this cell
+            except Exception:  # noqa: BLE001 — fall back to white-bg removal for this cell
                 try:
-                    c = _matte.chroma_key(c)
+                    c = _matte.cut_white_bg(c)
                 except Exception:  # noqa: BLE001
                     pass
         else:
             try:
-                c = _matte.chroma_key(c)
-            except Exception:  # noqa: BLE001 — keep the raw cell if keying fails
+                c = _matte.cut_white_bg(c)
+            except Exception:  # noqa: BLE001 — keep the raw cell if removal fails
                 pass
         try:
             c = _imaging.compress_image_bytes(c, "png", _imaging.CAP_STICKER)
@@ -337,6 +359,6 @@ def _slice_and_cut(sheet: bytes, rows: int, cols: int, want_matte: bool) -> tupl
             pass
         out.append(c)
     note = "" if use_matte else (
-        "stickers were cut with the chroma-key fallback — install a matte model in "
-        "Settings·生图 for cleaner cutouts.")
+        "stickers were cut with the keyless white-background fallback — install a matte "
+        "model in Settings·生图 for cleaner cutouts.")
     return out, matted, note
