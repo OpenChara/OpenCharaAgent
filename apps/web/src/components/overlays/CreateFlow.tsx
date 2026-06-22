@@ -394,17 +394,21 @@ function ShapeStep({
 
         <div className="sec embodiment-sec">
           <h3>{t("sec-embodiment")}</h3>
-          <div className="switch-row" style={{ fontSize: "12.5px" }}>
-            <b style={{ fontWeight: 550 }}>{t("mod-roleplay")}</b>
-            <small>{t("mod-roleplay-hint")}</small>
+          <div className="switch-row">
+            <div className="tx">
+              <b>{t("mod-roleplay")}</b>
+              <small>{t("mod-roleplay-hint")}</small>
+            </div>
             <button
               className={"switch" + (forceRoleplay ? " on" : "")}
               onClick={() => setForceRoleplay((v) => !v)}
             />
           </div>
-          <div className="switch-row" style={{ fontSize: "12.5px" }}>
-            <b style={{ fontWeight: 550 }}>{t("mod-website")}</b>
-            <small>{t("mod-website-hint")}</small>
+          <div className="switch-row">
+            <div className="tx">
+              <b>{t("mod-website")}</b>
+              <small>{t("mod-website-hint")}</small>
+            </div>
             <button
               className={"switch" + (personalSite ? " on" : "")}
               onClick={() => setPersonalSite((v) => !v)}

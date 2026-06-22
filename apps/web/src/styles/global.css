@@ -1486,8 +1486,16 @@ details.cv-raw pre{
   font-size:11px; color:var(--text-3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
 .pack-option .tool-chips{margin-top:5px}
-.switch-row{display:flex; align-items:center; font-size:13px; padding:2px 0}
-.switch-row small{color:var(--text-3); font-size:11.5px; margin-left:7px}
+/* A settings-list toggle row: the label + its description STACK on the left
+   (both left-aligned at the same x, so descriptions never go ragged behind
+   variable-width labels), the switch sits in a clean right column. A hairline
+   divides consecutive rows (context-free via the + sibling, so it works whether
+   the rows are grouped in a container or follow a heading). */
+.switch-row{display:flex; align-items:center; gap:16px; font-size:12.5px; padding:11px 0}
+.switch-row + .switch-row{border-top:1px solid var(--hairline-2)}
+.switch-row .tx{flex:1; min-width:0}
+.switch-row .tx b{display:block; font-size:13px; font-weight:600}
+.switch-row .tx small{display:block; color:var(--text-3); font-size:11.5px; margin-top:3px; line-height:1.5}
 
 /* ---------- 新角色工坊（虚化模态层，不再全屏接管） ---------- */
 .overlay{

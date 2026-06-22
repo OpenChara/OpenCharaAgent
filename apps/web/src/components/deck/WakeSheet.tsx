@@ -128,50 +128,47 @@ export function WakeSheet({ card, onClose }: { card: DeckCard; onClose: () => vo
             />
             {modelInfo && modelInfo.tools === false && <div className="amber-note">{t("wake-no-tools")}</div>}
           </div>
-          {/* The four run-time options, in order: 自主运行 · 网站 · 网络 · 强化角色扮演.
-              First three default on; force-roleplay defaults off. */}
-          <div className="field-row">
-            <div className="switch-row" style={{ fontSize: "12.5px" }}>
-              <b style={{ fontWeight: 550 }}>{t("p-autonomy")}</b>
-              <small>{t("p-autonomy-sub")}</small>
+          {/* Run-time options as one settings list: 自主运行 · 网站 · 网络 · 沙盒 ·
+              强化角色扮演. Stacked label+desc (aligned), switch in a right column,
+              hairline between rows. First four default on; force-roleplay off. */}
+          <div className="field-row toggles">
+            <div className="switch-row">
+              <div className="tx">
+                <b>{t("p-autonomy")}</b>
+                <small>{t("p-autonomy-sub")}</small>
+              </div>
               <button className={"switch" + (wantLive ? " on" : "")} onClick={() => setWantLive((v) => !v)} />
             </div>
-          </div>
-          <div className="field-row">
-            <div className="switch-row" style={{ fontSize: "12.5px" }}>
-              <b style={{ fontWeight: 550 }}>{t("mod-website")}</b>
-              <small>{t("mod-website-hint")}</small>
-              <button
-                className={"switch" + (personalSite ? " on" : "")}
-                onClick={() => setPersonalSite((v) => !v)}
-              />
+            <div className="switch-row">
+              <div className="tx">
+                <b>{t("mod-website")}</b>
+                <small>{t("mod-website-hint")}</small>
+              </div>
+              <button className={"switch" + (personalSite ? " on" : "")} onClick={() => setPersonalSite((v) => !v)} />
             </div>
-          </div>
-          <div className="field-row">
-            <div className="switch-row" style={{ fontSize: "12.5px" }}>
-              <b style={{ fontWeight: 550 }}>{t("p-net")}</b>
-              <small>{t("p-net-sub")}</small>
+            <div className="switch-row">
+              <div className="tx">
+                <b>{t("p-net")}</b>
+                <small>{t("p-net-sub")}</small>
+              </div>
               <button className={"switch" + (wantNet ? " on" : "")} onClick={() => setWantNet((v) => !v)} />
             </div>
-          </div>
-          <div className="field-row">
-            <div className="switch-row" style={{ fontSize: "12.5px" }}>
-              <b style={{ fontWeight: 550 }}>{t("mod-roleplay")}</b>
-              <small>{t("mod-roleplay-hint")}</small>
-              <button
-                className={"switch" + (forceRoleplay ? " on" : "")}
-                onClick={() => setForceRoleplay((v) => !v)}
-              />
-            </div>
-          </div>
-          <div className="field-row">
-            <div className="switch-row" style={{ fontSize: "12.5px" }}>
-              <b style={{ fontWeight: 550 }}>{t("p-sandbox")}</b>
-              <small>{t("wake-iso-sub")}</small>
+            <div className="switch-row">
+              <div className="tx">
+                <b>{t("p-sandbox")}</b>
+                <small>{t("wake-iso-sub")}</small>
+              </div>
               <button
                 className={"switch" + (iso === "sandbox" ? " on" : "")}
                 onClick={() => setIso((v) => (v === "sandbox" ? "admin" : "sandbox"))}
               />
+            </div>
+            <div className="switch-row">
+              <div className="tx">
+                <b>{t("mod-roleplay")}</b>
+                <small>{t("mod-roleplay-hint")}</small>
+              </div>
+              <button className={"switch" + (forceRoleplay ? " on" : "")} onClick={() => setForceRoleplay((v) => !v)} />
             </div>
           </div>
         </div>
