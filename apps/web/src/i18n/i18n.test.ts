@@ -52,9 +52,11 @@ describe("I18N strings map", () => {
   // vis-matte-cta) → 587. Per-slot download + overwrite-on-regenerate warning added
   // 2 (vis-download, vis-regen-overwrite) → 589. The restored visuals pipeline
   // (keyvisual + stickers generation, async polling, identity anchor) added 3
-  // (vis-kind-stickers, vis-anchor-hint, vis-gen-progress) → 592.
-  it("preserves the full key set from the source dict (592 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(592);
+  // (vis-kind-stickers, vis-anchor-hint, vis-gen-progress) → 592. The runtime
+  // sandbox⇄admin isolation toggle in chara settings added 2 (p-sandbox-sub,
+  // iso-admin-confirm) → 594.
+  it("preserves the full key set from the source dict (594 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(594);
   });
 
   it("every value is a [zh, en] string tuple", () => {

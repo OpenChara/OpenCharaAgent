@@ -43,6 +43,7 @@ export interface Snapshot {
   net_on?: boolean;
   website?: boolean;
   embodiment?: string;
+  isolation?: string; // live OS isolation ("sandbox" | "admin")
   rest_until?: number;
   sandbox_root?: string;
   workspace_root?: string;

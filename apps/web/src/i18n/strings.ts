@@ -139,6 +139,8 @@ export const I18N = {
   "queued-hint": ["已暂存 · TA 忙完就发出", "Queued · sends when the chara is free"],
   "busy-cmd": ["TA 正忙，稍等片刻再试这个命令", "The chara is busy — try this command again in a moment"],
   "p-sandbox": ["沙盒", "Sandbox"],
+  "p-sandbox-sub": ["开启＝把 TA 关在工作区内；关闭＝管理员权限，可读写整台电脑（仅在你完全信任这张卡时）。重启后生效。", "On: confines it to its workspace. Off = admin: full read/write of this computer (only if you fully trust this card). Applies on next start."],
+  "iso-admin-confirm": ["关闭沙盒后，TA 将获得对整台电脑的读写权限——包括你的文件与密钥。请只在你完全信任这张卡时这样做。确定关闭沙盒？", "Turning off the sandbox gives this character full read/write of your computer — your files and keys included. Only do this if you fully trust this card. Disable the sandbox?"],
   "p-net": ["网络", "Network"],
   "p-net-sub": ["允许访问外部网络", "Allow outside network access"],
   "p-autonomy": ["自主运行", "Autonomy"],

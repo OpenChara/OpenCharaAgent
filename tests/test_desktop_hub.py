@@ -240,6 +240,30 @@ def test_set_modules_edits_config_for_next_start():
     assert cfg2["embodiment_override"] == "actor"  # untouched
 
 
+def test_set_isolation_switches_config_for_next_start():
+    set_defaults()
+    entry = result("session.wake", {"card": luna_card_path()})
+    name = entry["name"]
+    assert entry["isolation"] == "sandbox"  # wakes sandboxed by default
+    r = result("chara.set_isolation", {"name": name, "isolation": "admin"})
+    assert r["isolation"] == "admin" and r["applies"] == "next_start"
+    cfg = json.loads(S.load_session(name).config_path.read_text(encoding="utf-8"))
+    assert cfg["isolation"] == "admin"
+    # switch back — tightening, same path
+    result("chara.set_isolation", {"name": name, "isolation": "sandbox"})
+    cfg2 = json.loads(S.load_session(name).config_path.read_text(encoding="utf-8"))
+    assert cfg2["isolation"] == "sandbox"
+
+
+def test_set_isolation_rejects_unknown_value():
+    set_defaults()
+    name = result("session.wake", {"card": luna_card_path()})["name"]
+    err = rpc_error("chara.set_isolation", {"name": name, "isolation": "rootkit"})
+    assert err["code"] == -32602
+    # unchanged — still the sandbox default
+    assert S.load_session(name).isolation == "sandbox"
+
+
 def test_wake_invalid_embodiment_is_clean_rpc_error_and_creates_nothing():
     set_defaults()
     before = {m.name for m in S.list_sessions()}

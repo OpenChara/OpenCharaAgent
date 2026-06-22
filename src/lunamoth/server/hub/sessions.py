@@ -634,6 +634,32 @@ def set_modules(meta: S.SessionMeta, force_roleplay: Any = None,
     }
 
 
+def set_isolation(meta: S.SessionMeta, isolation: str) -> dict[str, Any]:
+    """Switch a chara's OS isolation (sandbox|admin) AFTER wake. Like set_modules,
+    this writes the session config and takes effect on the NEXT process start — the
+    jail backend (LUNAMOTH_PY_BACKEND) is pinned when the chara's child launches, so
+    it is NEVER hot-swapped under a running chara. Switching to ``admin`` removes the
+    sandbox entirely (full-machine read/write at the user's privileges) — a
+    deliberate, trust-the-card act, gated by a confirm in the UI."""
+    iso = S.normalize_isolation(str(isolation or ""))  # legacy dir/local/docker → admin
+    if iso not in S.ISOLATION_LEVELS:
+        raise RpcError(-32602, f"isolation must be one of {sorted(S.ISOLATION_LEVELS)}")
+    try:
+        cfg = json.loads(meta.config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        # A corrupt/unreadable config must NOT be silently reset (that would wipe the
+        # chara's model/etc) — surface it, exactly as set_modules does.
+        raise RpcError(-32031, f"cannot read session config for {meta.name!r}: {e}") from e
+    cfg["isolation"] = iso
+    meta.config_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        meta.config_path.chmod(0o600)
+    except OSError:
+        pass
+    meta.isolation = iso
+    return {"ok": True, "isolation": iso, "applies": "next_start"}
+
+
 def start_daemon(meta: S.SessionMeta, patience: float | None = None) -> bool:
     """Spawn the detached background life (mirror of front/cli._start_daemon)."""
     if meta.daemon_pid():

@@ -92,6 +92,7 @@ class HubDispatcher:
             "session.export": self._session_export,
             "session.wake": self._session_wake,
             "session.set_modules": self._session_set_modules,
+            "chara.set_isolation": self._chara_set_isolation,
             "toolpacks.list": lambda p: _sessions.list_toolpacks(),
             "keys.list": lambda p: _config.list_keys(),
             "keys.save": self._keys_save,
@@ -257,6 +258,9 @@ class HubDispatcher:
             force_roleplay=p.get("force_roleplay"),
             website=p.get("website"),
         )
+
+    def _chara_set_isolation(self, p: dict[str, Any]) -> Any:
+        return _sessions.set_isolation(_meta(p), str(p.get("isolation") or ""))
 
     def _keys_save(self, p: dict[str, Any]) -> Any:
         return _config.save_key(str(p.get("label") or ""), provider=str(p.get("provider") or ""),

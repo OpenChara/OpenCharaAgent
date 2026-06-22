@@ -420,6 +420,23 @@ function SettingsPane({ stream, name }: { stream: CharaStream; name: string }) {
     });
   };
 
+  // 沙盒 — OS isolation: sandbox (jailed, default) ⇄ admin (full machine). The jail
+  // backend is pinned at the chara's process launch, so a change applies on the NEXT
+  // start (never hot-swapped, like the modules). snap.isolation is the LIVE value;
+  // turning the sandbox OFF (→ admin) grants full read/write of this computer, so it
+  // is confirm-gated. Re-enabling it (→ sandbox) tightens, no confirm.
+  const activeSandbox = String(snap.isolation || "sandbox") !== "admin";
+  const [isoWant, setIsoWant] = useState<boolean | null>(null);
+  const sandboxOn = isoWant ?? activeSandbox;
+  const setSandbox = (next: boolean) => {
+    if (!next && !confirm(t("iso-admin-confirm"))) return;
+    setIsoWant(next); // optimistic, sticky (the pending next-start value)
+    hub.call("chara.set_isolation", { name, isolation: next ? "sandbox" : "admin" }, 30000).catch((e) => {
+      setIsoWant(null); // revert to the live value
+      deckToast(rpcErrText(t, e as { message?: string }), true);
+    });
+  };
+
   const doReset = async () => {
     if (resetting || !confirm(t("reset-confirm"))) return;
     setResetting(true); // visible working state, blocks a double-reset
@@ -449,6 +466,14 @@ function SettingsPane({ stream, name }: { stream: CharaStream; name: string }) {
         <div className="why">{t("p-net-sub")}</div>
         <div className="ctl">
           <button className={"switch" + (netOn ? " on" : "")} onClick={toggleNet} />
+        </div>
+      </div>
+      <div className="pfield" style={{ marginTop: 16 }}>
+        <label>{t("p-sandbox")}</label>
+        <div className="why">{t("p-sandbox-sub")}</div>
+        <div className="ctl">
+          <button className={"switch" + (sandboxOn ? " on" : "")} onClick={() => setSandbox(!sandboxOn)} />
+          {sandboxOn !== activeSandbox && <span className="fact-hint">{t("mod-next-start")}</span>}
         </div>
       </div>
       <div className="pfield" style={{ marginTop: 16 }}>
