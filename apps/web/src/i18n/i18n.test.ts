@@ -47,8 +47,12 @@ describe("I18N strings map", () => {
   // gw-f-access-token, gw-telegram-label, gw-tg-note, gw-f-tg-api-base,
   // gw-h-tg-api-base) → 572. The status pane's per-chara model + reasoning editor
   // (model Select → /model, reasoning seg → /reasoning) added p-model-scope-note → 573.
-  it("preserves the full key set from the source dict (573 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(574);
+  // The visuals brief editor + un-locked art style added 13 (vis-brief-title/sub/
+  // edit/hide/loading/rebuild/appearance/style/palette/world/theme + vis-matte-hint/
+  // vis-matte-cta) → 587. Per-slot download + overwrite-on-regenerate warning added
+  // 2 (vis-download, vis-regen-overwrite) → 589.
+  it("preserves the full key set from the source dict (589 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(589);
   });
 
   it("every value is a [zh, en] string tuple", () => {
