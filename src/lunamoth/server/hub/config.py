@@ -121,6 +121,21 @@ def list_keys() -> list[dict[str, Any]]:
     return out
 
 
+def resolve_key(label: str) -> dict[str, str] | None:
+    """The full stored record (INCLUDING the secret) for a named key, or None.
+    Server-side ONLY — never sent to a client (list_keys is the safe, secret-free
+    view). Used by `key.test` to test a specific saved provider key by label."""
+    item = _keys_map(_read_desktop_raw()).get(str(label or "").strip())
+    if not isinstance(item, dict):
+        return None
+    return {
+        "provider": str(item.get("provider") or ""),
+        "base_url": str(item.get("base_url") or ""),
+        "api_key": str(item.get("api_key") or ""),
+        "model": str(item.get("model") or ""),
+    }
+
+
 def save_key(label: str, provider: str = "", base_url: str = "",
              api_key: str = "", model: str = "") -> list[dict[str, Any]]:
     label = str(label or "").strip()

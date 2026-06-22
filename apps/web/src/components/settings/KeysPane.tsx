@@ -12,10 +12,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { useT } from "../../i18n";
 import { useHubApi } from "../../state/hub";
-import { rpcErrText } from "../../lib/status";
+import { errText, rpcErrText } from "../../lib/status";
 import { deckToast } from "../ui/deckToast";
 
 interface KeyRowData { label: string; provider: string; base_url: string; model: string; has_key: boolean; active: boolean }
+interface TestResult { ok?: boolean; error?: { kind?: string; detail?: string } }
 
 /* Curated OpenAI-compatible providers offered as preset rows (one key each).
    base_url is editable later via a custom endpoint if a region/path differs. */
@@ -87,6 +88,13 @@ export function KeysPane() {
     setAddingCustom(false);
   };
 
+  // Per-row connectivity test: resolves the saved key's secret server-side and
+  // tests it (key.test with a label). Errors come back as a classified shape.
+  const testKey = async (label: string): Promise<TestResult> => {
+    try { return await hub.call<TestResult>("key.test", { label }, 60000); }
+    catch (e) { return { ok: false, error: { kind: (e as { data?: { kind?: string } })?.data?.kind } }; }
+  };
+
   const byLabel = (l: string) => rows?.find((r) => r.label === l) || null;
   const customRows = (rows || []).filter((r) => !PRESETS.some((p) => p.label === r.label));
 
@@ -101,14 +109,14 @@ export function KeysPane() {
             key={pp.label} name={pp.label} desc={t(pp.descKey as Parameters<typeof t>[0])} row={byLabel(pp.label)}
             busy={busy === pp.label}
             onSave={(k) => saveKey(pp.label, pp.provider, pp.base_url, k, false)}
-            onUse={() => useKey(pp.label)}
+            onUse={() => useKey(pp.label)} onTest={() => testKey(pp.label)}
           />
         ))}
         {customRows.map((r) => (
           <ProviderRow
             key={r.label} name={r.label} desc={r.base_url} custom row={r} busy={busy === r.label}
             onSave={(k) => saveKey(r.label, r.provider, r.base_url, k, false)}
-            onUse={() => useKey(r.label)} onDelete={() => del(r.label)}
+            onUse={() => useKey(r.label)} onDelete={() => del(r.label)} onTest={() => testKey(r.label)}
           />
         ))}
       </div>
@@ -148,18 +156,25 @@ export function KeysPane() {
 }
 
 function ProviderRow({
-  name, desc, row, busy, custom, onSave, onUse, onDelete,
+  name, desc, row, busy, custom, onSave, onUse, onDelete, onTest,
 }: {
   name: string; desc?: string; row: KeyRowData | null; busy: boolean; custom?: boolean;
-  onSave: (key: string) => void; onUse: () => void; onDelete?: () => void;
+  onSave: (key: string) => void; onUse: () => void; onDelete?: () => void; onTest?: () => Promise<TestResult>;
 }) {
   const t = useT();
   const has = !!row?.has_key;
   const active = !!row?.active;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<TestResult | null>(null);
 
   const save = () => { if (draft.trim()) { onSave(draft.trim()); setDraft(""); setEditing(false); } };
+  const test = async () => {
+    if (!onTest) return;
+    setTesting(true); setResult(null);
+    try { setResult(await onTest()); } finally { setTesting(false); }
+  };
 
   return (
     <div className={"prov-row" + (active ? " active" : "")}>
@@ -167,12 +182,21 @@ function ProviderRow({
       <div className="prov-meta">
         <div className="prov-name">{name}{active && <span className="prov-badge">{t("prov-active")}</span>}</div>
         {desc && <div className="prov-desc">{desc}</div>}
+        {(testing || result) && (
+          <div className="prov-desc">
+            {testing ? <><span className="spin" /> {t("test")}…</>
+              : <span className={"okline" + (result?.ok ? "" : " bad")}>
+                  {result?.ok ? t("connected") : "✗ " + errText(t, result?.error)}
+                </span>}
+          </div>
+        )}
       </div>
       <div className="prov-key">
         {has && !editing ? (
           <>
             <span className="prov-masked">••••••••</span>
             {!active && <button className="btn text sm" disabled={busy} onClick={onUse}>{t("prov-use")}</button>}
+            {onTest && <button className="btn text sm" disabled={busy || testing} onClick={() => void test()}>{t("test")}</button>}
             <button className="btn text sm" onClick={() => { setDraft(""); setEditing(true); }}>{t("prov-change-key")}</button>
             {custom && onDelete && <button className="btn text sm" disabled={busy} onClick={onDelete}>✕</button>}
           </>

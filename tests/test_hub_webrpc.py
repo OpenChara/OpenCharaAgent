@@ -453,6 +453,33 @@ def test_keys_roundtrip_never_echoes_secrets():
     assert raw["keys"]["work"]["api_key"] == "sk-work-1"
 
 
+def test_key_test_by_label_resolves_secret_and_validates_via_models(monkeypatch):
+    # The 提供商 pane's per-row test: key.test with a `label` resolves THAT saved
+    # key's secret server-side (the client never holds it) and — since a key row
+    # stores no model — validates via the GET /models endpoint.
+    set_defaults()
+    H.save_key("vol", provider="volcano",
+               base_url="https://ark.example/v3", api_key="ark-secret-xyz")
+    calls: dict = {}
+
+    def fake_http_json(url, api_key="", payload=None, timeout=30.0):
+        calls.update(url=url, api_key=api_key, payload=payload)
+        return {"data": [{"id": "doubao-x"}]}
+
+    monkeypatch.setattr(H, "_http_json", fake_http_json)
+    out = result("key.test", {"label": "vol"})
+    assert out["ok"] is True
+    assert calls["url"] == "https://ark.example/v3/models"   # no model → /models check
+    assert calls["payload"] is None                          # a GET, not a completion
+    assert calls["api_key"] == "ark-secret-xyz"              # stored secret resolved server-side
+
+
+def test_key_test_unknown_label_is_a_clean_error():
+    set_defaults()
+    out = result("key.test", {"label": "nope"})
+    assert out["ok"] is False and out["error"]["kind"] == "config"
+
+
 def test_image_selection_and_key_unified_on_keyring():
     # The image SELECTION (provider + model) lives in the global defaults; the KEY
     # comes from the SAME provider keyring as text (unified path). has_image_key =

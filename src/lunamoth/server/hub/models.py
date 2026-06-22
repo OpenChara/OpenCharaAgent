@@ -36,6 +36,10 @@ def _http_json(url: str, api_key: str = "", payload: dict | None = None, timeout
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
+    # OpenRouter app attribution (name + icon) so hub-side auxiliary completions
+    # — card drafting, field rewrites, image-prompt — group under the same app.
+    from ...config import openrouter_attribution_headers
+    headers.update(openrouter_attribution_headers(url))
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url, data=body, headers=headers, method="POST" if body else "GET")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -81,8 +85,20 @@ def model_capabilities(base_url: str, model: str, api_key: str = "") -> dict[str
 
 
 def test_key(provider: str, base_url: str, api_key: str, model: str) -> dict[str, Any]:
-    """One tiny completion: the only honest connectivity test."""
+    """An honest connectivity + auth test. With a model, one tiny completion;
+    without one (a provider key row stores no model), a GET /models reachability +
+    auth check — enough to confirm the key works."""
     base = base_url.rstrip("/")
+    if not model:
+        try:
+            _pkg()._http_json(base + "/models", api_key, timeout=30.0)
+        except urllib.error.HTTPError as exc:
+            return {"ok": False, "error": _classify_http_error(exc.code, _http_error_detail(exc))}
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            return {"ok": False, "error": {"kind": "network", "detail": str(getattr(exc, "reason", exc))}}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": {"kind": "unknown", "detail": str(exc)}}
+        return {"ok": True, "model": ""}
     try:
         data = _pkg()._http_json(
             base + "/chat/completions", api_key,

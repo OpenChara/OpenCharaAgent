@@ -444,6 +444,18 @@ class HubDispatcher:
         return _config.apply_default_key([str(n) for n in names])
 
     def _key_test(self, p: dict[str, Any]) -> Any:
+        # A `label` tests a SPECIFIC saved provider key (the 提供商 pane's per-row
+        # test) by resolving its stored secret server-side; otherwise we test the
+        # active default (the Model pane's Test button).
+        label = str(p.get("label") or "").strip()
+        if label:
+            rec = _config.resolve_key(label)
+            if rec is None:
+                return {"ok": False, "error": {"kind": "config", "detail": f"no saved key '{label}'"}}
+            return _models.test_key(
+                provider=rec["provider"], base_url=rec["base_url"],
+                api_key=rec["api_key"], model=rec["model"],
+            )
         defaults = _config.load_defaults()
         return _models.test_key(
             provider=str(p.get("provider") or defaults.get("provider", "")),
