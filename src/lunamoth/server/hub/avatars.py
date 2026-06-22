@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from ...content.cards import CharacterCard
-from ...content.imaging import CAP_ART, avatar_thumb_data_uri, compress_image_bytes
+from ...content.imaging import CAP_ART, CAP_STICKER, avatar_thumb_data_uri, compress_image_bytes
 from ..dispatch import RpcError
 from ._common import HubRpcError, _asset_url, _sanitize_avatar_svg, _writable_card_path
 
@@ -224,9 +224,76 @@ def asset_save(path: str, kind: str, data_b64: str, ext: str) -> dict[str, Any]:
     return {"path": str(target), "kind": kind, "file": sidecar.name, "url": _asset_url(sidecar)}
 
 
+# ---- sticker set (表情包) — a LIST of cut cells, not a single sidecar -----------
+_STICKER_MAX = 9
+
+
+def _sticker_sidecar_path(card_path: Path, i: int) -> Path:
+    return card_path.with_name(f"{card_path.stem}.sticker.{i}.png")
+
+
+def stickers_save(path: str, items: list[str]) -> dict[str, Any]:
+    """Write a SET of sticker sidecars (``<stem>.sticker.<i>.png``) and point the
+    card's ``extensions.lunamoth.assets['stickers']`` at the ordered name list.
+    ``items`` = base64 PNG cells (the cut 3x3 grid). Replaces any existing set; each
+    cell is magic-checked + compressed to the sticker cap. png only."""
+    target = _writable_card_path(path)
+    if not isinstance(items, list) or not items:
+        raise RpcError(-32602, "stickers payload must be a non-empty list of PNG cells")
+    if len(items) > _STICKER_MAX:
+        raise RpcError(-32602, f"too many stickers (max {_STICKER_MAX})")
+    decoded: list[bytes] = []
+    for n, b in enumerate(items):
+        try:
+            raw = base64.b64decode(str(b or ""), validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise RpcError(-32602, f"sticker {n} is not valid base64: {exc}") from exc
+        if not raw:
+            raise RpcError(-32602, f"sticker {n} is empty")
+        if len(raw) > _ART_MAX_BYTES:
+            raise HubRpcError(-32602, "a sticker is too large (max 16MB)",
+                              {"kind": "asset_size", "detail": f"{len(raw)} bytes"})
+        if not _looks_like(raw, "png"):
+            raise HubRpcError(-32602, "a sticker is not a PNG image",
+                              {"kind": "asset_type", "detail": "magic-byte mismatch"})
+        decoded.append(compress_image_bytes(raw, "png", CAP_STICKER))
+    # clear any stale cells (a previous set may have had more), then write the new set
+    for old in range(_STICKER_MAX):
+        sc = _sticker_sidecar_path(target, old)
+        if sc.exists():
+            try:
+                sc.unlink()
+            except OSError:
+                pass
+    names: list[str] = []
+    for i, raw in enumerate(decoded):
+        sc = _sticker_sidecar_path(target, i)
+        sc.write_bytes(raw)
+        names.append(sc.name)
+    raw_card = json.loads(target.read_text(encoding="utf-8"))
+    if not isinstance(raw_card, dict):
+        raise RpcError(-32602, "card is not a JSON object")
+    data = raw_card.get("data")
+    if not isinstance(data, dict):
+        data = raw_card["data"] = {}
+    ext_root = data.get("extensions")
+    if not isinstance(ext_root, dict):
+        ext_root = data["extensions"] = {}
+    lm = ext_root.get("lunamoth")
+    if not isinstance(lm, dict):
+        lm = ext_root["lunamoth"] = {}
+    assets = lm.get("assets")
+    if not isinstance(assets, dict):
+        assets = lm["assets"] = {}
+    assets["stickers"] = names
+    target.write_text(json.dumps(raw_card, ensure_ascii=False, indent=2), encoding="utf-8")
+    urls = [_asset_url(_sticker_sidecar_path(target, i)) for i in range(len(names))]
+    return {"path": str(target), "kind": "stickers", "files": names, "urls": urls}
+
+
 def asset_delete(path: str, kind: str) -> dict[str, Any]:
-    """Remove an art asset (avatar / sprite / background / keyvisual): delete its
-    sidecar file(s) and drop the card's pointer. Idempotent."""
+    """Remove an art asset (avatar / sprite / background / keyvisual / stickers):
+    delete its sidecar file(s) and drop the card's pointer. Idempotent."""
     target = _writable_card_path(path)
     kind = str(kind or "").strip().lower()
     raw_card = json.loads(target.read_text(encoding="utf-8"))
@@ -258,6 +325,17 @@ def asset_delete(path: str, kind: str) -> dict[str, Any]:
         assets = lm.get("assets") if isinstance(lm, dict) else None
         if isinstance(assets, dict):
             assets.pop(kind, None)
+    elif kind == "stickers":
+        for i in range(_STICKER_MAX):
+            sc = _sticker_sidecar_path(target, i)
+            if sc.exists():
+                try:
+                    sc.unlink(); removed = True
+                except OSError:
+                    pass
+        assets = lm.get("assets") if isinstance(lm, dict) else None
+        if isinstance(assets, dict):
+            assets.pop("stickers", None)
     else:
         raise RpcError(-32602, f"unknown asset kind: {kind}")
     target.write_text(json.dumps(raw_card, ensure_ascii=False, indent=2), encoding="utf-8")

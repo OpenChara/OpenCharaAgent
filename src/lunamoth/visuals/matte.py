@@ -392,3 +392,35 @@ def cut(src, *, model_id: str | None = None, despill: bool = True) -> bytes:
     buf = io.BytesIO()
     out.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def chroma_key(src) -> bytes:
+    """Keyless cutout fallback: key out a flat green-screen background → transparent
+    PNG (autocropped). PIL-ONLY — no rembg/numpy — so it works WITHOUT the visuals
+    extra. Used for sticker cells when no matte model is installed; expects a sheet
+    generated on flat chroma green. Raises on an undecodable input (no fake output)."""
+    import io
+
+    from PIL import Image
+
+    if isinstance(src, (bytes, bytearray)):
+        im = Image.open(io.BytesIO(bytes(src)))
+    elif hasattr(src, "convert"):
+        im = src
+    else:
+        im = Image.open(src)
+    im = im.convert("RGBA")
+    raw = bytearray(im.tobytes())               # RGBA, 4 bytes per pixel
+    for i in range(0, len(raw), 4):
+        r, g, b = raw[i], raw[i + 1], raw[i + 2]
+        if g > 90 and (g - r) > 40 and (g - b) > 40:
+            raw[i + 3] = 0                       # green → transparent
+        elif g > r and g > b:
+            raw[i + 1] = (r + b) // 2            # tame green spill on kept pixels
+    im = Image.frombytes("RGBA", im.size, bytes(raw))
+    bbox = im.getbbox()
+    if bbox:
+        im = im.crop(bbox)
+    buf = io.BytesIO()
+    im.save(buf, format="PNG")
+    return buf.getvalue()

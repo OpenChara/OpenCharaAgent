@@ -179,6 +179,28 @@ def reencode_to_webp(src: "Path", max_px: int) -> bytes:
         return _encode(im, "WEBP")
 
 
+def slice_grid(sheet: bytes, rows: int = 3, cols: int = 3, pad_frac: float = 0.04) -> list[bytes]:
+    """Slice a uniform rows x cols sheet into cells → one PNG (bytes) per cell in
+    row-major order (left→right, top→bottom). A small inset (`pad_frac` of the short
+    cell side) trims the gutters so adjacent cells don't bleed; alpha is preserved.
+    Raises on an undecodable sheet so the caller surfaces a real error (no fake
+    stickers). Used by the sticker pipeline to cut a 3x3 expression sheet."""
+    with Image.open(io.BytesIO(sheet)) as im:
+        im.load()
+        im = im.convert("RGBA")
+        w, h = im.size
+        cw, ch = w // cols, h // rows
+        pad = int(min(cw, ch) * pad_frac)
+        out: list[bytes] = []
+        for i in range(rows):
+            for j in range(cols):
+                box = (j * cw + pad, i * ch + pad, (j + 1) * cw - pad, (i + 1) * ch - pad)
+                buf = io.BytesIO()
+                im.crop(box).save(buf, format="PNG")
+                out.append(buf.getvalue())
+    return out
+
+
 def _clear_thumb_cache() -> None:
     """Test seam: drop the in-memory thumbnail cache."""
     _thumb_cache.clear()

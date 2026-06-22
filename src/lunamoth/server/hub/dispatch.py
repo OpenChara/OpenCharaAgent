@@ -113,7 +113,9 @@ class HubDispatcher:
             "card.avatar_upload": self._card_avatar_upload,
             "card.visual_brief": self._card_visual_brief,
             "card.visual_generate": self._card_visual_generate,
+            "card.visual_job": self._card_visual_job,
             "card.asset_save": self._card_asset_save,
+            "card.stickers_save": self._card_stickers_save,
             "card.asset_delete": lambda p: _avatars.asset_delete(str(p.get("path") or ""), str(p.get("kind") or "")),
             "card.avatar_read": lambda p: _avatars.avatar_read(str(p.get("path") or "")),
             "cards.list": lambda p: _cards.list_cards(),
@@ -319,11 +321,13 @@ class HubDispatcher:
             raise HubRpcError(-32050, str(exc), {"kind": "visual_brief"}) from exc
 
     def _card_visual_generate(self, p: dict[str, Any]) -> Any:
-        # R9: card → brief (GLOBAL default text model, or a reused one) →
-        # Seedream image (optionally guided by user refs) → optional matte →
-        # preview bytes. Unopinionated about placement: it returns the image for
-        # the UI to show/save (avatars via avatar_upload, art via asset_save).
-        from ...visuals import pipeline
+        # R9 (async): card → brief (GLOBAL default text model, or a reused one) →
+        # Seedream image (optionally guided by user refs / a generated anchor) →
+        # optional matte → preview bytes. Generation is SLOW (30–240 s), so this
+        # returns immediately with a job_id; the client polls card.visual_job. The
+        # result bytes are returned for the UI to show/save (avatars via
+        # avatar_upload, single art via asset_save, the sticker set via stickers_save).
+        from ...visuals import jobs, pipeline
         path = str(p.get("path") or p.get("card_path") or "")
         kind = str(p.get("kind") or "avatar")
         if kind not in pipeline.KINDS:
@@ -337,7 +341,8 @@ class HubDispatcher:
         matte_opt = p.get("matte")
         brief_in = p.get("brief") if isinstance(p.get("brief"), dict) else None
         refs_in = [str(r) for r in p.get("refs")] if isinstance(p.get("refs"), list) else None
-        try:
+
+        def _run() -> dict[str, Any]:
             out = pipeline.generate(
                 card, kind,
                 llm_call=lambda s, u: _pkg()._complete(defaults, s, u, temperature=0.7, max_tokens=3000),
@@ -345,17 +350,40 @@ class HubDispatcher:
                 refs=refs_in,
                 matte=(None if matte_opt is None else bool(matte_opt)),
             )
-        except (RuntimeError, ValueError) as exc:
-            raise HubRpcError(-32050, str(exc), {"kind": "visual_generate"}) from exc
-        return {
-            "data_b64": base64.b64encode(out["data"]).decode("ascii"),
-            "mime": out["mime"], "ext": out["ext"], "kind": out["kind"],
-            "matted": out["matted"], "note": out["note"], "brief": out["brief"],
-        }
+            common = {"mime": out["mime"], "ext": out["ext"], "kind": out["kind"],
+                      "matted": out["matted"], "note": out["note"], "brief": out["brief"]}
+            if "stickers" in out:  # a sliced set → a list of base64 cells
+                return {"stickers": [base64.b64encode(c).decode("ascii") for c in out["stickers"]],
+                        **common}
+            return {"data_b64": base64.b64encode(out["data"]).decode("ascii"), **common}
+
+        return {"status": "running", "job_id": jobs.submit(_run, label=f"visual:{kind}")}
+
+    def _card_visual_job(self, p: dict[str, Any]) -> Any:
+        # Poll a card.visual_generate job. running → {status:"running"}; ready →
+        # {status:"ready", ...payload}; a real failure surfaces as a structured error;
+        # unknown = the id expired/was never seen (client stops polling gracefully).
+        from ...visuals import jobs
+        jid = str(p.get("job_id") or "")
+        if not jid:
+            raise RpcError(-32602, "card.visual_job needs a job_id")
+        st = jobs.status(jid)
+        if st["status"] == "ready":
+            return {"status": "ready", **(st.get("result") or {})}
+        if st["status"] == "failed":
+            raise HubRpcError(-32050, st.get("error") or "image generation failed",
+                              {"kind": "visual_generate"})
+        return {"status": st["status"]}  # running | unknown
 
     def _card_asset_save(self, p: dict[str, Any]) -> Any:
         return _avatars.asset_save(str(p.get("path") or ""), str(p.get("kind") or ""),
                                    str(p.get("data_b64") or ""), str(p.get("ext") or ""))
+
+    def _card_stickers_save(self, p: dict[str, Any]) -> Any:
+        items = p.get("data_b64")
+        if not isinstance(items, list):
+            raise RpcError(-32602, "card.stickers_save expects data_b64: a list of PNG base64 cells")
+        return _avatars.stickers_save(str(p.get("path") or ""), [str(x) for x in items])
 
     def _card_read(self, p: dict[str, Any]) -> Any:
         path = Path(str(p.get("path") or ""))

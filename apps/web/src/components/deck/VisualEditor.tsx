@@ -1,18 +1,21 @@
-/* VisualEditor — the R9 visual-set editor, a React port of app.js
- * buildVisualsControls (the deleted vanilla renderer). Per-kind
- * (avatar / sprite / background) generate via card.visual_brief → card.visual_generate
- * with a ticking "生成中…（约 10–30s）" state, regenerate, current art shown
- * (assetUrl-wrapped). One brief is built once and reused across the set so
- * "generate all" pays for ONE brief. Reference-image tray (≤3) guides generation.
- * Save / delete via card.avatar_upload (avatar) / card.asset_save + card.asset_delete.
+/* VisualEditor — the R9 visual-set editor.
  *
- * Each action writes to the card immediately (no separate Save button) — instant
- * feedback. Binding UI rule (CLAUDE.md): every generate/save shows a working state
- * (never freezes the long call), then reverts + surfaces errors via deckToast.
- * Builtin / locked / non-JSON cards are read-only (disabled).
+ * Pipeline per card: ONE shared "image brief" (card.visual_brief) → per-kind
+ * generation (card.visual_generate, now ASYNC: it returns a job_id and we poll
+ * card.visual_job until ready). Generation is slow (30–240s), so every generate
+ * shows a ticking progress state and never freezes the UI.
  *
- * Embedded inside the open CardEditor modal — it never closes the editor; after a
- * save it refreshes the hub snapshot (live deck cards) so the new art shows. */
+ * Identity lock: the keyvisual is the ANCHOR — generate + confirm it first, and its
+ * bytes are then fed as a reference into avatar / sprite / stickers / background so
+ * the whole set looks like the same character. Skipping it is allowed, but a hint
+ * recommends generating it first. A user reference tray (≤3) also guides generation.
+ *
+ * stickers (表情包) is a SET: one 3×3 sheet is generated, sliced into 9 cells server
+ * side, and saved as a list via card.stickers_save. Other kinds are single images
+ * (avatar → avatar_upload; sprite/background/keyvisual → asset_save).
+ *
+ * Each save writes to the card immediately, then refreshes the hub snapshot so the
+ * new art shows. Builtin / locked / non-JSON cards are read-only (disabled). */
 
 import { useEffect, useRef, useState } from "react";
 import { assetUrl } from "../../rpc";
@@ -27,15 +30,17 @@ import type { DeckCard } from "./types";
 
 const ART_EXTS = ["png", "jpg", "jpeg", "webp"];
 const ART_UPLOAD_MAX = 16 * 1024 * 1024;
-// The deck's default set. The in-session editor passes its own list (it surfaces
-// keyvisual too — uploaded/cleared only, since the image pipeline can't generate it).
-const DEFAULT_KINDS = ["avatar", "sprite", "background"] as const;
-// Only these kinds can be AI-generated (card.visual_generate / pipeline.prompt_for).
-// keyvisual is upload/clear only.
-const GENERATABLE: Record<string, boolean> = { avatar: true, sprite: true, background: true };
+// The set shown + order. keyvisual is FIRST so it reads as the anchor to generate
+// before the rest; stickers is the 9-expression set.
+const DEFAULT_KINDS = ["keyvisual", "avatar", "sprite", "stickers", "background"] as const;
+// Every kind can now be AI-generated (pipeline.KINDS covers all five).
+const GENERATABLE: Record<string, boolean> = {
+  keyvisual: true, avatar: true, sprite: true, stickers: true, background: true,
+};
 const REF_MAX = 3; // user reference images per generation
+const REFS_CAP = 4; // anchor + user refs sent to the image model
 
-type VisKind = "avatar" | "sprite" | "background" | "keyvisual";
+type VisKind = "avatar" | "sprite" | "background" | "keyvisual" | "stickers";
 
 interface Ref {
   data_b64: string;
@@ -62,13 +67,42 @@ const BRIEF_FIELDS: { k: string; labelKey: TKey; long?: boolean }[] = [
 ];
 
 interface GenResult {
-  data_b64: string;
+  status?: string;
+  data_b64?: string;
+  stickers?: string[]; // present for kind=stickers (base64 PNG cells)
   mime?: string;
   ext?: string;
   kind?: string;
   matted?: boolean;
   note?: string;
   brief?: Brief;
+}
+
+type HubCall = <T = unknown>(method: string, params?: Record<string, unknown>, timeoutMs?: number) => Promise<T>;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/* Kick card.visual_generate (returns a job_id) then poll card.visual_job until the
+   job is ready. A real failure surfaces as a rejected hubCall (structured error);
+   "unknown" means the job expired. onTick reports elapsed seconds for the UI. */
+async function runVisualJob(
+  hubCall: HubCall,
+  params: Record<string, unknown>,
+  onTick?: (sec: number) => void,
+): Promise<GenResult> {
+  const sub = await hubCall<{ job_id?: string; status?: string }>("card.visual_generate", params, 30000);
+  const jobId = sub?.job_id;
+  if (!jobId) throw new Error("visual_generate did not return a job id");
+  const t0 = Date.now();
+  for (let i = 0; i < 400; i++) {
+    await sleep(1500);
+    onTick?.(Math.round((Date.now() - t0) / 1000));
+    const st = await hubCall<GenResult & { status?: string }>("card.visual_job", { job_id: jobId }, 30000);
+    if (st.status === "ready") return st;
+    if (st.status === "unknown") throw new Error("the generation job expired — please try again");
+    // "running" → keep polling
+  }
+  throw new Error("generation timed out");
 }
 
 /* Load an <img> from a src (data-URI), resolving once decoded. */
@@ -83,7 +117,7 @@ function loadImg(src: string): Promise<HTMLImageElement> {
 
 /* Downscale a (possibly large) image to fit the avatar's tiny budget, as PNG
    base64 — the generated avatar is ~1920² but the avatar sidecar is inlined into
-   every hub.state, so it must stay small. (app.js downscalePngB64.) */
+   every hub.state, so it must stay small. */
 async function downscalePngB64(dataUrl: string, maxDim: number): Promise<string> {
   const img = await loadImg(dataUrl);
   const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
@@ -106,6 +140,20 @@ function fileToB64(f: File): Promise<string> {
   });
 }
 
+/* Fetch a same-origin asset URL and return it as a data-URI (so a previously-saved
+   keyvisual can be reused as an identity reference — the image model needs the bytes
+   inline, it can't reach a localhost /asset URL). */
+async function urlToDataUri(url: string): Promise<string> {
+  const resp = await fetch(url);
+  const blob = await resp.blob();
+  return await new Promise<string>((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(String(fr.result || ""));
+    fr.onerror = () => rej(new Error("read failed"));
+    fr.readAsDataURL(blob);
+  });
+}
+
 function initUrlFor(kind: VisKind, card: DeckCard): string {
   if (kind === "avatar") return avatarSrc(card);
   if (kind === "sprite") return card.sprite_url ? assetUrl(String(card.sprite_url)) : "";
@@ -124,35 +172,56 @@ export function VisualEditor({
   card: DeckCard;
   disabled: boolean;
   onChanged: () => void;
-  /** which visual slots to show + order. Default = the deck's avatar/sprite/background. */
+  /** which visual slots to show + order. Default = keyvisual/avatar/sprite/stickers/background. */
   kinds?: readonly VisKind[];
 }) {
   const t = useT();
   const { hub, refresh } = useHubApi();
   const { snapshot } = useHubState();
   const nav = useNavigate();
-  // Generation needs an image key (the optional 生图 pipeline). When it's not set,
-  // INVITE the user to set it up rather than letting a generate click fail with a
-  // raw provider error — the "give them a face?" moment. Upload still works keyless.
   const hasImageKey = !!(snapshot?.defaults as { has_image_key?: boolean } | undefined)?.has_image_key;
   const [refs, setRefs] = useState<Ref[]>([]);
-  // The brief is built once via card.visual_brief and reused across the set so
-  // "generate all" pays for ONE brief, not one per asset.
   const cachedBrief = useRef<Brief | null>(null);
   const refInput = useRef<HTMLInputElement>(null);
-  // The brief is the cached intermediate "image description" (incl. the LM-chosen
-  // art style): built once, reused across the whole set, and now shown + editable
-  // here so the user can steer looks/style before paying to generate. Edits live in
-  // cachedBrief.current (what generate reads), mirrored into `brief` for rendering.
   const [briefOpen, setBriefOpen] = useState(false);
   const [brief, setBrief] = useState<Brief | null>(null);
   const [briefBusy, setBriefBusy] = useState(false);
   const [briefErr, setBriefErr] = useState("");
 
-  const refData = () => refs.map((r) => `data:${r.mime};base64,${r.data_b64}`);
+  // Identity-lock anchor: the saved keyvisual's bytes (data-URI), reused as a
+  // reference for the other kinds. A ref so generate-all reads it synchronously
+  // right after the keyvisual slot saves; mirrored to state for the hint.
+  const anchorRef = useRef<string | null>(null);
+  const [anchorData, setAnchorData] = useState<string | null>(null);
+  const setAnchor = (dataUri: string | null) => {
+    anchorRef.current = dataUri;
+    setAnchorData(dataUri);
+  };
 
-  // Fetch (or force-rebuild) the brief via the LM. Slots call getBrief() lazily;
-  // the panel's 重新生成 forces a fresh one. Either path fills the cache + the view.
+  const refData = () => refs.map((r) => `data:${r.mime};base64,${r.data_b64}`);
+  // Per-kind references: keyvisual uses only user refs; every other kind gets the
+  // keyvisual anchor prepended (when present) so the set stays one character.
+  const refsFor = (kind: VisKind): string[] => {
+    const user = refData();
+    if (kind === "keyvisual") return user.slice(0, REFS_CAP);
+    const a = anchorRef.current;
+    return (a ? [a, ...user] : user).slice(0, REFS_CAP);
+  };
+
+  // Preload an existing keyvisual as the anchor (so a returning card keeps identity
+  // lock without regenerating it). Best-effort; a failure just means no anchor.
+  useEffect(() => {
+    if (!kinds.includes("keyvisual") || anchorRef.current) return;
+    const url = card.keyvisual_url ? assetUrl(String(card.keyvisual_url)) : "";
+    if (!url) return;
+    let live = true;
+    void urlToDataUri(url)
+      .then((d) => { if (live && d) setAnchor(d); })
+      .catch(() => {});
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card.keyvisual_url]);
+
   const loadBrief = async (force: boolean): Promise<Brief> => {
     if (cachedBrief.current && !force) {
       setBrief(cachedBrief.current);
@@ -184,20 +253,19 @@ export function VisualEditor({
     setBrief(next);
   };
 
-  // Background-removal readiness — only relevant when a sprite (the kind that wants
-  // a transparent cut) is in this set. We do NOT block generation on it; we surface
-  // a one-line nudge so the user can install it if they want the cutout.
-  const wantsSprite = kinds.includes("sprite");
+  // Background-removal readiness — only relevant when a sprite or stickers (kinds
+  // that want a transparent cut) is in this set. Non-blocking nudge.
+  const wantsCut = kinds.includes("sprite") || kinds.includes("stickers");
   const [matteReady, setMatteReady] = useState<boolean | null>(null);
   useEffect(() => {
-    if (!wantsSprite || !hasImageKey) return;
+    if (!wantsCut || !hasImageKey) return;
     let live = true;
     void hub
       .call<{ deps?: boolean; models?: { installed?: boolean }[] }>("matte.status", {}, 15000)
       .then((s) => { if (live) setMatteReady(!!(s.deps && (s.models || []).some((m) => m.installed))); })
       .catch(() => { if (live) setMatteReady(null); });
     return () => { live = false; };
-  }, [wantsSprite, hasImageKey, hub]);
+  }, [wantsCut, hasImageKey, hub]);
 
   const addRef = async (f: File) => {
     if (refs.length >= REF_MAX) return;
@@ -214,16 +282,19 @@ export function VisualEditor({
   const slotApi = useRef<Partial<Record<VisKind, (() => Promise<void>) | null>>>({});
   const [genAllBusy, setGenAllBusy] = useState(false);
 
-  // The kinds "generate all" actually drives (only the generatable ones).
   const genKinds = kinds.filter((k) => GENERATABLE[k]);
+  // Generate the anchor (keyvisual) FIRST so the rest reference it.
+  const orderedGenKinds = [
+    ...genKinds.filter((k) => k === "keyvisual"),
+    ...genKinds.filter((k) => k !== "keyvisual"),
+  ];
+  const showAnchorHint = hasImageKey && !disabled && kinds.includes("keyvisual") && !anchorData;
 
   const generateAll = async () => {
-    if (!confirm(t("vis-gen-all-confirm", { n: genKinds.length }))) return;
+    if (!confirm(t("vis-gen-all-confirm", { n: orderedGenKinds.length }))) return;
     setGenAllBusy(true);
-    // Reuse the current brief (built lazily by the first slot, or the user's edits)
-    // so "generate all" honors any tweaks; 重新生成描述 is the explicit refresh.
     try {
-      for (const k of genKinds) {
+      for (const k of orderedGenKinds) {
         const fn = slotApi.current[k];
         if (fn) {
           try {
@@ -252,10 +323,15 @@ export function VisualEditor({
         </div>
       )}
 
-      {/* Non-blocking matte nudge: only when a sprite is in the set and the cutout
-          model isn't installed. Generation still proceeds (un-matted) — installing
-          is optional, surfaced here rather than gating the whole pipeline on it. */}
-      {wantsSprite && hasImageKey && matteReady === false && !disabled && (
+      {/* Identity-lock nudge: recommend generating the anchor (keyvisual) first. */}
+      {showAnchorHint && (
+        <div className="vis-invite">
+          <div className="vis-invite-text">{t("vis-anchor-hint")}</div>
+        </div>
+      )}
+
+      {/* Non-blocking matte nudge: a sprite/stickers cutout wants the model. */}
+      {wantsCut && hasImageKey && matteReady === false && !disabled && (
         <div className="vis-invite">
           <div className="vis-invite-text">{t("vis-matte-hint")}</div>
           <button className="btn soft sm" onClick={() => nav("#/settings")}>
@@ -264,10 +340,8 @@ export function VisualEditor({
         </div>
       )}
 
-      {/* The cached "image brief" — the per-card visual description (incl. the
-          LM-chosen art style) reused across the whole set. View/edit it before
-          generating; the un-locked style means non-anime cards render in a fitting
-          look instead of being forced into 二次元. */}
+      {/* The cached "image brief" — the shared visual description (incl. the chosen
+          art style) reused across the whole set. Confirm/edit it before generating. */}
       {hasImageKey && (
         <div className="vis-brief-sec">
           <div className="vis-brief-head">
@@ -357,13 +431,15 @@ export function VisualEditor({
             kind={kind}
             cardPath={cardPath}
             initUrl={initUrlFor(kind, card)}
+            initSet={kind === "stickers" ? (card.stickers_urls || []).map((u) => assetUrl(String(u))) : []}
             disabled={disabled}
             canGenerate={hasImageKey && !!GENERATABLE[kind]}
             getBrief={getBrief}
-            refData={refData}
+            getRefs={() => refsFor(kind)}
             hubCall={hub.call.bind(hub)}
             refreshHub={refresh}
             onChanged={onChanged}
+            onAnchor={setAnchor}
             t={t}
             registerGenerate={(fn) => {
               slotApi.current[kind] = fn;
@@ -372,13 +448,13 @@ export function VisualEditor({
         ))}
       </div>
 
-      {genKinds.length > 0 && (
+      {orderedGenKinds.length > 0 && (
         <div className="vis-all">
           <button className="btn primary" disabled={disabled || genAllBusy || !hasImageKey} onClick={() => void generateAll()}>
-            {genAllBusy ? <span className="spin" /> : t("vis-gen-all", { n: genKinds.length })}
+            {genAllBusy ? <span className="spin" /> : t("vis-gen-all", { n: orderedGenKinds.length })}
           </button>
           <div className="av-note" style={{ marginTop: 6 }}>
-            {t("vis-gen-all-cost", { n: genKinds.length })}
+            {t("vis-gen-all-cost", { n: orderedGenKinds.length })}
           </div>
         </div>
       )}
@@ -386,44 +462,51 @@ export function VisualEditor({
   );
 }
 
-type HubCall = <T = unknown>(method: string, params?: Record<string, unknown>, timeoutMs?: number) => Promise<T>;
-
 function VisualSlot({
   kind,
   cardPath,
   initUrl,
+  initSet,
   disabled,
   canGenerate,
   getBrief,
-  refData,
+  getRefs,
   hubCall,
   refreshHub,
   onChanged,
+  onAnchor,
   t,
   registerGenerate,
 }: {
   kind: VisKind;
   cardPath: string;
   initUrl: string;
+  initSet: string[];
   disabled: boolean;
   canGenerate: boolean;
   getBrief: () => Promise<Brief>;
-  refData: () => string[];
+  getRefs: () => string[];
   hubCall: HubCall;
   refreshHub: () => Promise<void>;
   onChanged: () => void;
+  onAnchor: (dataUri: string | null) => void;
   t: TFn;
   registerGenerate: (fn: () => Promise<void>) => void;
 }) {
+  const isSet = kind === "stickers";
   const [curSrc, setCurSrc] = useState(initUrl);
-  // A generated-but-unsaved result staged for 保存 / 重新生成 / 取消.
+  const [curSet, setCurSet] = useState<string[]>(initSet);
+  // A generated-but-unsaved candidate staged for 保存 / 重新生成 / 取消.
   const [staged, setStaged] = useState<{ data_b64: string; mime: string; ext: string; note?: string } | null>(null);
+  const [stagedSet, setStagedSet] = useState<string[] | null>(null);
+  const [stagedNote, setStagedNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [busyMsg, setBusyMsg] = useState("");
   const [errText, setErrText] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
 
   const previewSrc = staged ? `data:${staged.mime};base64,${staged.data_b64}` : curSrc;
+  const previewSet = stagedSet ?? curSet;
 
   const setWorking = (msg: string) => {
     setBusy(true);
@@ -439,9 +522,10 @@ function VisualSlot({
     setBusyMsg("");
     setErrText(rpcErrText(t, e as { message?: string }));
   };
+  const tick = (sec: number) => setBusyMsg(t("vis-gen-progress", { n: sec }));
 
-  // Save staged/uploaded bytes: avatar → downscaled PNG via avatar_upload (it's
-  // inlined into hub.state); sprite/background → asset_save in the true format.
+  // Save single-image bytes: avatar → downscaled PNG via avatar_upload; others →
+  // asset_save in the true format. keyvisual additionally becomes the identity anchor.
   const saveBytes = async (data_b64: string, mime: string, ext: string) => {
     if (kind === "avatar") {
       const small = await downscalePngB64(`data:${mime || "image/png"};base64,${data_b64}`, 512);
@@ -451,12 +535,17 @@ function VisualSlot({
       const r = await hubCall<{ url?: string }>("card.asset_save", { path: cardPath, kind, data_b64, ext: ext || "png" }, 30000);
       if (r.url) setCurSrc(assetUrl(String(r.url)));
     }
+    if (kind === "keyvisual") onAnchor(`data:${mime || "image/png"};base64,${data_b64}`);
     setStaged(null);
   };
 
-  // Download the shown image (staged candidate if any, else the saved one) — the
-  // user's backup before an overwrite. Works for both data-URIs (avatar) and the
-  // same-origin asset URLs (sprite/background/keyvisual).
+  // Save the sticker SET (a list of base64 PNG cells) via card.stickers_save.
+  const saveSet = async (cells: string[]) => {
+    const r = await hubCall<{ urls?: string[] }>("card.stickers_save", { path: cardPath, data_b64: cells }, 30000);
+    if (Array.isArray(r.urls)) setCurSet(r.urls.map((u) => assetUrl(String(u))));
+    setStagedSet(null);
+  };
+
   const downloadName = () => {
     if (staged) return `${kind}.${staged.ext || "png"}`;
     const m = curSrc.match(/^data:image\/(\w+)/);
@@ -476,19 +565,23 @@ function VisualSlot({
 
   // generate → stage a preview (the user confirms with 保存).
   const generate = async () => {
-    // Regenerating over an existing image: the new result replaces it once saved
-    // (and "generate all" auto-saves). Warn + suggest a download backup first. The
-    // staged "重新生成" path (staged set) skips this — it only swaps the candidate.
-    if (curSrc && !staged && !confirm(t("vis-regen-overwrite"))) return;
+    const hasCurrent = isSet ? curSet.length > 0 : !!curSrc;
+    const hasStaged = isSet ? !!stagedSet : !!staged;
+    if (hasCurrent && !hasStaged && !confirm(t("vis-regen-overwrite"))) return;
     setWorking(t("vis-generating"));
     try {
-      const out = await hubCall<GenResult>(
-        "card.visual_generate",
-        { path: cardPath, kind, brief: await getBrief(), refs: refData() },
-        240000,
+      const out = await runVisualJob(
+        hubCall,
+        { path: cardPath, kind, brief: await getBrief(), refs: getRefs() },
+        tick,
       );
       setIdle();
-      setStaged({ data_b64: out.data_b64, mime: out.mime || "image/png", ext: out.ext || "png", note: out.note });
+      if (isSet) {
+        setStagedSet(out.stickers || []);
+        setStagedNote(out.note || "");
+      } else {
+        setStaged({ data_b64: out.data_b64 || "", mime: out.mime || "image/png", ext: out.ext || "png", note: out.note });
+      }
     } catch (e) {
       fail(e);
     }
@@ -498,12 +591,13 @@ function VisualSlot({
   const generateAndSave = async () => {
     setWorking(t("vis-generating"));
     try {
-      const out = await hubCall<GenResult>(
-        "card.visual_generate",
-        { path: cardPath, kind, brief: await getBrief(), refs: refData() },
-        240000,
+      const out = await runVisualJob(
+        hubCall,
+        { path: cardPath, kind, brief: await getBrief(), refs: getRefs() },
+        tick,
       );
-      await saveBytes(out.data_b64, out.mime || "image/png", out.ext || "png");
+      if (isSet) await saveSet(out.stickers || []);
+      else await saveBytes(out.data_b64 || "", out.mime || "image/png", out.ext || "png");
       setIdle();
     } catch (e) {
       fail(e);
@@ -513,10 +607,11 @@ function VisualSlot({
   registerGenerate(generateAndSave);
 
   const saveStaged = async () => {
-    if (!staged) return;
+    if (isSet ? !stagedSet : !staged) return;
     setWorking(t("saving"));
     try {
-      await saveBytes(staged.data_b64, staged.mime, staged.ext);
+      if (isSet) await saveSet(stagedSet || []);
+      else if (staged) await saveBytes(staged.data_b64, staged.mime, staged.ext);
       setIdle();
       deckToast(t("saved"));
       await refreshHub();
@@ -551,6 +646,7 @@ function VisualSlot({
           30000,
         );
         if (r.url) setCurSrc(assetUrl(String(r.url)));
+        if (kind === "keyvisual") onAnchor(`data:${f.type || "image/png"};base64,${b64}`);
       }
       setStaged(null);
       setIdle();
@@ -568,7 +664,10 @@ function VisualSlot({
     try {
       await hubCall("card.asset_delete", { path: cardPath, kind }, 20000);
       setCurSrc("");
+      setCurSet([]);
       setStaged(null);
+      setStagedSet(null);
+      if (kind === "keyvisual") onAnchor(null);
       setIdle();
       await refreshHub();
       onChanged();
@@ -577,13 +676,32 @@ function VisualSlot({
     }
   };
 
+  const hasAnyImage = isSet ? previewSet.length > 0 : !!previewSrc;
+  const hasStaged = isSet ? !!stagedSet : !!staged;
+
   return (
     <div className="vis-slot">
       <div className="vis-slot-head">
         <b>{t(("vis-kind-" + kind) as Parameters<TFn>[0])}</b>
       </div>
       <div className="vis-slot-preview">
-        {previewSrc ? <img src={previewSrc} alt="" /> : <span className="vis-slot-empty">{t("vis-empty")}</span>}
+        {isSet ? (
+          previewSet.length > 0 ? (
+            <div className="vis-sticker-grid">
+              {previewSet.map((src, i) => (
+                <div className="vis-sticker-cell" key={i}>
+                  <img src={src} alt="" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <span className="vis-slot-empty">{t("vis-empty")}</span>
+          )
+        ) : previewSrc ? (
+          <img src={previewSrc} alt="" />
+        ) : (
+          <span className="vis-slot-empty">{t("vis-empty")}</span>
+        )}
       </div>
       <div className="vis-slot-acts">
         <button
@@ -594,17 +712,21 @@ function VisualSlot({
         >
           {t("vis-generate")}
         </button>
-        <button className="btn soft sm" disabled={disabled || busy} onClick={() => fileInput.current?.click()}>
-          {t("av-upload")}
-        </button>
-        {previewSrc && (
+        {!isSet && (
+          <button className="btn soft sm" disabled={disabled || busy} onClick={() => fileInput.current?.click()}>
+            {t("av-upload")}
+          </button>
+        )}
+        {!isSet && previewSrc && (
           <button className="btn text sm" disabled={busy} onClick={download}>
             {t("vis-download")}
           </button>
         )}
-        <button className="btn text sm" disabled={disabled || busy} onClick={() => void onDelete()}>
-          {t("del-word")}
-        </button>
+        {hasAnyImage && (
+          <button className="btn text sm" disabled={disabled || busy} onClick={() => void onDelete()}>
+            {t("del-word")}
+          </button>
+        )}
         <input
           ref={fileInput}
           type="file"
@@ -620,9 +742,11 @@ function VisualSlot({
       {(busyMsg || errText) && (
         <div className={errText ? "av-note err" : busy ? "av-note thinking" : "av-note"}>{errText || busyMsg}</div>
       )}
-      {staged && (
+      {hasStaged && (
         <div className="vis-stage">
-          {staged.note && <div className="av-note" style={{ marginBottom: 6 }}>{staged.note}</div>}
+          {(isSet ? stagedNote : staged?.note) && (
+            <div className="av-note" style={{ marginBottom: 6 }}>{isSet ? stagedNote : staged?.note}</div>
+          )}
           <div className="vis-stage-acts">
             <button className="btn primary sm" disabled={busy} onClick={() => void saveStaged()}>
               {t("save")}
@@ -630,7 +754,7 @@ function VisualSlot({
             <button className="btn soft sm" disabled={busy || !canGenerate} onClick={() => void generate()}>
               {t("vis-regen")}
             </button>
-            <button className="btn text sm" disabled={busy} onClick={() => setStaged(null)}>
+            <button className="btn text sm" disabled={busy} onClick={() => { setStaged(null); setStagedSet(null); }}>
               {t("cancel")}
             </button>
           </div>

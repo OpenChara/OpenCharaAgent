@@ -1368,6 +1368,12 @@ details.cv-raw pre{
   background:var(--hairline-2); border-radius:8px; overflow:hidden; margin-bottom:9px}
 .vis-slot-preview img{max-width:100%; max-height:200px; object-fit:contain}
 .vis-slot-empty{color:var(--text-3); font-size:12px}
+/* sticker set — a 3x3 grid of cut cells in the slot preview (un-cap the preview) */
+.vis-slot-preview:has(.vis-sticker-grid){max-height:none; min-height:0; background:transparent}
+.vis-sticker-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:6px; width:100%; padding:4px}
+.vis-sticker-cell{aspect-ratio:1/1; display:flex; align-items:center; justify-content:center;
+  background:var(--panel); border:1px solid var(--hairline); border-radius:8px; overflow:hidden}
+.vis-sticker-cell img{max-width:100%; max-height:100%; object-fit:contain}
 .vis-slot-acts{display:flex; gap:7px; flex-wrap:wrap}
 .vis-stage{margin-top:8px}
 .vis-stage-acts{display:flex; gap:7px; margin-top:8px}

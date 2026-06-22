@@ -50,9 +50,11 @@ describe("I18N strings map", () => {
   // The visuals brief editor + un-locked art style added 13 (vis-brief-title/sub/
   // edit/hide/loading/rebuild/appearance/style/palette/world/theme + vis-matte-hint/
   // vis-matte-cta) → 587. Per-slot download + overwrite-on-regenerate warning added
-  // 2 (vis-download, vis-regen-overwrite) → 589.
-  it("preserves the full key set from the source dict (589 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(589);
+  // 2 (vis-download, vis-regen-overwrite) → 589. The restored visuals pipeline
+  // (keyvisual + stickers generation, async polling, identity anchor) added 3
+  // (vis-kind-stickers, vis-anchor-hint, vis-gen-progress) → 592.
+  it("preserves the full key set from the source dict (592 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(592);
   });
 
   it("every value is a [zh, en] string tuple", () => {
