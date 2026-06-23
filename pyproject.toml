@@ -33,6 +33,10 @@ browser = ["websockets>=12"]
 # out of the base install; the matte model itself is downloaded from Settings.
 visuals = [
     "rembg[cpu]>=2.0.50",
+    # 3.12-capable floors: an unconstrained solve of rembg→pymatting→numba picks
+    # numba 0.53 / llvmlite 0.36 (Python <3.10 only) and fails to build on 3.12.
+    "numba>=0.59",
+    "llvmlite>=0.42",
     "pillow>=10",
     "numpy>=1.24",
 ]

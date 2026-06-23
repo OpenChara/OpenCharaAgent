@@ -152,7 +152,11 @@ def _find_uv() -> "str | None":
 def _visuals_pkgs() -> list[str]:
     """The packages of pyproject's ``visuals`` extra — installed directly so no
     project checkout / pyproject.toml is required."""
-    return ["rembg[cpu]>=2.0.50", "pillow>=10", "numpy>=1.24"]
+    # numba/llvmlite pinned to 3.12-capable floors: rembg → pymatting → numba, and
+    # an unconstrained solve picks numba 0.53 / llvmlite 0.36 (Python <3.10 only),
+    # which fails to build on 3.12 ("Cannot install on Python version 3.12"). 0.59 /
+    # 0.42 are the first releases that support 3.12 — so the one-click install works.
+    return ["rembg[cpu]>=2.0.50", "numba>=0.59", "llvmlite>=0.42", "pillow>=10", "numpy>=1.24"]
 
 
 def _install_deps_blocking(timeout: int = 1800) -> None:
