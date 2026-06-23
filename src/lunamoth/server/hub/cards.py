@@ -82,16 +82,33 @@ def _copy_card_assets(card: "CharacterCard", dest_dir: Path, src_base: Path | No
             pass
 
 
+# Art-asset sidecars live beside the card as `<stem>.<kind>[.<i>].<ext>` images
+# (e.g. `Quinn.avatar.png`, `Quinn.sticker.0.png`). They are NOT cards — the deck
+# scan must skip them, or each one is tried as a character card and spams a load
+# error (avatars always hit this; stickers multiply it 9x).
+_SIDECAR_MARKERS = (".avatar.", ".sprite.", ".background.", ".keyvisual.", ".sticker.")
+
+
+def _is_asset_sidecar(p: Path) -> bool:
+    if p.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
+        return False
+    low = p.name.lower()
+    return any(m in low for m in _SIDECAR_MARKERS)
+
+
 def _iter_card_files(base: Path):
     """Card files under a deck dir: per-character folders (`<Name>/card*.json|png`)
-    plus legacy flat files (`*.json|png`) for back-compat. Skips hidden/LICENSE."""
+    plus legacy flat files (`*.json|png`) for back-compat. Skips hidden/LICENSE and
+    art-asset sidecars (avatar/sprite/background/keyvisual/sticker images)."""
     for p in sorted(base.iterdir()):
         if p.name.startswith("."):
             continue
         if p.is_dir():
             for c in sorted(p.glob("card*.json")) + sorted(p.glob("card*.png")):
-                yield c
-        elif p.suffix.lower() in (".json", ".png") and not p.stem.startswith("LICENSE"):
+                if not _is_asset_sidecar(c):
+                    yield c
+        elif (p.suffix.lower() in (".json", ".png")
+              and not p.stem.startswith("LICENSE") and not _is_asset_sidecar(p)):
             yield p
 
 

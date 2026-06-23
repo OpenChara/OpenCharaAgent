@@ -279,6 +279,21 @@ def test_list_cards_inline_avatar_is_small_thumbnail():
     assert full.startswith("data:image/png;base64,")
 
 
+def test_list_cards_skips_asset_sidecars():
+    # avatar/sticker/sprite sidecars sit beside the card; the deck scan must NOT try to
+    # load them as character cards (each would spam an "unreadable card" traceback).
+    set_defaults()
+    path = _make_user_card("Sidecarred")
+    p = Path(path)
+    p.with_name(p.stem + ".avatar.png").write_bytes(_PNG_1PX)
+    p.with_name(p.stem + ".keyvisual.png").write_bytes(_PNG_1PX)
+    for i in range(9):
+        p.with_name(p.stem + f".sticker.{i}.png").write_bytes(_PNG_1PX)
+    paths = [c["path"] for c in H.list_cards()]
+    assert path in paths
+    assert not any(".avatar." in pp or ".sticker." in pp or ".keyvisual." in pp for pp in paths)
+
+
 def test_asset_save_compresses_large_upload():
     """A large uploaded sprite is re-compressed on save (cap + webp q82),
     without breaking the magic-byte validation."""
