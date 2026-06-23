@@ -359,7 +359,12 @@ class HubDispatcher:
             _sessions.clear_card_dirty(meta)
             return {"ok": True, "restarted": False, "applies": "next_start"}
         res = _await_supervisor(self.supervisor, self.supervisor.restart_chara(meta.name))
-        _sessions.clear_card_dirty(meta)
+        # A successful restart already cleared card_dirty inside child.start() (right after
+        # the fresh process launched). Do NOT clear again here: a card.patch that lands in
+        # the window after start() would re-flag a genuinely-unapplied edit, and a blind
+        # second clear would wipe that "待应用" intent. Only clear when nothing restarted.
+        if not (isinstance(res, dict) and res.get("restarted")):
+            _sessions.clear_card_dirty(meta)
         return {"ok": True, **(res if isinstance(res, dict) else {})}
 
     def _card_visual_jobs(self, p: dict[str, Any]) -> Any:
@@ -542,6 +547,10 @@ class HubDispatcher:
         path = str(p.get("path") or "")
         sheet_name = str(p.get("sheet") or p.get("name") or "").strip()
         target = _avatars._writable_card_path(path)  # raises on builtin/PNG/non-writable
+        # only an actual kept sheet (`<stem>.sticker_sheet.<id>.<ext>`) — defense in depth
+        # so a stray/mistyped name can't be fed to the slicer.
+        if ".sticker_sheet." not in sheet_name:
+            raise RpcError(-32602, f"no such sticker sheet: {sheet_name}")
         sheet_file = _avatars._rel(target, sheet_name)  # subdir-safe, like the other asset paths
         if not sheet_name or not sheet_file.is_file():
             raise RpcError(-32602, f"no such sticker sheet: {sheet_name}")
