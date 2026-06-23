@@ -149,7 +149,6 @@ export const I18N = {
   "p-gateway": ["网关", "Gateway"],
   "p-skills": ["技能", "Skills"],
   "p-polaris": ["理想", "Aspiration"],
-  "polaris-hint": ["为 TA 写下一个一生追寻的理想——它会安静地指引 TA 的每一步。", "Write one lifelong aspiration for it — it quietly guides everything it does."],
   "polaris-empty": ["还没设定 · 用 /aspiration 设定", "Not set yet · set it with /aspiration"],
   "p-profile": ["档案", "Profile"],
   "p-model-scope-note": ["供应商、模型与思考强度都为这个角色单独保存，重启后依然生效。供应商密钥仍统一存放在 设置·提供商。", "Provider, model and reasoning are saved per character and survive a restart. Provider keys still live in Settings · Providers."],

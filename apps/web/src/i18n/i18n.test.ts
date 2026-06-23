@@ -73,9 +73,10 @@ describe("I18N strings map", () => {
   // cv-apply-pending, cv-apply-now, cv-applied, cv-done, wake-generating,
   // wake-inflight-q) → 621. The card asset library tab (素材) added 3 (cv-tab-assets,
   // cv-assets-note, cv-assets-empty) → 624; the any-format rework added 2
-  // (cv-asset-download, cv-asset-toobig) → 626.
-  it("preserves the full key set from the source dict (626 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(626);
+  // (cv-asset-download, cv-asset-toobig) → 626. Dropped the aspiration profile hint
+  // (polaris-hint — the 理想 pane shows the value or the empty/CTA line, no preamble) → 625.
+  it("preserves the full key set from the source dict (625 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(625);
   });
 
   it("every value is a [zh, en] string tuple", () => {

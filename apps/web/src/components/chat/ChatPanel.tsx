@@ -340,7 +340,6 @@ function ProfilePane({ stream, name }: { stream: CharaStream; name: string }) {
     <div className="profile-pane">
       <section className="dsec">
         <h4>{t("p-polaris")}</h4>
-        <div className="why">{t("polaris-hint")}</div>
         {ex === null ? (
           <div className="placeholder-pane">…</div>
         ) : ex.polaris ? (
