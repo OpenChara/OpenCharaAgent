@@ -67,6 +67,7 @@ interface GenResult {
   urls?: string[];     // stickers (the saved set)
   data_uri?: string;   // avatar (inlined)
   note?: string;
+  matted?: boolean;    // false ⇒ a cut was wanted but skipped (engine not ready)
 }
 
 type HubCall = <T = unknown>(method: string, params?: Record<string, unknown>, timeoutMs?: number) => Promise<T>;
@@ -392,6 +393,7 @@ export function VisualEditor({
             refreshHub={refresh}
             onChanged={onChanged}
             onGenerated={() => { if (kind === "keyvisual") setHasKeyvisual(true); }}
+            onFixMatte={() => nav("#/settings")}
             t={t}
             registerGenerate={(fn) => {
               slotApi.current[kind] = fn;
@@ -419,6 +421,7 @@ function VisualSlot({
   refreshHub,
   onChanged,
   onGenerated,
+  onFixMatte,
   t,
   registerGenerate,
 }: {
@@ -436,6 +439,7 @@ function VisualSlot({
   refreshHub: () => Promise<void>;
   onChanged: () => void;
   onGenerated: () => void;
+  onFixMatte: () => void;
   t: TFn;
   registerGenerate: (fn: () => Promise<void>) => void;
 }) {
@@ -445,6 +449,10 @@ function VisualSlot({
   const [busy, setBusy] = useState(false);
   const [busyMsg, setBusyMsg] = useState("");
   const [errText, setErrText] = useState("");
+  // A cut-kind (sprite/stickers) was generated but the background wasn't removed
+  // (engine not ready). Generation SUCCEEDED — this is a soft, fixable notice.
+  const [matteSkipped, setMatteSkipped] = useState(false);
+  const wantsCut = isSet || kind === "sprite";
   const fileInput = useRef<HTMLInputElement>(null);
 
   // Cache-bust so a regenerated asset at the SAME url actually re-renders.
@@ -469,6 +477,8 @@ function VisualSlot({
       if (isSet) setCurSet((out.urls || []).map((u) => bust(assetUrl(String(u)))));
       else if (kind === "avatar") setCurSrc(out.data_uri || "");
       else setCurSrc(out.url ? bust(assetUrl(String(out.url))) : "");
+      // Cut wanted but skipped → flag it (engine not ready); the image is still saved.
+      setMatteSkipped(wantsCut && out.matted === false);
       setIdle();
       onGenerated();
       deckToast(t("vis-gen-done", {
@@ -505,6 +515,7 @@ function VisualSlot({
         if (r.url) setCurSrc(bust(assetUrl(String(r.url))));
         if (kind === "keyvisual") onGenerated();
       }
+      setMatteSkipped(false); // a user upload — matte state unknown, don't warn
       setIdle();
       deckToast(t("saved"));
       await refreshHub();
@@ -521,6 +532,7 @@ function VisualSlot({
       await hubCall("card.asset_delete", { path: cardPath, kind }, 20000);
       setCurSrc("");
       setCurSet([]);
+      setMatteSkipped(false);
       setIdle();
       await refreshHub();
       onChanged();
@@ -547,7 +559,9 @@ function VisualSlot({
       <div className="vis-slot-head">
         <b>{t(("vis-kind-" + kind) as Parameters<TFn>[0])}</b>
       </div>
-      <div className="vis-slot-preview">
+      {/* cut-kinds (sprite/stickers) want a transparent cut — a checkerboard makes
+          the result self-evident: a real cut floats on it, a white-bg fill covers it. */}
+      <div className={"vis-slot-preview" + (wantsCut ? " vis-checker" : "")}>
         {isSet ? (
           curSet.length > 0 ? (
             <div className="vis-sticker-grid">
@@ -604,6 +618,12 @@ function VisualSlot({
       </div>
       {(busyMsg || errText) && (
         <div className={errText ? "av-note err" : busy ? "av-note thinking" : "av-note"}>{errText || busyMsg}</div>
+      )}
+      {matteSkipped && !busy && !errText && (
+        <div className="vis-matte-skip">
+          <span className="vis-matte-skip-text">{t("vis-matte-skipped")}</span>
+          <button className="btn soft sm" onClick={onFixMatte}>{t("go-settings")}</button>
+        </div>
       )}
     </div>
   );

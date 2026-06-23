@@ -61,8 +61,9 @@ describe("I18N strings map", () => {
   // A descriptive post-generation toast added vis-gen-done + vis-gen-done-fallback → 593.
   // The matte pane's 选择/已选择 toggle + deps-repair path added 4 (matte-select,
   // matte-selected, matte-deps-missing, matte-deps-fix) → 597.
-  it("preserves the full key set from the source dict (597 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(597);
+  // The visual editor's matte-skipped notice added vis-matte-skipped → 598.
+  it("preserves the full key set from the source dict (598 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(598);
   });
 
   it("every value is a [zh, en] string tuple", () => {

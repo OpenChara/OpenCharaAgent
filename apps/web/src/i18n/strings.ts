@@ -593,6 +593,7 @@ export const I18N = {
   "vis-matte-hint": ["立绘默认会抠成透明背景。装上「背景去除」后才会自动抠图，否则保留白底（仍可正常生成）。", "Sprites are meant to be cut to a transparent background. Install background removal to auto-cut; otherwise the white backdrop is kept (generation still works)."],
   "vis-matte-cta": ["去安装", "Install"],
   "vis-need-brief": ["需要先生图描述——展开上方「生图描述」生成，或点「一键全部生成」。", "Write the image brief first — open 生图描述 above, or use 一键全部生成."],
+  "vis-matte-skipped": ["已生成，但背景没去除——抠图引擎未就绪（暂为白底）", "Generated, but the background wasn't removed — cutout engine isn't ready (white background for now)"],
   "matte-title": ["背景去除", "Background removal"],
   "matte-sub": ["把生成的立绘/表情从背景里抠出来的本地模型。推荐装大的（更干净），小的也够用。点「安装」即可下载。", "Local models that cut the generated sprite/sticker out of its background. The bigger one is recommended (cleaner); the Lite one is fine too. Click Install to download."],
   "matte-install": ["安装", "Install"],

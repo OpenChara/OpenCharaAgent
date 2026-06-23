@@ -411,15 +411,15 @@ class HubDispatcher:
             if "stickers" in out:
                 cells = [base64.b64encode(c).decode("ascii") for c in out["stickers"]]
                 saved = _avatars.stickers_save(path, cells)
-                return {"saved": True, "kind": kind, "urls": saved["urls"], "note": out["note"]}
+                return {"saved": True, "kind": kind, "urls": saved["urls"], "note": out["note"], "matted": bool(out.get("matted"))}
             data = out["data"]
             if kind == "avatar":
                 from ...content import imaging as _imaging
                 small = _imaging.compress_image_bytes(data, "png", _imaging.CAP_AVATAR)
                 saved = _avatars.avatar_upload(path, base64.b64encode(small).decode("ascii"), "png")
-                return {"saved": True, "kind": kind, "data_uri": saved["data_uri"], "note": out["note"]}
+                return {"saved": True, "kind": kind, "data_uri": saved["data_uri"], "note": out["note"], "matted": bool(out.get("matted"))}
             saved = _avatars.asset_save(path, kind, base64.b64encode(data).decode("ascii"), out["ext"])
-            return {"saved": True, "kind": kind, "url": saved["url"], "note": out["note"]}
+            return {"saved": True, "kind": kind, "url": saved["url"], "note": out["note"], "matted": bool(out.get("matted"))}
 
         return {"status": "running", "job_id": jobs.submit(_run, label=f"visual:{kind}")}
 
