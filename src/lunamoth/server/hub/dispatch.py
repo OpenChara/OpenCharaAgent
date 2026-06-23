@@ -441,6 +441,7 @@ class HubDispatcher:
                 saved = _avatars.stickers_save(path, cells, names=out.get("names"),
                                                sheet=sheet_b64, grid=out.get("grid"))
                 return {"saved": True, "kind": kind, "urls": saved["urls"], "added": saved.get("added"),
+                        "sheet_urls": saved.get("sheet_urls"),
                         "note": out["note"], "matted": bool(out.get("matted"))}
             data = out["data"]
             if kind == "avatar":

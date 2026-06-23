@@ -1384,9 +1384,27 @@ details.cv-raw pre{
 /* sticker set — a 3x3 grid of cut cells in the slot preview (un-cap the preview) */
 .vis-slot-preview:has(.vis-sticker-grid){max-height:none; min-height:0; background:transparent}
 .vis-sticker-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:6px; width:100%; padding:4px}
-.vis-sticker-cell{aspect-ratio:1/1; display:flex; align-items:center; justify-content:center;
+.vis-sticker-cell{position:relative; aspect-ratio:1/1; display:flex; align-items:center; justify-content:center;
   background:var(--panel); border:1px solid var(--hairline); border-radius:8px; overflow:hidden}
 .vis-sticker-cell img{max-width:100%; max-height:100%; object-fit:contain}
+.vis-sticker-cell .vis-cand-x{top:2px; right:2px; display:none}
+.vis-sticker-cell:hover .vis-cand-x{display:block}
+.vis-sticker-name{position:absolute; left:0; right:0; bottom:0; font-size:10px; line-height:1.5;
+  text-align:center; color:#fff; background:rgba(0,0,0,.5); padding:1px 3px; cursor:text;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; opacity:0; transition:opacity .12s}
+.vis-sticker-cell:hover .vis-sticker-name{opacity:1}
+/* sticker grid picker (1×1 / 2×2 / 3×3 at generation) */
+.vis-grid-pick{display:flex; align-items:center; gap:6px; margin:6px 0}
+.vis-grid-label{font-size:12px; color:var(--text-2)}
+.vis-grid-btn{height:24px; padding:0 9px; font-size:11px; border:1px solid var(--hairline);
+  background:var(--field-bg); color:var(--text-2); border-radius:6px; cursor:pointer}
+.vis-grid-btn.on{border-color:var(--accent); color:var(--text); background:var(--accent-soft)}
+/* kept raw sticker sheets — re-sliceable when an auto-slice came out wrong */
+.vis-sheets{margin-top:10px}
+.vis-sheets-label{font-size:11px; color:var(--text-3)}
+.vis-sheets-row{display:flex; gap:10px; flex-wrap:wrap; margin-top:4px}
+.vis-sheet{display:flex; flex-direction:column; align-items:center; gap:2px; width:74px}
+.vis-sheet img{width:74px; height:74px; object-fit:cover; border-radius:6px; border:1px solid var(--hairline)}
 .vis-slot-acts{display:flex; gap:7px; flex-wrap:wrap; align-items:center}
 .vis-extra{flex:1; min-width:120px; height:28px; border:1px solid var(--hairline); background:var(--field-bg);
   color:var(--text); border-radius:var(--field-radius,8px); padding:0 10px; font-size:12px; font-family:inherit}

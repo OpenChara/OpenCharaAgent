@@ -63,9 +63,11 @@ describe("I18N strings map", () => {
   // matte-selected, matte-deps-missing, matte-deps-fix) → 597.
   // The visual editor's matte-skipped notice added vis-matte-skipped → 598.
   // The per-kind 额外提示词 input added vis-extra-ph → 601 (count was 600). The
-  // candidate-gallery UI added vis-cut, vis-cutting, vis-cand-pick → 604.
-  it("preserves the full key set from the source dict (604 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(604);
+  // candidate-gallery UI added vis-cut, vis-cutting, vis-cand-pick → 604. The sticker
+  // rework (grid picker, per-image rename/delete, raw-sheet re-slice) added 5
+  // (vis-generate-more, vis-grid-label, vis-rename, vis-sheet-label, vis-reslice) → 609.
+  it("preserves the full key set from the source dict (609 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(609);
   });
 
   it("every value is a [zh, en] string tuple", () => {

@@ -65,6 +65,8 @@ interface GenResult {
   kind?: string;
   url?: string;        // sprite/background/keyvisual asset url
   urls?: string[];     // stickers (the saved set)
+  added?: string[];    // stickers just added this generation
+  sheet_urls?: string[]; // stickers: the kept raw sheets
   data_uri?: string;   // avatar (inlined)
   note?: string;
   matted?: boolean;    // false ⇒ a cut was wanted but skipped (engine not ready)
@@ -130,6 +132,12 @@ function assetName(url: string): string {
   } catch {
     return "";
   }
+}
+
+/* The display name of a sticker = the slug in `<stem>.sticker.<slug>.png`. */
+function stickerSlug(url: string): string {
+  const m = assetName(url).match(/\.sticker\.(.+)\.(png|jpe?g|webp)$/i);
+  return m ? m[1] : "";
 }
 
 export function VisualEditor({
@@ -406,6 +414,7 @@ export function VisualEditor({
             initUrl={initUrlFor(kind, card)}
             initOptions={optionsFor(kind, card)}
             initSet={kind === "stickers" ? (card.stickers_urls || []).map((u) => assetUrl(String(u))) : []}
+            initSheets={kind === "stickers" ? (card.sticker_sheets_urls || []).map((u) => assetUrl(String(u))) : []}
             disabled={disabled}
             canGenerate={hasImageKey && !!GENERATABLE[kind]}
             hasBrief={hasBrief}
@@ -435,6 +444,7 @@ function VisualSlot({
   initUrl,
   initOptions,
   initSet,
+  initSheets,
   disabled,
   canGenerate,
   hasBrief,
@@ -454,6 +464,7 @@ function VisualSlot({
   initUrl: string;
   initOptions: string[];
   initSet: string[];
+  initSheets: string[];
   disabled: boolean;
   canGenerate: boolean;
   hasBrief: boolean;
@@ -471,6 +482,8 @@ function VisualSlot({
   const hasGallery = kind === "sprite" || kind === "keyvisual" || kind === "background";
   const [curSrc, setCurSrc] = useState(initUrl);
   const [curSet, setCurSet] = useState<string[]>(initSet);
+  const [sheets, setSheets] = useState<string[]>(initSheets);
+  const [stickerGrid, setStickerGrid] = useState(3); // 1×1 / 2×2 / 3×3 at generation
   // The non-destructive candidate gallery (sprite/keyvisual/background): kept urls +
   // the selected filename. Selecting/removing/去背景 hit card.asset_* and update here.
   const [options, setOptions] = useState<string[]>(initOptions);
@@ -495,17 +508,25 @@ function VisualSlot({
   // generate → the BACKEND auto-saves; we just reflect the saved result + refresh. If
   // the user leaves mid-generation the job still finishes and the card still updates.
   const generate = async () => {
-    const hasCurrent = isSet ? curSet.length > 0 : !!curSrc;
+    // stickers APPEND (新生成 adds more), so they never prompt-to-overwrite; the
+    // single kinds keep a gallery candidate but still confirm replacing the shown one.
+    const hasCurrent = isSet ? false : !!curSrc;
     if (hasCurrent && !confirm(t("vis-regen-overwrite"))) return;
     setWorking(t("vis-generating"));
     try {
+      const params: Record<string, unknown> = {
+        path: cardPath, kind, brief: await getBrief(), refs: getRefs(), extra: extra.trim(),
+      };
+      if (isSet) params.grid = stickerGrid;
       const out = await runVisualJob(
         hubCall,
-        { path: cardPath, kind, brief: await getBrief(), refs: getRefs(), extra: extra.trim() },
+        params,
         (sec) => setBusyMsg(t("vis-gen-progress", { n: sec })),
       );
-      if (isSet) setCurSet((out.urls || []).map((u) => bust(assetUrl(String(u)))));
-      else if (kind === "avatar") setCurSrc(out.data_uri || "");
+      if (isSet) {
+        setCurSet((out.urls || []).map((u) => bust(assetUrl(String(u)))));
+        if (out.sheet_urls) setSheets(out.sheet_urls.map((u) => assetUrl(String(u))));
+      } else if (kind === "avatar") setCurSrc(out.data_uri || "");
       else if (out.url) {
         const u = assetUrl(String(out.url));
         setCurSrc(bust(u));
@@ -644,6 +665,45 @@ function VisualSlot({
     }
   };
 
+  // ── stickers: per-image rename / delete + raw-sheet re-slice ──────────────────
+  const applySet = (r: { urls?: string[] }) =>
+    setCurSet((r.urls || []).map((u) => bust(assetUrl(String(u)))));
+  const renameSticker = async (url: string) => {
+    const name = assetName(url);
+    if (!name) return;
+    const next = window.prompt(t("vis-rename"), stickerSlug(url));
+    if (next == null || !next.trim()) return;
+    setWorking(t("saving"));
+    try {
+      applySet(await hubCall("card.sticker_rename", { path: cardPath, old: name, new: next.trim() }, 15000));
+      setIdle();
+      await refreshHub();
+      onChanged();
+    } catch (e) { fail(e); }
+  };
+  const removeSticker = async (url: string) => {
+    const name = assetName(url);
+    if (!name) return;
+    setWorking(t("vis-deleting"));
+    try {
+      applySet(await hubCall("card.sticker_remove", { path: cardPath, name }, 15000));
+      setIdle();
+      await refreshHub();
+      onChanged();
+    } catch (e) { fail(e); }
+  };
+  const resliceSheet = async (url: string) => {
+    const name = assetName(url);
+    if (!name) return;
+    setWorking(t("vis-cutting"));
+    try {
+      applySet(await hubCall("card.sticker_reslice", { path: cardPath, sheet: name, grid: stickerGrid }, 120000));
+      setIdle();
+      await refreshHub();
+      onChanged();
+    } catch (e) { fail(e); }
+  };
+
   const hasAnyImage = isSet ? curSet.length > 0 : !!curSrc;
 
   return (
@@ -660,6 +720,25 @@ function VisualSlot({
               {curSet.map((src, i) => (
                 <div className="vis-sticker-cell" key={i}>
                   <img src={src} alt="" />
+                  {!disabled && (
+                    <>
+                      <span
+                        className="vis-sticker-name"
+                        title={t("vis-rename")}
+                        onClick={() => void renameSticker(src)}
+                      >
+                        {stickerSlug(src) || "—"}
+                      </span>
+                      <button
+                        className="vis-cand-x"
+                        title={t("del-word")}
+                        disabled={busy}
+                        onClick={() => void removeSticker(src)}
+                      >
+                        ×
+                      </button>
+                    </>
+                  )}
                 </div>
               ))}
             </div>
@@ -672,6 +751,21 @@ function VisualSlot({
           <span className="vis-slot-empty">{t("vis-empty")}</span>
         )}
       </div>
+      {isSet && (
+        <div className="vis-grid-pick">
+          <span className="vis-grid-label">{t("vis-grid-label")}</span>
+          {[1, 2, 3].map((n) => (
+            <button
+              key={n}
+              className={"vis-grid-btn" + (stickerGrid === n ? " on" : "")}
+              disabled={disabled || busy}
+              onClick={() => setStickerGrid(n)}
+            >
+              {n}×{n}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="vis-slot-acts">
         <button
           className="btn soft sm"
@@ -679,7 +773,7 @@ function VisualSlot({
           title={!canGenerate ? t("vis-need-key") : !hasBrief ? t("vis-need-brief") : undefined}
           onClick={() => void generate().catch(() => {})}
         >
-          {t("vis-generate")}
+          {isSet && curSet.length > 0 ? t("vis-generate-more") : t("vis-generate")}
         </button>
         <input
           className="vis-extra"
@@ -731,6 +825,21 @@ function VisualSlot({
               </div>
             );
           })}
+        </div>
+      )}
+      {isSet && sheets.length > 0 && (
+        <div className="vis-sheets">
+          <span className="vis-sheets-label">{t("vis-sheet-label")}</span>
+          <div className="vis-sheets-row">
+            {sheets.map((u) => (
+              <div className="vis-sheet" key={u}>
+                <img src={u} alt="" />
+                <button className="btn text sm" disabled={disabled || busy} onClick={() => void resliceSheet(u)}>
+                  {t("vis-reslice")}
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
       {(busyMsg || errText) && (

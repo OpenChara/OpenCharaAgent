@@ -26,6 +26,7 @@ export interface DeckCard {
   bg_url?: string;
   keyvisual_url?: string;
   stickers_urls?: string[];
+  sticker_sheets_urls?: string[];
   // The non-destructive candidate gallery per kind (selected = *_url above).
   sprite_options?: string[];
   bg_options?: string[];
