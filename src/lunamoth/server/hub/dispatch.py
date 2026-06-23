@@ -388,6 +388,7 @@ class HubDispatcher:
         defaults = _config.load_defaults()
         matte_opt = p.get("matte")
         brief_in = p.get("brief") if isinstance(p.get("brief"), dict) else _brief_of(card)
+        extra = str(p.get("extra") or "")  # optional per-generation steer (额外提示词)
         refs_in = [str(r) for r in p.get("refs")] if isinstance(p.get("refs"), list) else []
         if kind != "keyvisual":  # identity-lock: anchor the rest to the saved keyvisual
             anchor = _keyvisual_data_uri(path, card)
@@ -401,6 +402,7 @@ class HubDispatcher:
                 llm_call=lambda s, u: _pkg()._complete(defaults, s, u, temperature=0.7, max_tokens=3000),
                 brief=brief_in,
                 refs=refs_in,
+                extra=extra,
                 matte=(None if matte_opt is None else bool(matte_opt)),
             )
             try:

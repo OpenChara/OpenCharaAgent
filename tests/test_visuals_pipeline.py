@@ -223,6 +223,29 @@ def test_generate_passes_refs_to_image_client():
     assert seen["refs"] == ["data:image/png;base64,AAAA"]
 
 
+def test_generate_appends_extra_prompt():
+    # The per-generation 额外提示词 is appended to the composed prompt so each regen
+    # can differ, without touching the shared brief.
+    seen = {}
+
+    def fake_ark(prompt, size, refs=None):
+        seen["prompt"] = prompt
+        return ["http://x/a.png"]
+
+    pipeline.generate(
+        CARD, "background", llm_call=lambda s, u: "{}", brief=_fixed_brief(),
+        extra="  holding a paper umbrella, dusk light  ",
+        ark_generate=fake_ark, download_bytes=lambda url: _FAKE_PNG,
+    )
+    assert seen["prompt"].endswith("holding a paper umbrella, dusk light")  # trimmed + appended
+    # no extra → prompt unchanged (no trailing junk)
+    pipeline.generate(
+        CARD, "background", llm_call=lambda s, u: "{}", brief=_fixed_brief(),
+        ark_generate=fake_ark, download_bytes=lambda url: _FAKE_PNG,
+    )
+    assert "umbrella" not in seen["prompt"]
+
+
 # --- restored kinds: keyvisual (anchor) + stickers ----------------------------
 
 def _white_sheet(rows: int = 3, cols: int = 3, cell: int = 120) -> bytes:

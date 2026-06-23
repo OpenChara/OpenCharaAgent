@@ -262,6 +262,7 @@ def generate(
     brief: dict | None = None,
     matte: bool | None = None,
     refs: list[str] | None = None,
+    extra: str = "",
     ark_generate=None,
     download_bytes=None,
 ) -> dict:
@@ -283,6 +284,11 @@ def generate(
 
     brief = brief if brief is not None else build_brief(card, llm_call)
     prompt = prompt_for(kind, brief)
+    # An optional per-generation steer (the UI's 额外提示词) — appended so each regen
+    # can differ without touching the shared brief.
+    extra = (extra or "").strip()
+    if extra:
+        prompt = f"{prompt} {extra}"
 
     if ark_generate is not None or download_bytes is not None:
         # Test / explicit-injection path: the old URL-then-download Ark shape.
