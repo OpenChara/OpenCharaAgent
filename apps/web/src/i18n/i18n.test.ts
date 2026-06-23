@@ -62,9 +62,10 @@ describe("I18N strings map", () => {
   // The matte pane's 选择/已选择 toggle + deps-repair path added 4 (matte-select,
   // matte-selected, matte-deps-missing, matte-deps-fix) → 597.
   // The visual editor's matte-skipped notice added vis-matte-skipped → 598.
-  // The per-kind 额外提示词 input added vis-extra-ph → 601 (count was 600).
-  it("preserves the full key set from the source dict (601 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(601);
+  // The per-kind 额外提示词 input added vis-extra-ph → 601 (count was 600). The
+  // candidate-gallery UI added vis-cut, vis-cutting, vis-cand-pick → 604.
+  it("preserves the full key set from the source dict (604 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(604);
   });
 
   it("every value is a [zh, en] string tuple", () => {

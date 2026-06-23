@@ -1391,7 +1391,16 @@ details.cv-raw pre{
 .vis-extra{flex:1; min-width:120px; height:28px; border:1px solid var(--hairline); background:var(--field-bg);
   color:var(--text); border-radius:var(--field-radius,8px); padding:0 10px; font-size:12px; font-family:inherit}
 .vis-extra::placeholder{color:var(--text-3)}
-.vis-stage{margin-top:8px}
+/* candidate gallery strip (non-destructive: every generation kept, click to use) */
+.vis-cands{display:flex; gap:8px; flex-wrap:wrap; margin-top:10px}
+.vis-cand{position:relative; width:56px; height:56px; border-radius:8px; overflow:visible;
+  border:2px solid transparent; cursor:pointer; transition:border-color .12s}
+.vis-cand img{width:100%; height:100%; object-fit:cover; border-radius:6px; display:block}
+.vis-cand.on{border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft)}
+.vis-cand-x{position:absolute; top:-6px; right:-6px; width:18px; height:18px; border-radius:50%;
+  background:var(--panel); border:1px solid var(--hairline); color:var(--text-2); font-size:12px;
+  line-height:15px; text-align:center; cursor:pointer; display:none; padding:0}
+.vis-cand:hover .vis-cand-x{display:block}
 .vis-stage-acts{display:flex; gap:7px; margin-top:8px}
 /* The "generate the brief + every image" action, sitting just under the brief —
    a soft tinted card with a full-width primary button so it reads as the main

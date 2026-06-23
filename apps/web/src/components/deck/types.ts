@@ -26,6 +26,10 @@ export interface DeckCard {
   bg_url?: string;
   keyvisual_url?: string;
   stickers_urls?: string[];
+  // The non-destructive candidate gallery per kind (selected = *_url above).
+  sprite_options?: string[];
+  bg_options?: string[];
+  keyvisual_options?: string[];
   force_roleplay?: boolean;
   /** Legacy stance string ("actor"); read only as a back-compat fallback. */
   embodiment?: string;

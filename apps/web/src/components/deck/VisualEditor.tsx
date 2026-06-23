@@ -111,6 +111,27 @@ function initUrlFor(kind: VisKind, card: DeckCard): string {
   return card.bg_url ? assetUrl(String(card.bg_url)) : "";
 }
 
+// The candidate gallery urls for a kind (sprite/keyvisual/background keep a gallery;
+// avatar + stickers don't use the single-image strip).
+function optionsFor(kind: VisKind, card: DeckCard): string[] {
+  const raw =
+    kind === "sprite" ? card.sprite_options
+    : kind === "keyvisual" ? card.keyvisual_options
+    : kind === "background" ? card.bg_options
+    : undefined;
+  return Array.isArray(raw) ? raw.map((u) => assetUrl(String(u))) : [];
+}
+
+/* The candidate FILENAME from an /asset?p=<abspath> url — what asset_select/remove want. */
+function assetName(url: string): string {
+  try {
+    const p = new URLSearchParams(url.split("?")[1] || "").get("p") || "";
+    return decodeURIComponent(p).split("/").pop() || "";
+  } catch {
+    return "";
+  }
+}
+
 export function VisualEditor({
   cardPath,
   card,
@@ -383,6 +404,7 @@ export function VisualEditor({
             cardName={String(card.name || "")}
             cardPath={cardPath}
             initUrl={initUrlFor(kind, card)}
+            initOptions={optionsFor(kind, card)}
             initSet={kind === "stickers" ? (card.stickers_urls || []).map((u) => assetUrl(String(u))) : []}
             disabled={disabled}
             canGenerate={hasImageKey && !!GENERATABLE[kind]}
@@ -411,6 +433,7 @@ function VisualSlot({
   cardName,
   cardPath,
   initUrl,
+  initOptions,
   initSet,
   disabled,
   canGenerate,
@@ -429,6 +452,7 @@ function VisualSlot({
   cardName: string;
   cardPath: string;
   initUrl: string;
+  initOptions: string[];
   initSet: string[];
   disabled: boolean;
   canGenerate: boolean;
@@ -444,8 +468,13 @@ function VisualSlot({
   registerGenerate: (fn: () => Promise<void>) => void;
 }) {
   const isSet = kind === "stickers";
+  const hasGallery = kind === "sprite" || kind === "keyvisual" || kind === "background";
   const [curSrc, setCurSrc] = useState(initUrl);
   const [curSet, setCurSet] = useState<string[]>(initSet);
+  // The non-destructive candidate gallery (sprite/keyvisual/background): kept urls +
+  // the selected filename. Selecting/removing/去背景 hit card.asset_* and update here.
+  const [options, setOptions] = useState<string[]>(initOptions);
+  const [selName, setSelName] = useState<string>(initUrl ? assetName(initUrl) : "");
   const [busy, setBusy] = useState(false);
   const [busyMsg, setBusyMsg] = useState("");
   const [errText, setErrText] = useState("");
@@ -477,7 +506,12 @@ function VisualSlot({
       );
       if (isSet) setCurSet((out.urls || []).map((u) => bust(assetUrl(String(u)))));
       else if (kind === "avatar") setCurSrc(out.data_uri || "");
-      else setCurSrc(out.url ? bust(assetUrl(String(out.url))) : "");
+      else if (out.url) {
+        const u = assetUrl(String(out.url));
+        setCurSrc(bust(u));
+        setSelName(assetName(u));
+        setOptions((prev) => (prev.includes(u) ? prev : [...prev, u]));  // keep the candidate
+      }
       // Cut wanted but skipped → flag it (engine not ready); the image is still saved.
       setMatteSkipped(wantsCut && out.matted === false);
       setIdle();
@@ -553,6 +587,63 @@ function VisualSlot({
     a.remove();
   };
 
+  // ── candidate gallery (sprite/keyvisual/background) — non-destructive ──────────
+  const selectCand = async (url: string) => {
+    const name = assetName(url);
+    if (!name || name === selName) return;
+    setWorking(t("saving"));
+    try {
+      await hubCall("card.asset_select", { path: cardPath, kind, name }, 15000);
+      setCurSrc(bust(url));
+      setSelName(name);
+      setIdle();
+      await refreshHub();
+      onChanged();
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const removeCand = async (url: string) => {
+    const name = assetName(url);
+    if (!name) return;
+    setWorking(t("vis-deleting"));
+    try {
+      const r = await hubCall<{ selected?: string; options?: string[] }>(
+        "card.asset_remove", { path: cardPath, kind, name }, 15000);
+      const opts = (r.options || []).map((u) => assetUrl(String(u)));
+      setOptions(opts);
+      const sel = r.selected || "";
+      setSelName(sel);
+      const selUrl = opts.find((u) => assetName(u) === sel) || "";
+      setCurSrc(selUrl ? bust(selUrl) : "");
+      setIdle();
+      await refreshHub();
+      onChanged();
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const doMatte = async () => {
+    setWorking(t("vis-cutting"));
+    try {
+      const r = await hubCall<{ url?: string; options?: string[] }>(
+        "card.asset_matte", { path: cardPath, kind }, 60000);
+      const opts = (r.options || []).map((u) => assetUrl(String(u)));
+      if (opts.length) setOptions(opts);
+      if (r.url) {
+        const u = assetUrl(String(r.url));
+        setCurSrc(bust(u));
+        setSelName(assetName(u));
+      }
+      setMatteSkipped(false);
+      setIdle();
+      await refreshHub();
+      onChanged();
+    } catch (e) {
+      fail(e);
+    }
+  };
+
   const hasAnyImage = isSet ? curSet.length > 0 : !!curSrc;
 
   return (
@@ -602,6 +693,11 @@ function VisualSlot({
             {t("av-upload")}
           </button>
         )}
+        {hasGallery && curSrc && (
+          <button className="btn text sm" disabled={disabled || busy} onClick={() => void doMatte()}>
+            {t("vis-cut")}
+          </button>
+        )}
         {!isSet && curSrc && (
           <button className="btn text sm" disabled={busy} onClick={download}>
             {t("vis-download")}
@@ -624,6 +720,19 @@ function VisualSlot({
           }}
         />
       </div>
+      {hasGallery && options.length > 0 && (
+        <div className="vis-cands">
+          {options.map((u) => {
+            const nm = assetName(u);
+            return (
+              <div key={u} className={"vis-cand" + (nm === selName ? " on" : "")} title={t("vis-cand-pick")}>
+                <img src={u} alt="" onClick={() => void selectCand(u)} />
+                <button className="vis-cand-x" title={t("del-word")} onClick={() => void removeCand(u)}>×</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
       {(busyMsg || errText) && (
         <div className={errText ? "av-note err" : busy ? "av-note thinking" : "av-note"}>{errText || busyMsg}</div>
       )}
