@@ -725,6 +725,28 @@ def test_card_asset_save_refuses_builtin_card():
     assert rpc_error("card.asset_save", {"path": card, "kind": "sprite", "data_b64": b64, "ext": "png"})["code"] in (-32031, -32035)
 
 
+def test_card_patch_merges_field_preserving_rest():
+    # Field-level patch: only the provided keys change; everything else is preserved
+    # (deep-merge). This is the safe writer behind editing a card (incl. a running
+    # chara's session card) without the whole-card-replace risk of card.save.
+    set_defaults()
+    card = _make_user_card("Patchy")
+    out = result("card.patch", {"path": card, "fields": {"description": "new desc"}})
+    assert out["path"] == card
+    raw = json.loads(open(card, encoding="utf-8").read())
+    assert raw["data"]["description"] == "new desc"
+    assert raw["data"]["name"] == "Patchy"  # untouched
+    # nested ext keys deep-merge (siblings preserved across two patches)
+    result("card.patch", {"path": card, "fields": {"extensions": {"lunamoth": {"tagline": "t1"}}}})
+    result("card.patch", {"path": card, "fields": {"extensions": {"lunamoth": {"polaris": "ideal"}}}})
+    lm = json.loads(open(card, encoding="utf-8").read())["data"]["extensions"]["lunamoth"]
+    assert lm["tagline"] == "t1" and lm["polaris"] == "ideal"
+    # empty fields object + builtin card are clean errors
+    assert rpc_error("card.patch", {"path": card, "fields": {}})["code"] == -32602
+    builtin = str(H.bundled_cards_dir() / "Quinn" / "card.json")
+    assert rpc_error("card.patch", {"path": builtin, "fields": {"description": "x"}})["code"] in (-32031, -32035)
+
+
 def test_card_visual_brief(monkeypatch):
     set_defaults()
     card = str(H.bundled_cards_dir() / "Quinn" / "card.json")

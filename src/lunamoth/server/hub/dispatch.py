@@ -150,6 +150,7 @@ class HubDispatcher:
             "cards.list": lambda p: _cards.list_cards(),
             "card.read": self._card_read,
             "card.save": lambda p: _cards.save_card(p.get("data"), path=str(p.get("path") or "")),
+            "card.patch": lambda p: _cards.patch_card(str(p.get("path") or ""), p.get("fields") or {}),
             "card.delete": lambda p: _cards.delete_card(str(p.get("path") or "")),
             "card.restore": lambda p: _cards.restore_card(str(p.get("trash_id") or "")),
             "card.duplicate": lambda p: _cards.duplicate_card(str(p.get("path") or "")),

@@ -25,6 +25,7 @@ from ._common import (
     _clean_theme,
     _sanitize_avatar_svg,
     _slug,
+    _writable_card_path,
 )
 from .avatars import _avatar_thumb_uri
 from .config import bundled_cards_dir, user_cards_dir, user_worlds_dir
@@ -242,6 +243,45 @@ def save_card(data: dict[str, Any], path: str = "") -> dict[str, Any]:
     data["name"] = name
     _sanitize_card_extensions(data)
     target.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"path": str(target)}
+
+
+def _deep_patch(base: Any, over: Any) -> Any:
+    """Patch semantics: deep-merge ``over`` onto ``base`` — provided keys WIN (even an
+    empty value, which is an intentional clear), nested dicts merge, keys absent from
+    ``over`` are preserved. Unlike ``_merge_preserving`` (the wake backstop), the caller
+    of a field patch owns exactly what it sends, so empty means clear."""
+    if isinstance(base, dict) and isinstance(over, dict):
+        out = dict(base)
+        for k, v in over.items():
+            out[k] = _deep_patch(out.get(k), v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+        return out
+    return over
+
+
+def patch_card(path: str, fields: dict[str, Any]) -> dict[str, Any]:
+    """Field-level merge-write of a card's ``data``: only the provided keys change,
+    everything else is preserved (deep patch). Accepts a deck card OR a LIVING chara's
+    own frozen session card (via ``_writable_card_path``) — so editing a running chara
+    persists immediately, without the whole-card-REPLACE risk of ``save_card`` (and
+    without ``save_card``'s deck-only gate). Activation is the caller's concern: visuals
+    are live, volatile-tail fields take effect next turn, identity fields next start /
+    on apply. Returns the written path."""
+    if not isinstance(fields, dict) or not fields:
+        raise RpcError(-32602, "card.patch expects a non-empty fields object")
+    target = _writable_card_path(path)
+    raw = json.loads(target.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise RpcError(-32602, "card is not a JSON object")
+    data = raw.get("data")
+    if not isinstance(data, dict):
+        data = {}
+    raw["data"] = _deep_patch(data, fields)
+    name = raw["data"].get("name")
+    if isinstance(name, str) and name.strip():
+        raw["name"] = name.strip()  # keep the top-level mirror in sync
+    _sanitize_card_extensions(raw)
+    target.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"path": str(target)}
 
 
