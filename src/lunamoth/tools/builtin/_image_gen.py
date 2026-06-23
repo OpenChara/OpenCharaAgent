@@ -33,6 +33,7 @@ import base64
 import json
 import os
 import time
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -267,11 +268,33 @@ def _coerce_openai_size(size: str) -> str:
     return "1024x1024"
 
 
-def _openai_bytes(base: str, key: str, model: str, prompt: str, size: str) -> bytes:
-    body = {"model": model, "prompt": prompt, "size": _coerce_openai_size(size), "n": 1}
-    j = _request_json(base.rstrip("/") + "/images/generations",
-                      data=json.dumps(body).encode("utf-8"),
-                      headers=_auth_headers(key), method="POST", timeout=240, tries=5)
+def _ref_to_bytes(ref: str) -> tuple[bytes, str]:
+    """A reference image (``data:`` URI or http(s) URL) → (raw bytes, mime), for the
+    multipart upload to OpenAI's edits endpoint."""
+    if ref.startswith("data:"):
+        head, _, b64 = ref.partition(",")
+        mime = (head[5:].split(";")[0] or "image/png") if head.startswith("data:") else "image/png"
+        return base64.b64decode(b64), mime
+    return download_bytes(ref), "image/png"
+
+
+def _multipart_body(fields: dict[str, str],
+                    files: list[tuple[str, str, bytes, str]]) -> tuple[bytes, str]:
+    """Encode multipart/form-data (urllib has no multipart helper). ``files`` items are
+    ``(field, filename, data, mime)``. Returns (body, content_type)."""
+    boundary = "----lunamoth" + uuid.uuid4().hex
+    out = bytearray()
+    for k, v in fields.items():
+        out += (f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n').encode("utf-8")
+    for field, fname, data, mime in files:
+        out += (f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; '
+                f'filename="{fname}"\r\nContent-Type: {mime}\r\n\r\n').encode("utf-8")
+        out += bytes(data) + b"\r\n"
+    out += (f"--{boundary}--\r\n").encode("utf-8")
+    return bytes(out), f"multipart/form-data; boundary={boundary}"
+
+
+def _openai_result(j: dict) -> bytes:
     items = j.get("data") if isinstance(j, dict) else None
     if not isinstance(items, list) or not items:
         raise RuntimeError("image generation returned no result")
@@ -284,6 +307,29 @@ def _openai_bytes(base: str, key: str, model: str, prompt: str, size: str) -> by
     if first.get("url"):
         return download_bytes(str(first["url"]))
     raise RuntimeError("image endpoint returned neither b64_json nor url")
+
+
+def _openai_bytes(base: str, key: str, model: str, prompt: str, size: str,
+                  refs: list[str] | None = None) -> bytes:
+    if refs:
+        # WITH reference images → the EDITS endpoint: gpt-image-1 takes image[] + a
+        # prompt (image+text → image). It's multipart, not JSON. Up to 4 refs.
+        files: list[tuple[str, str, bytes, str]] = []
+        for i, r in enumerate(list(refs)[:4]):
+            data, mime = _ref_to_bytes(str(r))
+            ext = "jpg" if ("jpeg" in mime or "jpg" in mime) else ("webp" if "webp" in mime else "png")
+            files.append(("image[]", f"ref{i}.{ext}", data, mime))
+        body, ctype = _multipart_body(
+            {"model": model, "prompt": prompt, "size": _coerce_openai_size(size)}, files)
+        j = _request_json(base.rstrip("/") + "/images/edits", data=body,
+                          headers={"Authorization": f"Bearer {key}", "Content-Type": ctype},
+                          method="POST", timeout=240, tries=5)
+        return _openai_result(j)
+    body = {"model": model, "prompt": prompt, "size": _coerce_openai_size(size), "n": 1}
+    j = _request_json(base.rstrip("/") + "/images/generations",
+                      data=json.dumps(body).encode("utf-8"),
+                      headers=_auth_headers(key), method="POST", timeout=240, tries=5)
+    return _openai_result(j)
 
 
 # ---- adapter: Alibaba DashScope 通义万相 (async task) -------------------------------
@@ -426,7 +472,7 @@ def generate_bytes(prompt: str, size: str, *, refs: list[str] | None = None) -> 
     if adapter == "ark":
         data = _ark_bytes(model, key, prompt, size, refs)
     elif adapter == "openai":
-        data = _openai_bytes(_base_url_for(pid), key, model, prompt, size)
+        data = _openai_bytes(_base_url_for(pid), key, model, prompt, size, refs)
     elif adapter == "dashscope":
         data = _dashscope_bytes(key, model, prompt, size, refs)
     elif adapter == "openrouter":

@@ -135,6 +135,29 @@ def test_openai_adapter_url(home, monkeypatch):
     assert g.generate_bytes("p", "1024x1024") == _FAKE_PNG
 
 
+def test_openai_adapter_uses_edits_endpoint_with_refs(home, monkeypatch):
+    # WITH reference images, the OpenAI adapter must use /images/edits (multipart,
+    # image+text → image), not /images/generations which drops the refs.
+    _write_desktop(home, image_provider="openai", image_model="gpt-image-1",
+                   keys={"OpenAI": {"provider": "openai", "api_key": "sk-oai"}})
+    b64 = base64.b64encode(_FAKE_PNG).decode()
+    seen = {}
+
+    def fake_request(url, *, data, headers, method, timeout, tries):
+        seen["url"] = url
+        seen["ctype"] = headers.get("Content-Type", "")
+        seen["data"] = data
+        return {"data": [{"b64_json": b64}]}
+
+    monkeypatch.setattr(g, "_request_json", fake_request)
+    ref = "data:image/png;base64," + base64.b64encode(b"REFBYTES").decode()
+    out = g.generate_bytes("a fox", "1024x1024", refs=[ref])
+    assert out == _FAKE_PNG
+    assert seen["url"].endswith("/images/edits")            # refs → edits endpoint
+    assert seen["ctype"].startswith("multipart/form-data")  # multipart upload
+    assert b"REFBYTES" in seen["data"]                       # the ref bytes are attached
+
+
 # ---------------------------------------------------------------------------
 # Adapter: DashScope (async create → poll → download)
 # ---------------------------------------------------------------------------
