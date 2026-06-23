@@ -680,6 +680,29 @@ def test_card_asset_gallery_select_and_remove():
     assert len(entry["bg_options"]) == 1
 
 
+def test_card_asset_matte_adds_cut_candidate_keeping_raw(monkeypatch):
+    # 去背景 is non-destructive: it adds a NEW cut candidate and keeps the raw.
+    import base64 as b64m
+    import io
+    from PIL import Image
+    from lunamoth.visuals import matte
+    monkeypatch.setattr(matte, "deps_available", lambda: False)  # keyless white-bg fallback
+    set_defaults()
+    card = _make_user_card("MatteCard")
+    img = Image.new("RGB", (40, 40), (255, 255, 255))
+    for x in range(12, 28):
+        for y in range(12, 28):
+            img.putpixel((x, y), (200, 30, 30))
+    buf = io.BytesIO(); img.save(buf, "PNG")
+    raw = result("card.asset_save", {"path": card, "kind": "sprite",
+                                     "data_b64": b64m.b64encode(buf.getvalue()).decode(), "ext": "png"})["file"]
+    out = result("card.asset_matte", {"path": card, "kind": "sprite"})
+    assert out["selected"] != raw and out["file"].endswith(".png")
+    lm = json.loads(open(card, encoding="utf-8").read())["data"]["extensions"]["lunamoth"]
+    assert lm["assets"]["options"]["sprite"] == [raw, out["file"]]  # raw kept + cut added
+    assert lm["assets"]["sprite"] == out["file"]                     # cut is now shown
+
+
 def test_card_stickers_save_and_delete():
     # The sticker SET is stored as a LIST of sidecars + a list pointer.
     card, _b64 = _user_card_copy(None)

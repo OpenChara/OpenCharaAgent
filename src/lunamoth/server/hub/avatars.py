@@ -309,6 +309,45 @@ def asset_remove(path: str, kind: str, name: str) -> dict[str, Any]:
             "options": [_asset_url(target.with_name(n)) for n in opts]}
 
 
+def asset_matte(path: str, kind: str, name: str = "") -> dict[str, Any]:
+    """MANUAL background removal on a candidate → a NEW transparent-PNG candidate
+    (the raw original is kept in the gallery, so it's reversible — just re-select it).
+    Uses the matte model if installed, else the keyless white-bg fallback. ``name``
+    selects which candidate to cut (defaults to the active one)."""
+    from ...visuals import matte as _matte
+    target = _writable_card_path(path)
+    kind = str(kind or "").strip().lower()
+    if kind not in _ART_ASSET_KINDS:
+        raise RpcError(-32602, f"unknown art asset kind: {kind}")
+    raw_card = json.loads(target.read_text(encoding="utf-8"))
+    if not isinstance(raw_card, dict):
+        raise RpcError(-32602, "card is not a JSON object")
+    assets = _assets_dict(raw_card)
+    src_name = str(name or "").strip() or str(assets.get(kind) or "")
+    src = target.with_name(src_name) if src_name else None
+    if src is None or not src.is_file():
+        raise RpcError(-32602, f"no image to cut for {kind}")
+    data = src.read_bytes()
+    mid = _matte.selected_model()
+    try:
+        if _matte.deps_available() and _matte.is_installed(mid):
+            cut = _matte.cut(data, model_id=mid)
+        else:
+            cut = _matte.cut_white_bg(data)
+    except Exception as exc:  # noqa: BLE001 — surface a real error, never a fake cut
+        raise HubRpcError(-32050, f"background removal failed: {exc}", {"kind": "matte"}) from exc
+    cut = compress_image_bytes(cut, "png", CAP_ART)
+    sidecar = _art_candidate_path(target, kind, "png")
+    sidecar.write_bytes(cut)
+    opts = _options_list(assets, kind)
+    opts.append(sidecar.name)
+    assets[kind] = sidecar.name  # show the cut version
+    target.write_text(json.dumps(raw_card, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"path": str(target), "kind": kind, "file": sidecar.name, "url": _asset_url(sidecar),
+            "selected": sidecar.name,
+            "options": [_asset_url(target.with_name(n)) for n in opts]}
+
+
 # ---- sticker set (表情包) — a LIST of cut cells, not a single sidecar -----------
 _STICKER_MAX = 9
 

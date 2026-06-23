@@ -146,6 +146,7 @@ class HubDispatcher:
             "card.asset_save": self._card_asset_save,
             "card.asset_select": lambda p: _avatars.asset_select(str(p.get("path") or ""), str(p.get("kind") or ""), str(p.get("name") or "")),
             "card.asset_remove": lambda p: _avatars.asset_remove(str(p.get("path") or ""), str(p.get("kind") or ""), str(p.get("name") or "")),
+            "card.asset_matte": lambda p: _avatars.asset_matte(str(p.get("path") or ""), str(p.get("kind") or ""), str(p.get("name") or "")),
             "card.stickers_save": self._card_stickers_save,
             "card.asset_delete": lambda p: _avatars.asset_delete(str(p.get("path") or ""), str(p.get("kind") or "")),
             "card.avatar_read": lambda p: _avatars.avatar_read(str(p.get("path") or "")),
