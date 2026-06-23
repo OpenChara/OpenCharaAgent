@@ -63,7 +63,7 @@ describe("I18N strings map", () => {
   // matte-selected, matte-deps-missing, matte-deps-fix) → 597.
   // The visual editor's matte-skipped notice added vis-matte-skipped → 598.
   it("preserves the full key set from the source dict (598 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(598);
+    expect(Object.keys(I18N).length).toBe(600);
   });
 
   it("every value is a [zh, en] string tuple", () => {

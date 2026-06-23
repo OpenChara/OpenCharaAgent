@@ -409,6 +409,8 @@ export const I18N = {
   "image-gen-ph": ["如 doubao-seedream-5-0-260128", "e.g. doubao-seedream-5-0-260128"],
   "model-ctx-label": ["上下文长度", "Context length"],
   "model-ctx-note": ["自定义模型必填；OpenRouter 忽略", "required for custom · ignored on OpenRouter"],
+  "model-refresh-label": ["模型列表更新间隔", "Model list refresh"],
+  "model-refresh-note": ["天 · 默认 1", "days · default 1"],
   "aux-title": ["其他模态", "Other modalities"],
   "aux-sub": ["默认都用主模型；可为某个模态单独指定一个模型。", "Default to the main model; override a modality with its own model."],
   "aux-vision": ["图像理解", "Vision"],

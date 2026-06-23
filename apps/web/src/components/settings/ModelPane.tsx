@@ -31,6 +31,7 @@ interface Defaults {
   image_model?: string;
   vision_model?: string;
   model_context?: number | string;
+  model_refresh_interval?: number | string;
   has_key?: boolean;
 }
 interface KeyRow { label: string; provider: string; base_url: string; model: string; has_key: boolean; active: boolean }
@@ -59,6 +60,12 @@ export function ModelPane() {
   const [test, setTest] = useState<TestResult | null>(null);
   const [ctx, setCtx] = useState(String(defaults.model_context || ""));
   useEffect(() => { setCtx(String(defaults.model_context || "")); }, [defaults.model_context]);
+  // Model-list refresh interval, shown in DAYS (stored as seconds; blank = the 1-day default).
+  const [refreshDays, setRefreshDays] = useState("");
+  useEffect(() => {
+    const secs = Number(defaults.model_refresh_interval || 0);
+    setRefreshDays(secs > 0 ? String(+(secs / 86400).toFixed(2)) : "");
+  }, [defaults.model_refresh_interval]);
 
   useEffect(() => {
     let on = true;
@@ -159,6 +166,21 @@ export function ModelPane() {
                 </div>
               </label>
             )}
+
+            <label className="model-box">
+              <span className="mb-lbl">{t("model-refresh-label")} <i>{t("model-refresh-note")}</i></span>
+              <div className="input-like ctx-input">
+                <input
+                  type="number" min="0" step="0.5" placeholder="1" value={refreshDays}
+                  onChange={(e) => setRefreshDays(e.target.value)}
+                  onBlur={(e) => {
+                    const days = parseFloat(e.target.value.trim());
+                    const secs = Number.isFinite(days) && days > 0 ? String(Math.round(days * 86400)) : "0";
+                    if (secs !== String(defaults.model_refresh_interval || "0")) void persist({ model_refresh_interval: secs });
+                  }}
+                />
+              </div>
+            </label>
 
             <div className="model-test">
               <button className="btn soft sm" disabled={testing} onClick={() => void runTest()}>

@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 from ._common import HubRpcError
@@ -46,21 +48,145 @@ def _http_json(url: str, api_key: str = "", payload: dict | None = None, timeout
         return json.loads(resp.read().decode("utf-8", errors="replace"))
 
 
-_models_cache: dict[str, tuple[float, list[dict]]] = {}
+# A provider's model line-up (id + modality + context) is pulled LIVE from its
+# /models endpoint and cached to disk; we only re-pull when the cache is older than
+# the refresh interval (default one day, operator-tunable via the desktop default
+# `model_refresh_interval`). When a provider is unreachable we degrade to the stale
+# disk copy, then to a small curated fallback — so a model picker never goes empty.
+_DEFAULT_REFRESH_SECONDS = 86_400  # one day
+_models_cache: dict[str, tuple[float, list[dict]]] = {}  # in-process memo: base_url -> (wall_ts, models)
 
 
-def _catalogue(base_url: str, api_key: str = "") -> list[dict]:
-    """Provider /models catalogue, cached for the hub's lifetime (10 min TTL)."""
+def refresh_interval_seconds() -> float:
+    """The configured catalogue refresh interval in seconds (default one day).
+    0 / blank / invalid → the default (never 0, which would re-pull every call)."""
+    try:
+        from .config import load_defaults  # local import: avoid any import cycle
+        raw = str(load_defaults().get("model_refresh_interval") or "").strip()
+    except Exception:  # noqa: BLE001 - defaults unreadable → just use the default
+        return _DEFAULT_REFRESH_SECONDS
+    try:
+        val = float(raw)
+    except ValueError:
+        return _DEFAULT_REFRESH_SECONDS
+    return val if val > 0 else _DEFAULT_REFRESH_SECONDS
+
+
+def _catalogue_cache_path() -> Path:
+    home = Path(os.getenv("LUNAMOTH_HOME", Path.home() / ".lunamoth")).expanduser()
+    return home / "model_catalogue.json"
+
+
+def _load_disk_catalogue() -> dict[str, Any]:
+    try:
+        data = json.loads(_catalogue_cache_path().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {}
+
+
+def _save_disk_catalogue(base: str, fetched_at: float, models: list[dict]) -> None:
+    try:
+        data = _load_disk_catalogue()
+        data[base] = {"fetched_at": fetched_at, "models": models}
+        path = _catalogue_cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        _log.debug("could not persist model catalogue", exc_info=True)
+
+
+def _catalogue(base_url: str, api_key: str = "", *,
+               refresh_seconds: float | None = None, provider: str = "") -> list[dict]:
+    """Provider /models catalogue (id + modality + context), DISK-cached. Pulls live
+    only when the cache is older than ``refresh_seconds`` (default: the configured
+    interval, ~one day); on a fetch failure falls back to the stale disk copy, then
+    to a curated built-in list — never raises, never returns empty for a known
+    provider just because it's offline."""
     base = base_url.rstrip("/")
-    now = time.monotonic()
-    hit = _models_cache.get(base)
-    if hit and now - hit[0] < 600:
-        return hit[1]
-    data = _pkg()._http_json(base + "/models", api_key)
-    models = data.get("data") if isinstance(data, dict) else None
-    models = models if isinstance(models, list) else []
-    _models_cache[base] = (now, models)
-    return models
+    if not base:
+        return _fallback_models(provider, base)
+    if refresh_seconds is None:
+        refresh_seconds = refresh_interval_seconds()
+    now = time.time()  # wall clock (the disk cache must survive restarts)
+    memo = _models_cache.get(base)
+    if memo and now - memo[0] < refresh_seconds:
+        return memo[1]
+    disk = _load_disk_catalogue()
+    entry = disk.get(base) if isinstance(disk.get(base), dict) else None
+    if entry and isinstance(entry.get("models"), list) \
+            and now - float(entry.get("fetched_at") or 0) < refresh_seconds:
+        _models_cache[base] = (float(entry["fetched_at"]), entry["models"])
+        return entry["models"]
+    # cache stale or missing → try a live pull
+    try:
+        data = _pkg()._http_json(base + "/models", api_key)
+        models = data.get("data") if isinstance(data, dict) else None
+        if isinstance(models, list) and models:
+            _models_cache[base] = (now, models)
+            _save_disk_catalogue(base, now, models)
+            return models
+    except Exception:  # noqa: BLE001 - offline / rate-limited / sparse → fall back
+        _log.debug("model catalogue fetch failed for %s", base, exc_info=True)
+    if entry and isinstance(entry.get("models"), list):
+        return entry["models"]  # stale-but-real beats a guess
+    return _fallback_models(provider, base)
+
+
+def _fb(mid: str, name: str, ctx: int, *, vision: bool = False, tools: bool = True) -> dict:
+    """A fallback catalogue entry in the same shape /models returns (so the same
+    extraction reads id / context / tools / vision off it)."""
+    return {"id": mid, "name": name, "context_length": ctx,
+            "supported_parameters": (["tools"] if tools else []),
+            "architecture": {"input_modalities": (["text", "image"] if vision else ["text"])}}
+
+
+# Curated last-resort line-ups — used ONLY when a provider's /models is unreachable
+# AND nothing is cached on disk. Edit as provider catalogues change; once an endpoint
+# is reached once, its live (disk-cached) list supersedes this. IDs current ~2026-06.
+_FALLBACK_MODELS: dict[str, list[dict]] = {
+    "openai": [
+        _fb("gpt-4o", "GPT-4o", 128_000, vision=True),
+        _fb("gpt-4o-mini", "GPT-4o mini", 128_000, vision=True),
+        _fb("o4-mini", "o4-mini", 200_000),
+    ],
+    "openrouter": [
+        _fb("openai/gpt-4o", "GPT-4o", 128_000, vision=True),
+        _fb("anthropic/claude-sonnet-4", "Claude Sonnet 4", 200_000, vision=True),
+        _fb("google/gemini-2.5-flash", "Gemini 2.5 Flash", 1_000_000, vision=True),
+        _fb("deepseek/deepseek-chat", "DeepSeek Chat", 64_000),
+    ],
+    "volcano": [
+        _fb("doubao-seed-1-6", "Doubao Seed 1.6", 256_000, vision=True),
+        _fb("doubao-pro-32k", "Doubao Pro 32k", 32_000),
+    ],
+    "dashscope": [
+        _fb("qwen-max", "Qwen Max", 32_000),
+        _fb("qwen-plus", "Qwen Plus", 131_072),
+        _fb("qwen-vl-max", "Qwen VL Max", 32_000, vision=True),
+    ],
+    "hunyuan": [
+        _fb("hunyuan-turbos-latest", "Hunyuan TurboS", 32_000),
+        _fb("hunyuan-large", "Hunyuan Large", 32_000),
+    ],
+}
+
+_HOST_TO_PROVIDER = (
+    ("openrouter.ai", "openrouter"), ("api.openai.com", "openai"),
+    ("volces.com", "volcano"), ("hunyuan", "hunyuan"),
+    ("dashscope", "dashscope"), ("aliyuncs.com", "dashscope"),
+)
+
+
+def _fallback_models(provider: str, base: str) -> list[dict]:
+    key = provider if provider in _FALLBACK_MODELS else ""
+    if not key:
+        b = (base or "").lower()
+        for host, prov in _HOST_TO_PROVIDER:
+            if host in b:
+                key = prov
+                break
+    return list(_FALLBACK_MODELS.get(key, []))
 
 
 def model_capabilities(base_url: str, model: str, api_key: str = "") -> dict[str, Any]:

@@ -48,7 +48,8 @@ _DEFAULT_FIELDS = ("provider", "base_url", "api_key", "model", "ui_lang", "ui_th
                    "image_provider", "image_model", "matte_model",
                    "reasoning", "vision_model", "vision_provider",
                    "card_model", "card_provider",
-                   "image_prompt_model", "image_prompt_provider", "model_context")
+                   "image_prompt_model", "image_prompt_provider", "model_context",
+                   "model_refresh_interval")
 # Default fields whose value is a secret: stripped from every public payload,
 # surfaced only as a has_<field> presence flag.
 _SECRET_FIELDS = ("api_key",)
