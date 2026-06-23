@@ -63,11 +63,12 @@ interface GenResult {
   status?: string;
   saved?: boolean;
   kind?: string;
-  url?: string;        // sprite/background/keyvisual asset url
+  url?: string;        // sprite/background/keyvisual/avatar asset url
+  options?: string[];  // the kind's full candidate gallery (after this generation)
   urls?: string[];     // stickers (the saved set)
   added?: string[];    // stickers just added this generation
   sheet_urls?: string[]; // stickers: the kept raw sheets
-  data_uri?: string;   // avatar (inlined)
+  data_uri?: string;   // avatar (inlined, for a fast preview)
   note?: string;
   matted?: boolean;    // false ⇒ a cut was wanted but skipped (engine not ready)
 }
@@ -120,6 +121,7 @@ function optionsFor(kind: VisKind, card: DeckCard): string[] {
     kind === "sprite" ? card.sprite_options
     : kind === "keyvisual" ? card.keyvisual_options
     : kind === "background" ? card.bg_options
+    : kind === "avatar" ? card.avatar_options
     : undefined;
   return Array.isArray(raw) ? raw.map((u) => assetUrl(String(u))) : [];
 }
@@ -514,7 +516,8 @@ function VisualSlot({
   registerGenerate: (fn: () => Promise<void>) => void;
 }) {
   const isSet = kind === "stickers";
-  const hasGallery = kind === "sprite" || kind === "keyvisual" || kind === "background";
+  // avatar is a gallery kind too now (candidates + select); only stickers isn't single.
+  const hasGallery = kind === "sprite" || kind === "keyvisual" || kind === "background" || kind === "avatar";
   const [curSrc, setCurSrc] = useState(initUrl);
   const [curSet, setCurSet] = useState<string[]>(initSet);
   const [sheets, setSheets] = useState<string[]>(initSheets);
@@ -555,10 +558,8 @@ function VisualSlot({
   // generate → the BACKEND auto-saves; we just reflect the saved result + refresh. If
   // the user leaves mid-generation the job still finishes and the card still updates.
   const generate = async () => {
-    // No overwrite confirm here: stickers + the gallery kinds (sprite/keyvisual/
-    // background) all APPEND a new candidate and keep the old. Only avatar truly
-    // overwrites its single file — that confirm lives in enqueueGen (asked once per
-    // click, not per queued item), and genAll calls generate() directly to skip it.
+    // Every kind APPENDS a kept candidate (stickers, sprite/keyvisual/background, AND
+    // avatar), so generation is always non-destructive — no overwrite confirm.
     setWorking(t("vis-generating"));
     try {
       const params: Record<string, unknown> = {
@@ -573,13 +574,14 @@ function VisualSlot({
       if (isSet) {
         setCurSet((out.urls || []).map((u) => bust(assetUrl(String(u)))));
         if (out.sheet_urls) setSheets(out.sheet_urls.map((u) => assetUrl(String(u))));
-      } else if (kind === "avatar") setCurSrc(out.data_uri || "");
-      else if (out.url) {
+      } else if (out.url) {
+        // gallery kinds incl. avatar: show the new candidate + keep it in the rail
         const u = assetUrl(String(out.url));
-        setCurSrc(bust(u));
+        setCurSrc(kind === "avatar" && out.data_uri ? out.data_uri : bust(u));
         setSelName(assetName(u));
-        setOptions((prev) => (prev.includes(u) ? prev : [...prev, u]));  // keep the candidate
-      }
+        if (out.options) setOptions(out.options.map((o) => assetUrl(String(o))));
+        else setOptions((prev) => (prev.includes(u) ? prev : [...prev, u]));
+      } else if (kind === "avatar") setCurSrc(out.data_uri || "");
       // Cut wanted but skipped → flag it (engine not ready); the image is still saved.
       setMatteSkipped(wantsCut && out.matted === false);
       setIdle();
@@ -609,9 +611,8 @@ function VisualSlot({
     drainingRef.current = false;
   };
   const enqueueGen = () => {
-    // avatar is the ONLY kind that overwrites its single file; the gallery kinds and
-    // stickers append, so they never need an overwrite confirm. Ask once per click.
-    if (!isSet && !hasGallery && !!curSrc && !confirm(t("vis-regen-overwrite"))) return;
+    // Every kind APPENDS a kept candidate now (incl. avatar), so there's no overwrite to
+    // confirm — just enqueue (click again to queue more).
     qRef.current += 1;
     setQN(qRef.current);
     void drain();
@@ -627,8 +628,11 @@ function VisualSlot({
     try {
       const b64 = await fileToB64(f);
       if (kind === "avatar") {
-        const r = await hubCall<{ data_uri?: string }>("card.avatar_upload", { path: cardPath, data_b64: b64, ext }, 30000);
+        const r = await hubCall<{ data_uri?: string; url?: string; options?: string[] }>(
+          "card.avatar_upload", { path: cardPath, data_b64: b64, ext }, 30000);
         if (r.data_uri) setCurSrc(r.data_uri);
+        if (r.url) setSelName(assetName(assetUrl(String(r.url))));
+        if (r.options) setOptions(r.options.map((o) => assetUrl(String(o))));  // keep the candidate rail
       } else {
         const r = await hubCall<{ url?: string }>(
           "card.asset_save",
@@ -843,7 +847,7 @@ function VisualSlot({
             placeholder={t("vis-extra-ph")}
             onChange={(e) => setExtra(e.target.value)}
           />
-          {hasGallery && curSrc && (
+          {hasGallery && kind !== "avatar" && curSrc && (
             <button className="btn soft sm" disabled={disabled || busy} onClick={() => void doMatte()}>
               {t("vis-cut")}
             </button>

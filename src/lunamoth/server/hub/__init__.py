@@ -86,7 +86,6 @@ from .models import (  # noqa: F401
 from .avatars import (  # noqa: F401
     _art_sidecar_path,
     _avatar_data_uri,
-    _avatar_sidecar_path,
     _avatar_thumb_uri,
     _looks_like,
     asset_delete,

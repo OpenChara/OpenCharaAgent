@@ -180,12 +180,14 @@ def test_avatar_upload_svg_writes_sidecar_and_points_card():
     set_defaults()
     path = _make_user_card()
     out = result("card.avatar_upload", {"path": path, "data_b64": _b64(GOOD_SVG.encode()), "ext": "svg"})
-    assert out["avatar_file"].endswith(".avatar.svg")
+    assert ".avatar." in out["avatar_file"] and out["avatar_file"].endswith(".svg")
     sidecar = os.path.join(os.path.dirname(path), out["avatar_file"])
     assert os.path.isfile(sidecar)
     raw = json.loads(open(path, encoding="utf-8").read())
     lm = raw["data"]["extensions"]["lunamoth"]
     assert lm["avatar_file"] == out["avatar_file"]
+    assert lm["assets"]["avatar"] == out["avatar_file"]          # also the gallery selection
+    assert out["avatar_file"] in lm["assets"]["options"]["avatar"]
     assert "avatar_svg" not in lm           # inline fallback dropped once a sidecar exists
     # avatar_read resolves the sidecar to a data-URI.
     read = result("card.avatar_read", {"path": path})
@@ -196,9 +198,26 @@ def test_avatar_upload_png_validates_magic_and_stores_as_is():
     set_defaults()
     path = _make_user_card("PngCard")
     out = result("card.avatar_upload", {"path": path, "data_b64": _b64(PNG_1PX), "ext": "png"})
-    assert out["avatar_file"].endswith(".avatar.png")
+    assert ".avatar." in out["avatar_file"] and out["avatar_file"].endswith(".png")
     read = result("card.avatar_read", {"path": path})
     assert read["data_uri"].startswith("data:image/png;base64,")
+    # second upload APPENDS a candidate (non-destructive gallery) + selects the newest
+    out2 = result("card.avatar_upload", {"path": path, "data_b64": _b64(PNG_1PX), "ext": "png"})
+    assert out2["avatar_file"] != out["avatar_file"]
+    lm = json.loads(open(path, encoding="utf-8").read())["data"]["extensions"]["lunamoth"]
+    assert lm["avatar_file"] == out2["avatar_file"]
+    assert lm["assets"]["options"]["avatar"] == [out["avatar_file"], out2["avatar_file"]]
+    # select the first back via the generic gallery RPC → avatar_file follows
+    result("card.asset_select", {"path": path, "kind": "avatar", "name": out["avatar_file"]})
+    lm = json.loads(open(path, encoding="utf-8").read())["data"]["extensions"]["lunamoth"]
+    assert lm["avatar_file"] == out["avatar_file"] and lm["assets"]["avatar"] == out["avatar_file"]
+    # remove it → falls back to the other; avatar_file follows; delete clears all
+    result("card.asset_remove", {"path": path, "kind": "avatar", "name": out["avatar_file"]})
+    lm = json.loads(open(path, encoding="utf-8").read())["data"]["extensions"]["lunamoth"]
+    assert lm["avatar_file"] == out2["avatar_file"]
+    result("card.asset_delete", {"path": path, "kind": "avatar"})
+    lm = json.loads(open(path, encoding="utf-8").read())["data"]["extensions"]["lunamoth"]
+    assert "avatar_file" not in lm and "avatar" not in lm.get("assets", {})
 
 
 def test_avatar_upload_rejects_unsafe_svg():
@@ -270,7 +289,7 @@ def test_avatar_upload_keeps_raw_aspect_non_destructive():
     rect = Image.new("RGB", (160, 60), (200, 30, 30))
     buf = io.BytesIO(); rect.save(buf, "PNG")
     out = result("card.avatar_upload", {"path": path, "data_b64": _b.b64encode(buf.getvalue()).decode(), "ext": "png"})
-    assert out["avatar_file"].endswith(".avatar.png")
+    assert ".avatar." in out["avatar_file"] and out["avatar_file"].endswith(".png")
     uri = result("card.avatar_read", {"path": path})["data_uri"]
     im = Image.open(io.BytesIO(_b.b64decode(uri.split(",", 1)[1])))
     assert im.size[0] != im.size[1]  # raw aspect preserved (not cropped to a square)
@@ -590,7 +609,8 @@ def test_card_visual_generate_autosaves(monkeypatch):
     # the card now points at a saved avatar sidecar, and the brief was PERSISTED
     raw = json.loads(open(card, encoding="utf-8").read())
     lm = raw["data"]["extensions"]["lunamoth"]
-    assert lm["avatar_file"].endswith(".avatar.png")
+    assert ".avatar." in lm["avatar_file"] and lm["avatar_file"].endswith(".png")
+    assert lm["assets"]["avatar"] == lm["avatar_file"]  # avatar is a gallery kind now
     assert "visual_brief" in lm
 
     # visual_brief now returns the STORED brief — no LLM re-pay (would throw if it built)

@@ -38,10 +38,6 @@ _AVATAR_MAX_BYTES = 1024 * 1024  # ~1MB cap
 _AVATAR_MAGIC = {"png": b"\x89PNG\r\n\x1a\n", "jpg": b"\xff\xd8\xff", "jpeg": b"\xff\xd8\xff"}
 
 
-def _avatar_sidecar_path(card_path: Path, ext: str) -> Path:
-    return card_path.with_name(f"{card_path.stem}.avatar.{ext}")
-
-
 def _avatar_data_uri(card_path: Path, card: "CharacterCard") -> str:
     """Resolve a card's avatar to a FULL-res data-URI: sidecar first, inline SVG
     fallback, else ''. This is the `card.avatar_read` path — the heavy one a
@@ -129,33 +125,27 @@ def avatar_upload(path: str, data_b64: str, ext: str) -> dict[str, Any]:
         # layer (the avatar tiles use object-fit:cover), so the original is never baked.
         payload = compress_image_bytes(raw, ext, CAP_AVATAR)
         ext = "jpg" if ext == "jpeg" else ext
-    # One sidecar per card: remove any stale sidecar of a different extension.
-    for old in _AVATAR_EXTS:
-        sc = _avatar_sidecar_path(target, old)
-        if sc.name != _avatar_sidecar_path(target, ext).name and sc.exists():
-            try:
-                sc.unlink()
-            except OSError:
-                pass
-    sidecar = _avatar_sidecar_path(target, ext)
+    # NON-DESTRUCTIVE gallery (parity with sprite/keyvisual/background): each upload or
+    # generation is a UNIQUE candidate kept beside the card; the newest is auto-selected.
+    # `avatar_file` points at the selected one (the inline board thumb + card.avatar_path()
+    # resolve it); assets.options["avatar"] is the gallery the editor shows.
+    sidecar = _art_candidate_path(target, "avatar", ext)
     sidecar.write_bytes(payload)
-    # Point the card at the sidecar; drop the inline fallback (sidecar wins now).
     raw_card = json.loads(target.read_text(encoding="utf-8"))
     if not isinstance(raw_card, dict):
         raise RpcError(-32602, "card is not a JSON object")
-    data = raw_card.get("data")
-    if not isinstance(data, dict):
-        data = raw_card["data"] = {}
-    ext_root = data.get("extensions")
-    if not isinstance(ext_root, dict):
-        ext_root = data["extensions"] = {}
-    lm = ext_root.get("lunamoth")
-    if not isinstance(lm, dict):
-        lm = ext_root["lunamoth"] = {}
+    assets = _assets_dict(raw_card)
+    opts = _options_list(assets, "avatar")
+    if sidecar.name not in opts:
+        opts.append(sidecar.name)
+    assets["avatar"] = sidecar.name
+    lm = _lm_dict(raw_card)
     lm["avatar_file"] = sidecar.name
     lm.pop("avatar_svg", None)
     _atomic_write_json(target, raw_card)
-    return {"path": str(target), "avatar_file": sidecar.name,
+    return {"path": str(target), "avatar_file": sidecar.name, "selected": sidecar.name,
+            "url": _asset_url(sidecar),
+            "options": [_asset_url(_rel(target, n)) for n in opts],
             "data_uri": f"data:{_AVATAR_MIME[ext]};base64,{base64.b64encode(payload).decode('ascii')}"}
 
 
@@ -208,6 +198,26 @@ def _assets_dict(raw_card: dict) -> dict:
     if not isinstance(assets, dict):
         assets = lm["assets"] = {}
     return assets
+
+
+# The avatar is a gallery kind too (candidates + select), but it keeps its own pointer
+# `lunamoth.avatar_file` in sync with the selected candidate so the inline board thumb +
+# card.avatar_path() keep resolving it. sprite/background/keyvisual point via assets[kind].
+_GALLERY_KINDS = ("sprite", "background", "keyvisual", "avatar")
+
+
+def _lm_dict(raw_card: dict) -> dict:
+    """The card's extensions.lunamoth dict (parent of `assets`), created if absent."""
+    data = raw_card.get("data")
+    if not isinstance(data, dict):
+        data = raw_card["data"] = {}
+    ext_root = data.get("extensions")
+    if not isinstance(ext_root, dict):
+        ext_root = data["extensions"] = {}
+    lm = ext_root.get("lunamoth")
+    if not isinstance(lm, dict):
+        lm = ext_root["lunamoth"] = {}
+    return lm
 
 
 def _options_list(assets: dict, kind: str) -> list:
@@ -283,7 +293,7 @@ def asset_select(path: str, kind: str, name: str) -> dict[str, Any]:
     ``assets[kind]`` — non-destructive)."""
     target = _writable_card_path(path)
     kind = str(kind or "").strip().lower()
-    if kind not in _ART_ASSET_KINDS:
+    if kind not in _GALLERY_KINDS:
         raise RpcError(-32602, f"unknown art asset kind: {kind}")
     name = str(name or "").strip()
     raw_card = json.loads(target.read_text(encoding="utf-8"))
@@ -294,6 +304,8 @@ def asset_select(path: str, kind: str, name: str) -> dict[str, Any]:
     if name not in opts or not _rel(target, name).is_file():
         raise RpcError(-32602, f"no such candidate for {kind}: {name}")
     assets[kind] = name
+    if kind == "avatar":
+        _lm_dict(raw_card)["avatar_file"] = name  # keep the inline-thumb pointer in sync
     _atomic_write_json(target, raw_card)
     return {"path": str(target), "kind": kind, "selected": name,
             "url": _asset_url(_rel(target, name))}
@@ -305,7 +317,7 @@ def asset_remove(path: str, kind: str, name: str) -> dict[str, Any]:
     to the newest remaining candidate (or clear the kind if none remain)."""
     target = _writable_card_path(path)
     kind = str(kind or "").strip().lower()
-    if kind not in _ART_ASSET_KINDS:
+    if kind not in _GALLERY_KINDS:
         raise RpcError(-32602, f"unknown art asset kind: {kind}")
     name = str(name or "").strip()
     raw_card = json.loads(target.read_text(encoding="utf-8"))
@@ -325,10 +337,15 @@ def asset_remove(path: str, kind: str, name: str) -> dict[str, Any]:
         except OSError:
             pass
     if assets.get(kind) == name:
-        if opts:
-            assets[kind] = opts[-1]
-        else:
+        assets[kind] = opts[-1] if opts else None
+        if assets[kind] is None:
             assets.pop(kind, None)
+    if kind == "avatar":  # keep the inline-thumb pointer in sync with the selection
+        lm = _lm_dict(raw_card)
+        if assets.get("avatar"):
+            lm["avatar_file"] = assets["avatar"]
+        else:
+            lm.pop("avatar_file", None)
     _atomic_write_json(target, raw_card)
     return {"path": str(target), "kind": kind, "removed": name,
             "selected": assets.get(kind, ""),
@@ -766,9 +783,10 @@ def asset_delete(path: str, kind: str) -> dict[str, Any]:
     lm = ext_root.get("lunamoth") if isinstance(ext_root.get("lunamoth"), dict) else {}
     removed = False
     if kind == "avatar":
-        for e in _AVATAR_EXTS:
-            sc = _avatar_sidecar_path(target, e)
-            if sc.exists():
+        # Glob every avatar candidate (`<stem>.avatar.*`) — gallery, legacy single, any
+        # ext — then clear the pointer + the options list.
+        for sc in target.parent.glob(f"{target.stem}.avatar.*"):
+            if sc.is_file():
                 try:
                     sc.unlink(); removed = True
                 except OSError:
@@ -776,6 +794,12 @@ def asset_delete(path: str, kind: str) -> dict[str, Any]:
         if isinstance(lm, dict):
             lm.pop("avatar_file", None)
             lm.pop("avatar_svg", None)
+            assets = lm.get("assets")
+            if isinstance(assets, dict):
+                assets.pop("avatar", None)
+                opts = assets.get("options")
+                if isinstance(opts, dict):
+                    opts.pop("avatar", None)
     elif kind in _ART_ASSET_KINDS:
         assets = lm.get("assets") if isinstance(lm, dict) else None
         # Delete EVERY candidate in the gallery (+ the legacy single sidecar), then

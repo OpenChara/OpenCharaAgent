@@ -191,6 +191,7 @@ def _card_entry(path: Path, builtin: bool, refs: dict[str, list[str]]) -> dict[s
         "sprite_options": [u for u in (_asset_url(p) for p in card.asset_options("sprite")) if u],
         "bg_options": [u for u in (_asset_url(p) for p in card.asset_options("background")) if u],
         "keyvisual_options": [u for u in (_asset_url(p) for p in card.asset_options("keyvisual")) if u],
+        "avatar_options": [u for u in (_asset_url(p) for p in card.asset_options("avatar")) if u],
         "force_roleplay": bool(force_roleplay),
     }
 
