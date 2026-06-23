@@ -703,6 +703,38 @@ def test_card_asset_matte_adds_cut_candidate_keeping_raw(monkeypatch):
     assert lm["assets"]["sprite"] == out["file"]                     # cut is now shown
 
 
+def test_card_asset_remove_refuses_untracked_name(tmp_path):
+    # Defence in depth: asset_remove only ever unlinks a file the gallery tracks. A
+    # stray sidecar with the same stem must survive a remove of an unknown name.
+    import base64 as b64m
+    set_defaults()
+    card = _make_user_card("RemoveGuard")
+    b64 = b64m.b64encode(_PNG_1PX).decode("ascii")
+    result("card.asset_save", {"path": card, "kind": "sprite", "data_b64": b64, "ext": "png"})
+    bystander = Path(card).with_name(f"{Path(card).stem}.sprite.bystander.png")
+    bystander.write_bytes(_PNG_1PX)
+    assert rpc_error("card.asset_remove",
+                     {"path": card, "kind": "sprite", "name": bystander.name})["code"] == -32602
+    assert bystander.is_file()  # never touched
+
+
+def test_card_asset_matte_noop_on_transparent(monkeypatch):
+    # With no matte model the keyless fallback can't re-cut an already-transparent
+    # image — it returns a clear error instead of cloning a duplicate candidate.
+    import base64 as b64m
+    import io
+    from PIL import Image
+    from lunamoth.visuals import matte
+    monkeypatch.setattr(matte, "deps_available", lambda: False)
+    set_defaults()
+    card = _make_user_card("MatteNoop")
+    img = Image.new("RGBA", (24, 24), (0, 0, 0, 0))  # fully transparent
+    buf = io.BytesIO(); img.save(buf, "PNG")
+    result("card.asset_save", {"path": card, "kind": "sprite",
+                               "data_b64": b64m.b64encode(buf.getvalue()).decode(), "ext": "png"})
+    assert rpc_error("card.asset_matte", {"path": card, "kind": "sprite"})["code"] == -32050
+
+
 def test_card_stickers_save_and_delete():
     # The sticker SET is stored as a LIST of sidecars + a list pointer.
     card, _b64 = _user_card_copy(None)

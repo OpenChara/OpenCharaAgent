@@ -279,6 +279,22 @@ def square_crop(raw: bytes, size: int = CAP_AVATAR) -> bytes:
         return raw
 
 
+def has_transparency(raw: bytes) -> bool:
+    """True if the image already carries meaningful alpha (some pixels not fully
+    opaque). Lets the matte path skip a pointless re-cut of an already-transparent
+    PNG when only the keyless white-bg fallback is available. Best-effort: False on
+    any decode error (so the caller still attempts a cut rather than refusing)."""
+    try:
+        with Image.open(io.BytesIO(raw)) as im:
+            im.load()
+            if not _has_alpha(im):
+                return False
+            alpha = im.convert("RGBA").getchannel("A")
+            return alpha.getextrema()[0] < 250
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _clear_thumb_cache() -> None:
     """Test seam: drop the in-memory thumbnail cache."""
     _thumb_cache.clear()

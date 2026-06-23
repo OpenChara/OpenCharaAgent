@@ -17,7 +17,8 @@ from typing import Any
 
 from ...content.cards import CharacterCard
 from ...content.imaging import (
-    CAP_ART, CAP_AVATAR, CAP_STICKER, avatar_thumb_data_uri, compress_image_bytes, square_crop,
+    CAP_ART, CAP_AVATAR, CAP_STICKER, avatar_thumb_data_uri, compress_image_bytes,
+    has_transparency, square_crop,
 )
 from ..dispatch import RpcError
 from ._common import HubRpcError, _asset_url, _sanitize_avatar_svg, _writable_card_path
@@ -290,8 +291,11 @@ def asset_remove(path: str, kind: str, name: str) -> dict[str, Any]:
         raise RpcError(-32602, "card is not a JSON object")
     assets = _assets_dict(raw_card)
     opts = _options_list(assets, kind)
-    if name in opts:
-        opts.remove(name)
+    if name not in opts:
+        # Defence in depth: only ever unlink a file the gallery actually tracks, so a
+        # stale / mistyped name from the UI can never delete an unrelated sidecar.
+        raise RpcError(-32602, f"no such candidate for {kind}: {name}")
+    opts.remove(name)
     sc = target.with_name(name)
     if sc.is_file():
         try:
@@ -329,8 +333,14 @@ def asset_matte(path: str, kind: str, name: str = "") -> dict[str, Any]:
         raise RpcError(-32602, f"no image to cut for {kind}")
     data = src.read_bytes()
     mid = _matte.selected_model()
+    have_model = _matte.deps_available() and _matte.is_installed(mid)
+    if not have_model and has_transparency(data):
+        # The keyless white-bg fallback can't improve an already-transparent image —
+        # it'd just clone it. Tell the user instead of piling up a duplicate candidate.
+        raise HubRpcError(-32050, "this image is already cut out — install a matte model "
+                          "for a different result", {"kind": "matte_noop"})
     try:
-        if _matte.deps_available() and _matte.is_installed(mid):
+        if have_model:
             cut = _matte.cut(data, model_id=mid)
         else:
             cut = _matte.cut_white_bg(data)
