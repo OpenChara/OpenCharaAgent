@@ -26,6 +26,7 @@ from ._common import (
     _sanitize_avatar_svg,
     _slug,
     _writable_card_path,
+    is_managed_sidecar_name,
 )
 from .avatars import _avatar_thumb_uri
 from .config import bundled_cards_dir, user_cards_dir, user_worlds_dir
@@ -110,16 +111,10 @@ def _copy_card_assets(card: "CharacterCard", dest_dir: Path, src_base: Path | No
 # Art-asset sidecars live beside the card as `<stem>.<kind>[.<i>].<ext>` images
 # (e.g. `Quinn.avatar.png`, `Quinn.sticker.0.png`). They are NOT cards — the deck
 # scan must skip them, or each one is tried as a character card and spams a load
-# error (avatars always hit this; stickers multiply it 9x).
-_SIDECAR_MARKERS = (".avatar.", ".sprite.", ".background.", ".keyvisual.",
-                    ".sticker.", ".sticker_sheet.")
-
-
+# error (avatars always hit this; stickers multiply it 9x). The marker set lives in
+# _common (is_managed_sidecar_name) — one source shared with the asset library.
 def _is_asset_sidecar(p: Path) -> bool:
-    if p.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp"):
-        return False
-    low = p.name.lower()
-    return any(m in low for m in _SIDECAR_MARKERS)
+    return p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp") and is_managed_sidecar_name(p.name)
 
 
 def _iter_card_files(base: Path):

@@ -53,6 +53,18 @@ def _slug(name: str, fallback: str = "chara") -> str:
     return s[:48]
 
 
+# Managed art-asset sidecars beside a card: `<stem>.<kind>[.<id>].<ext>` images the
+# visuals editor owns. The deck scan, the asset library and the wake copier all key on
+# this ONE marker set + predicate so they can never drift apart.
+SIDECAR_MARKERS = (".avatar.", ".sprite.", ".background.", ".keyvisual.",
+                   ".sticker.", ".sticker_sheet.")
+
+
+def is_managed_sidecar_name(name: str) -> bool:
+    low = str(name or "").lower()
+    return any(m in low for m in SIDECAR_MARKERS)
+
+
 def _meta(p: dict[str, Any]) -> S.SessionMeta:
     name = str(p.get("name") or "")
     meta = S.load_session(name)

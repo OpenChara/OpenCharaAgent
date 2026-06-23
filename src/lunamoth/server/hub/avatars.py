@@ -23,7 +23,9 @@ from ...content.imaging import (
     has_transparency,
 )
 from ..dispatch import RpcError
-from ._common import HubRpcError, _asset_url, _sanitize_avatar_svg, _writable_card_path
+from ._common import (
+    HubRpcError, _asset_url, _sanitize_avatar_svg, _writable_card_path, is_managed_sidecar_name,
+)
 
 # ---- avatar sidecar storage --------------------------------------------------
 # The avatar is a SEPARATE file beside the card (the card stays the soul; the
@@ -550,6 +552,10 @@ def sticker_rename(path: str, old: str, new: str) -> dict[str, Any]:
 # secrets, matching the /asset route's image lane). Non-image preview/download rides
 # `asset_file_read` (the /asset route won't serve non-images from a card/session dir).
 _CARD_META_NAMES = {"card.json", "card.png", "card_source"}
+# RESERVED card-folder subdir for the 素材 library. A session card's folder is the
+# session ROOT, so this name must NOT be reused by any future session subdir (today the
+# only session subdir is sandbox/). The library only ever touches this subdir + root
+# images, so other (future) subdirs are never exposed regardless.
 _ASSETS_SUBDIR = "assets"
 _SERVABLE_IMG_EXTS = ("png", "jpg", "jpeg", "webp", "gif")  # what /asset can hand out
 _ASSET_MAX_BYTES = 32 * 1024 * 1024
@@ -557,12 +563,6 @@ _ASSET_TEXT_EXTS = {"md", "txt", "csv", "log", "yml", "yaml", "toml", "ini", "js
                     "py", "js", "ts", "tsx", "jsx", "sh", "css", "html", "htm", "xml"}
 _ASSET_TEXT_CAP = 256 * 1024
 _ASSET_READ_CAP = 16 * 1024 * 1024  # max bytes inlined as a data-URI for download
-
-
-def _is_managed_sidecar_name(name: str) -> bool:
-    low = name.lower()
-    return any(m in low for m in (".avatar.", ".sprite.", ".keyvisual.",
-                                  ".background.", ".sticker.", ".sticker_sheet."))
 
 
 def _is_root_image_asset(p: Path) -> bool:
@@ -574,7 +574,7 @@ def _is_root_image_asset(p: Path) -> bool:
         return False
     if p.suffix.lower().lstrip(".") not in _SERVABLE_IMG_EXTS:
         return False
-    return not _is_managed_sidecar_name(p.name)
+    return not is_managed_sidecar_name(p.name)
 
 
 def _asset_kind(name: str) -> str:
