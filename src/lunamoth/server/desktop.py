@@ -19,6 +19,14 @@ def serve_desktop(host: str, http_port: int, ws_port: int, token: str,
                   open_browser: bool = True, allow_hosts: list[str] | None = None,
                   pw_record: dict[str, Any] | None = None) -> int:
     """Run the supervisor in the foreground; Ctrl-C/SIGTERM tears down children."""
+    # The hub process is NOT a chara, so its `lunamoth.*` logs (supervisor child
+    # lifecycle, visuals-job tracebacks, card drafting, image-gen, RPC errors) had
+    # nowhere to land and were lost — the gap behind "a background generation crashed
+    # and there's no log". Route them to ~/.lunamoth/logs/{lunamoth,errors}.log.
+    with contextlib.suppress(Exception):
+        from ..obs.log import setup_logging
+        from ..session.sessions import home_dir
+        setup_logging(directory=home_dir() / "logs")
     sup = SUP.Supervisor(host, http_port, ws_port, token, allow_hosts=allow_hosts,
                          pw_record=pw_record)
 

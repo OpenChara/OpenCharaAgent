@@ -160,6 +160,24 @@ function ChatStreamPage({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [superReadTs, setSuperReadTs] = useState(0);
 
+  // Technical display mode (Settings · 显示 = Technical) surfaces raw tool-call
+  // previews (e.g. a generate_image prompt). lm-display is the persisted source of
+  // truth (the body.technical class is only set while Settings is mounted, so read
+  // localStorage to survive a fresh load); re-read on a live toggle (Settings flips
+  // the body class) or a cross-tab change. Previously nothing passed `technical`
+  // down at all, so the setting had no effect on the stream.
+  const readTechnical = () => {
+    try { return localStorage.getItem("lm-display") === "technical"; } catch { return false; }
+  };
+  const [technical, setTechnical] = useState(readTechnical);
+  useEffect(() => {
+    const sync = () => setTechnical(readTechnical());
+    const obs = new MutationObserver(sync);
+    obs.observe(document.body, { attributes: true, attributeFilter: ["class"] });
+    window.addEventListener("storage", sync);
+    return () => { obs.disconnect(); window.removeEventListener("storage", sync); };
+  }, []);
+
   // The chara's living backdrop: a low-opacity background image with a readability
   // veil, plus the sprite (立绘). Operator presentation prefs (on/off, opacities,
   // sprite position) are read per-chara from localStorage; the snapshot supplies
@@ -288,6 +306,7 @@ function ChatStreamPage({
               item={item}
               charName={stream.charName}
               superReadTs={superReadTs}
+              technical={technical}
               avatarUri={avatarUri}
               sandboxRoot={sandboxRoot}
               workspaceRoot={workspaceRoot}

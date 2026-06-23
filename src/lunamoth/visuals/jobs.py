@@ -12,11 +12,18 @@ a failed job carries the real exception message, never a fake result.
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable
+
+# A failing job used to keep only a 500-char poller string; the real traceback was
+# lost — which is why a crashed background generation was un-diagnosable after the
+# fact. These records reach a file once the hub process calls setup_logging
+# (server/desktop.py) → ~/.lunamoth/logs/{lunamoth,errors}.log.
+_log = logging.getLogger("lunamoth.visuals.jobs")
 
 _LOCK = threading.Lock()
 _JOBS: dict[str, dict] = {}
@@ -56,6 +63,9 @@ def submit(target: Callable[[], Any], *, label: str = "", meta: dict | None = No
                 if j is not None:
                     j.update(status="ready", result=res, done_at=time.monotonic())
         except Exception as e:  # noqa: BLE001 — surface the REAL error to the poller
+            # Log the FULL traceback (the poller only gets a truncated message). This
+            # is the record that was missing when a background generation crashed.
+            _log.exception("visual job %s (%s) failed", job_id, label or "?")
             with _LOCK:
                 j = _JOBS.get(job_id)
                 if j is not None:

@@ -1172,7 +1172,10 @@ class LLMClient:
                     for i, tc in enumerate(tool_calls):
                         fn = tc.get("function", {})
                         name = fn.get("name", "?")
-                        yield ToolStart(name, preview=str(fn.get("arguments") or "")[:80], index=i)
+                        # Carry more of the call's arguments so the technical tool
+                        # view can show a useful slice (e.g. a generate_image prompt);
+                        # 80 chars was almost all JSON wrapper. Still bounded.
+                        yield ToolStart(name, preview=str(fn.get("arguments") or "")[:240], index=i)
                         tool_t0 = time.monotonic()
                         res = execute(tc)
                         yield ToolEnd(

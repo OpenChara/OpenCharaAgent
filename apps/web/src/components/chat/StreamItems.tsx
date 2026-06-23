@@ -318,7 +318,7 @@ export function StreamItemView({
   item: StreamItem;
   charName: string;
   superReadTs: number;
-  /** show raw tool-call previews (a latent display mode, off until a UI wires it). */
+  /** show raw tool-call previews (Settings · 显示 = Technical; Chat mirrors body.technical). */
   technical?: boolean;
   /** the chara's inline avatar data-URI (snapshot.avatar_uri); glyph fallback when absent. */
   avatarUri?: string;
