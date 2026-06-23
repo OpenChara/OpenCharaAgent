@@ -16,7 +16,6 @@ import { rpcErrText } from "../../lib/status";
 import { glyphOf, paletteClass } from "../../lib/format";
 import { sectionText, serializeCardFields, type NormalizedDraft, type CardData } from "../../lib/cards";
 import { CardField, CardBlock, cardCtxString, type FieldHandle } from "./CardField";
-import { useDirtyGuard } from "../../hooks/useDirtyGuard";
 import { Avatar, avatarSrc, themeOf, themeStyle } from "./visual";
 import { VisualEditor } from "./VisualEditor";
 import { deckToast, deckToastAction } from "../ui/deckToast";
@@ -42,7 +41,6 @@ export function CardEditor({
   const [full, setFull] = useState<FullCard | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("set");
-  const [saving, setSaving] = useState(false);
   const [dupBusy, setDupBusy] = useState(false);
   const [genRunning, setGenRunning] = useState(false);
 
@@ -93,11 +91,6 @@ export function CardEditor({
   };
   // The value to seed a field with: a staged edit wins over the card's saved value.
   const seed = (k: string, fallback: string) => (staged[k] !== undefined ? staged[k] : fallback);
-
-  // Dirty-guard (shared hook) — declared with the other hooks, before any early
-  // return. A stray Esc/backdrop/Cancel can't silently drop a long card edit; never
-  // closes mid save/duplicate. A successful save/delete closes via the raw onClose.
-  const { guardedClose, dirtyProps } = useDirtyGuard(onClose, () => saving || dupBusy);
 
   useEffect(() => {
     let alive = true;
@@ -194,59 +187,13 @@ export function CardEditor({
         ? "av-frozen-note"
         : "";
 
-  const doSave = async () => {
-    if (!full.raw) return;
-    setSaving(true);
-    try {
-      // Re-read the LATEST card from disk first: the 视觉/表情 tab writes art straight
-      // to the card file (avatar_upload / asset_save / stickers_save), so our mount-time
-      // copy is stale on assets — saving it would drop freshly-generated images.
-      let raw = full.raw;
-      try {
-        const fresh = await hub.call<FullCard>("card.read", { path: card.path }, 20000);
-        if (fresh && fresh.raw) raw = fresh.raw;
-      } catch {
-        /* re-read failed — fall back to the in-memory copy */
-      }
-      const data = (raw.data = (raw.data as CardData) || {});
-      // Pass a field ONLY when its editor is mounted. The 设定/世界 panes unmount when
-      // another tab is open, so their refs are null → value() is undefined → the
-      // serializer PRESERVES the card's current value. This is what stops a save from
-      // the 视觉 tab blanking the soul/world (the data-loss bug). "" still clears.
-      // The live value of a mounted field wins; a field on a tab we visited but left
-      // falls back to `staged`; a field never opened is undefined → preserved. So Save
-      // commits edits from EVERY tab, not just the one currently open.
-      const val = (k: string) => fieldRefs[k].current?.value() ?? staged[k];
-      serializeCardFields(
-        data,
-        {
-          name: val("name"),
-          description: val("description"),
-          personality: val("personality"),
-          scenario: val("scenario"),
-          first_mes: val("first_mes"),
-          creator_notes: val("creator_notes"),
-          tagline: val("tagline"),
-          goals: val("goals"),
-          world: val("world"),
-        },
-        (raw.name as string) || full.name || "",
-      );
-      raw.name = data.name as string;
-      await hub.call("card.save", { data: raw, path: card.path }, 20000);
-      deckToast(t("saved"));
-      onClose();
-      onChanged();
-    } catch (e) {
-      setSaving(false);
-      deckToast(rpcErrText(t, e as { message?: string }), true);
-    }
-  };
-
-  // ── live editing a running chara's OWN card (field-level, no whole-card replace) ──
-  // soul → card.patch (next start, flags the card dirty); aspiration → set_aspiration
-  // (next turn, no restart). Only patches when a soul field actually changed, so an
-  // aspiration-only edit never shows 待应用.
+  // ── field-level AUTO-SAVE (no whole-card replace, no Save button) ──────────────
+  // Every editable card (deck template OR a living chara's own card) saves on blur /
+  // tab-switch / close via card.patch — so a partial submit can never blank the card
+  // and there's nothing "unsaved" to discard. A LIVING chara's soul → card.patch (next
+  // start, flags 待应用); its aspiration → chara.set_aspiration (next turn). A deck
+  // card's aspiration is just a card field, folded into the same patch. We only patch
+  // when a field actually changed, so an aspiration-only edit never shows 待应用.
   const SOUL_KEYS = ["name", "description", "personality", "scenario", "first_mes", "creator_notes", "tagline", "world"];
   const origVal = (k: string): string =>
     k === "name" ? full?.name || ""
@@ -255,14 +202,16 @@ export function CardEditor({
     : k === "goals" ? goalsText
     : String((full as Record<string, unknown> | null)?.[k] ?? "");
   const base = (k: string) => baseline.current[k] ?? origVal(k);  // moving last-saved value
+  const aspLive = liveCard;  // live chara: aspiration goes through set_aspiration (next turn)
+  const patchKeys = aspLive ? SOUL_KEYS : [...SOUL_KEYS, "goals"];
   const liveSave = async () => {
-    if (!liveCard || !full?.raw) return;
+    if (!editable || !full?.raw) return;
     flushFields();
     const val = (k: string) => fieldRefs[k].current?.value() ?? staged[k];
     if (lastAspiration.current === null) lastAspiration.current = goalsText;
     try {
-      const soulChanged = SOUL_KEYS.some((k) => (val(k) ?? base(k)) !== base(k));
-      if (soulChanged) {
+      const changed = patchKeys.some((k) => (val(k) ?? base(k)) !== base(k));
+      if (changed) {
         const data: CardData = {};
         serializeCardFields(
           data,
@@ -270,19 +219,22 @@ export function CardEditor({
             name: val("name"), description: val("description"), personality: val("personality"),
             scenario: val("scenario"), first_mes: val("first_mes"), creator_notes: val("creator_notes"),
             tagline: val("tagline"), world: val("world"),
-            // aspiration is handled live below, NOT folded into the card patch
+            // a deck card folds aspiration into the patch; a live chara handles it below
+            goals: aspLive ? undefined : val("goals"),
           },
           (full.raw.name as string) || full.name || "",
         );
         await hub.call("card.patch", { path: card.path, fields: data }, 20000);
-        // advance the baseline so a later auto-save doesn't re-patch (and re-mark
-        // dirty) the same content — especially the trailing save after 立即应用.
-        for (const k of SOUL_KEYS) baseline.current[k] = val(k) ?? base(k);
+        // advance the baseline so a later auto-save doesn't re-patch (and re-mark a live
+        // chara dirty) the same content — especially the trailing save after 立即应用.
+        for (const k of patchKeys) baseline.current[k] = val(k) ?? base(k);
       }
-      const asp = val("goals");
-      if (asp !== undefined && asp !== lastAspiration.current) {
-        lastAspiration.current = asp;
-        await hub.call("chara.set_aspiration", { name: card.owner, text: asp }, 15000);
+      if (aspLive) {
+        const asp = val("goals");
+        if (asp !== undefined && asp !== lastAspiration.current) {
+          lastAspiration.current = asp;
+          await hub.call("chara.set_aspiration", { name: card.owner, text: asp }, 15000);
+        }
       }
       await refresh();
       onChanged();
@@ -293,6 +245,16 @@ export function CardEditor({
   const liveSaveDebounced = () => {
     if (liveSaveTimer.current) window.clearTimeout(liveSaveTimer.current);
     liveSaveTimer.current = window.setTimeout(() => void liveSave(), 600);
+  };
+  // Patch one extension field immediately (used by the editable theme-color pickers).
+  const patchExt = async (patch: Record<string, unknown>) => {
+    try {
+      await hub.call("card.patch", { path: card.path, fields: { extensions: { lunamoth: patch } } }, 20000);
+      await refresh();
+      onChanged();
+    } catch (e) {
+      deckToast(rpcErrText(t, e as { message?: string }), true);
+    }
   };
   const doApply = async () => {
     setApplying(true);
@@ -308,7 +270,11 @@ export function CardEditor({
       setApplying(false);
     }
   };
-  const liveClose = () => { void liveSave().finally(onClose); };
+  const closeEditor = () => {
+    if (liveSaveTimer.current) window.clearTimeout(liveSaveTimer.current);  // no trailing fire after unmount
+    if (editable) void liveSave().finally(onClose);
+    else onClose();
+  };
 
   const doDelete = async () => {
     if (!confirm(t("deck-delete-q", { name: charName }))) return;
@@ -366,11 +332,10 @@ export function CardEditor({
   const aspBadge = liveCard ? <span className="cv-zone-badge turn">{t("cv-zone-next-turn")}</span> : undefined;
 
   return (
-    <DeckModal open variant="cardview" onClose={liveCard ? liveClose : guardedClose} style={themeStyle(card)}>
+    <DeckModal open variant="cardview" onClose={closeEditor} style={themeStyle(card)}>
       <div
         className="cardview"
-        onBlurCapture={liveCard ? liveSaveDebounced : undefined}
-        {...(liveCard ? {} : dirtyProps)}
+        onBlurCapture={editable ? liveSaveDebounced : undefined}
       >
         {note && (
           <div className="cv-note cv-note-top">
@@ -411,7 +376,7 @@ export function CardEditor({
             <div
               key={k}
               className={"cv-tab" + (tab === k ? " on" : "")}
-              onClick={() => { switchTab(k); if (liveCard) liveSaveDebounced(); }}
+              onClick={() => { switchTab(k); if (editable) liveSaveDebounced(); }}
             >
               {t(("cv-tab-" + k) as TKey)}
             </div>
@@ -478,20 +443,38 @@ export function CardEditor({
                   <div className="cv-empty-note">{t("cv-no-art")}</div>
                 </div>
               )}
-              {(th.primary || th.secondary) && (
+              {(editable || th.primary || th.secondary) && (
                 <div className="cv-themebar">
                   <b>{t("cv-theme-label")}</b>
-                  {th.primary && (
-                    <div className="cv-swatch">
-                      <i style={{ background: th.primary }} />
-                      <span>{t("cv-theme-primary")} {th.primary}</span>
-                    </div>
-                  )}
-                  {th.secondary && (
-                    <div className="cv-swatch">
-                      <i style={{ background: th.secondary }} />
-                      <span>{t("cv-theme-secondary")} {th.secondary}</span>
-                    </div>
+                  {editable ? (
+                    <>
+                      {/* editable: native color pickers, committed on blur via card.patch */}
+                      <label className="cv-swatch cv-swatch-edit">
+                        <input type="color" defaultValue={th.primary || "#5b9fd4"}
+                          onBlur={(e) => void patchExt({ theme: { primary: e.target.value } })} />
+                        <span>{t("cv-theme-primary")}</span>
+                      </label>
+                      <label className="cv-swatch cv-swatch-edit">
+                        <input type="color" defaultValue={th.secondary || "#888888"}
+                          onBlur={(e) => void patchExt({ theme: { secondary: e.target.value } })} />
+                        <span>{t("cv-theme-secondary")}</span>
+                      </label>
+                    </>
+                  ) : (
+                    <>
+                      {th.primary && (
+                        <div className="cv-swatch">
+                          <i style={{ background: th.primary }} />
+                          <span>{t("cv-theme-primary")} {th.primary}</span>
+                        </div>
+                      )}
+                      {th.secondary && (
+                        <div className="cv-swatch">
+                          <i style={{ background: th.secondary }} />
+                          <span>{t("cv-theme-secondary")} {th.secondary}</span>
+                        </div>
+                      )}
+                    </>
                   )}
                   <span className="cv-theme-note">{t("cv-theme-note")}</span>
                 </div>
@@ -543,8 +526,10 @@ export function CardEditor({
         </div>
 
         <div className="cv-foot">
-          <button className="btn text" onClick={liveCard ? liveClose : guardedClose}>
-            {liveCard ? t("cv-done") : t("cancel")}
+          {/* Everything auto-saves (card.patch on blur/tab-switch/close) — so there's no
+              Save button and nothing "unsaved" to discard; the close is just 完成/关闭. */}
+          <button className="btn text" onClick={closeEditor}>
+            {editable ? t("cv-done") : t("cancel")}
           </button>
           <div className="grow" />
           {!card.builtin && !card.frozen && !liveCard && (
@@ -555,18 +540,12 @@ export function CardEditor({
               {dupBusy ? <span className="spin" /> : t("deck-copy")}
             </button>
           )}
-          {/* deck cards: explicit Save (whole-card). live cards auto-save → no Save button. */}
-          {editable && !liveCard && (
-            <button className="btn primary" disabled={saving} onClick={() => void doSave()}>
-              {saving ? <span className="spin" /> : t("save")}
-            </button>
-          )}
           {!liveCard && (
             <button
               className="btn primary go"
               disabled={genRunning}
               title={genRunning ? t("wake-generating") : undefined}
-              onClick={() => { onClose(); onWake(card); }}
+              onClick={() => { void (editable ? liveSave() : Promise.resolve()).finally(() => { onClose(); onWake(card); }); }}
             >
               {genRunning ? t("wake-generating") : t("deck-wake")}
             </button>

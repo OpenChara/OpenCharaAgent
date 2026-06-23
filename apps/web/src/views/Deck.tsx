@@ -188,6 +188,7 @@ export function Deck() {
 
       {editing && (
         <CardEditor
+          key={editing.path}
           card={editing}
           onClose={() => setEditing(null)}
           onChanged={() => void refresh()}

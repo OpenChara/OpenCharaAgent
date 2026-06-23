@@ -1275,6 +1275,11 @@ details.cv-raw pre{
 .cv-themebar b{font-weight:600}
 .cv-swatch{display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text-2)}
 .cv-swatch i{width:24px; height:24px; border-radius:7px; border:1px solid var(--hairline)}
+.cv-swatch-edit{cursor:pointer}
+.cv-swatch-edit input[type=color]{width:26px; height:26px; padding:0; border:1px solid var(--hairline);
+  border-radius:7px; background:none; cursor:pointer}
+.cv-swatch-edit input[type=color]::-webkit-color-swatch-wrapper{padding:2px}
+.cv-swatch-edit input[type=color]::-webkit-color-swatch{border:none; border-radius:5px}
 .cv-theme-note{margin-left:auto; color:var(--text-3); font-size:12px}
 /* 表情 — sticker grid */
 .cv-emos{display:grid; grid-template-columns:repeat(auto-fill,minmax(100px,1fr)); gap:12px}

@@ -268,16 +268,13 @@ export function VisualEditor({
     if (!confirm(t("vis-gen-all-confirm", { n: orderedGenKinds.length }))) return;
     setGenAllBusy(true);
     try {
-      for (const k of orderedGenKinds) {
-        const fn = slotApi.current[k];
-        if (fn) {
-          try {
-            await fn();
-          } catch {
-            /* the slot surfaces its own error */
-          }
-        }
-      }
+      // The keyvisual is the identity ANCHOR — it must finish + save FIRST so the others
+      // reference it. After that, avatar/sprite/stickers/background generate CONCURRENTLY
+      // (the backend runs each on its own job thread; card writes are atomic + per-path
+      // locked, so parallel completions can't lose a gallery entry).
+      const run = (k: VisKind) => (slotApi.current[k]?.() ?? Promise.resolve()).catch(() => {});
+      for (const k of orderedGenKinds.filter((x) => x === "keyvisual")) await run(k);
+      await Promise.all(orderedGenKinds.filter((x) => x !== "keyvisual").map(run));
       await refresh();
       onChanged();
     } finally {
