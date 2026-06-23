@@ -529,14 +529,14 @@ def _await_visual_error(job_id, tries=300):
     raise AssertionError("visual job never finished")
 
 
-def test_card_visual_generate_preview(monkeypatch):
-    # R9 (async): visual_generate submits a job → poll card.visual_job → preview.
-    set_defaults()
-    # image key comes from the unified provider keyring + an explicit selection
+def test_card_visual_generate_autosaves(monkeypatch):
+    # Async + AUTO-SAVE: the job generates AND writes the result to the card (so it
+    # survives the client leaving); the poll is only for progress. Needs a WRITABLE
+    # user-deck card (auto-save refuses bundled/builtin).
+    card, _b64 = _user_card_copy(None)
     H.save_key("火山", provider="volcano",
                base_url="https://ark.cn-beijing.volces.com/api/v3", api_key="sk-img-test")
     H.save_defaults({"image_provider": "volcano", "image_model": "doubao-seedream-x"})
-    card = str(H.bundled_cards_dir() / "Quinn" / "card.json")
     monkeypatch.setattr(H, "_complete",
                         lambda *a, **k: '{"appearance":"a","palette":"p","world":"w","theme":"#1a2"}')
     from lunamoth.tools.builtin import _image_gen
@@ -552,23 +552,26 @@ def test_card_visual_generate_preview(monkeypatch):
                                           "refs": ["data:image/png;base64,AAAA"]})
     assert sub["status"] == "running" and sub["job_id"]
     out = _await_visual(sub["job_id"])
-    assert out["status"] == "ready" and out["kind"] == "avatar" and out["mime"] == "image/png"
-    assert out["matted"] is False
-    assert seen["refs"] == ["data:image/png;base64,AAAA"]  # user refs reach the client
-    # base64 of the fake PNG round-trips
-    import base64 as _b64
-    assert _b64.b64decode(out["data_b64"]) == b"\x89PNG\r\n\x1a\nFAKE"
-    # a reused brief skips the LLM entirely (generate-all pays for one brief)
+    assert out["status"] == "ready" and out["saved"] is True and out["kind"] == "avatar"
+    assert out["data_uri"].startswith("data:image/png;base64,")
+    assert seen["refs"] == ["data:image/png;base64,AAAA"]  # user refs reach the generator
+    # the card now points at a saved avatar sidecar, and the brief was PERSISTED
+    raw = json.loads(open(card, encoding="utf-8").read())
+    lm = raw["data"]["extensions"]["lunamoth"]
+    assert lm["avatar_file"].endswith(".avatar.png")
+    assert "visual_brief" in lm
+
+    # visual_brief now returns the STORED brief — no LLM re-pay (would throw if it built)
     monkeypatch.setattr(H, "_complete", lambda *a, **k: (_ for _ in ()).throw(AssertionError("re-briefed")))
-    sub2 = result("card.visual_generate", {"path": card, "kind": "avatar",
-                                           "brief": {"appearance": "x", "palette": "y", "world": "z", "theme": "#1a2"}})
-    assert _await_visual(sub2["job_id"])["kind"] == "avatar"
+    b = result("card.visual_brief", {"path": card})
+    assert b["stored"] is True and b["brief"]["appearance"] == "a"
+
     # unknown kind is a clean param error (validated synchronously, before submit)
     assert rpc_error("card.visual_generate", {"path": card, "kind": "nope"})["code"] == -32602
-    # no image key → the JOB fails and the poll surfaces a visible -32050 (no fake image)
+    # no image key → the JOB fails; the poll surfaces a visible -32050 (no fake image)
     monkeypatch.delenv("ARK_API_KEY", raising=False)
     monkeypatch.setenv("LUNAMOTH_HOME", str(os.path.join(os.environ["LUNAMOTH_HOME"], "no-img")))
-    sub3 = result("card.visual_generate", {"path": card, "kind": "avatar", "brief": {"appearance": "x"}})
+    sub3 = result("card.visual_generate", {"path": card, "kind": "sprite", "brief": {"appearance": "x"}})
     assert _await_visual_error(sub3["job_id"])["code"] == -32050
 
 
@@ -634,14 +637,13 @@ def test_card_stickers_save_and_delete():
 
 
 def test_card_visual_generate_stickers_async(monkeypatch):
-    # kind=stickers → one green sheet → sliced into 9 base64 cells (chroma-key fallback).
+    # kind=stickers → one white sheet → sliced into 9 cells → AUTO-SAVED as a list.
     import io
     from PIL import Image
-    set_defaults()
+    card, _b64 = _user_card_copy(None)
     H.save_key("火山", provider="volcano",
                base_url="https://ark.cn-beijing.volces.com/api/v3", api_key="sk-img-test")
     H.save_defaults({"image_provider": "volcano", "image_model": "doubao-seedream-x"})
-    card = str(H.bundled_cards_dir() / "Quinn" / "card.json")
     from lunamoth.tools.builtin import _image_gen
     from lunamoth.visuals import pipeline
     monkeypatch.setattr(pipeline._matte, "deps_available", lambda: False)
@@ -651,8 +653,10 @@ def test_card_visual_generate_stickers_async(monkeypatch):
     sub = result("card.visual_generate", {"path": card, "kind": "stickers",
                                           "brief": {"appearance": "a", "palette": "p", "theme": "#1a2"}})
     out = _await_visual(sub["job_id"])
-    assert out["status"] == "ready" and out["kind"] == "stickers"
-    assert "data_b64" not in out and len(out["stickers"]) == 9
+    assert out["status"] == "ready" and out["saved"] is True and out["kind"] == "stickers"
+    assert len(out["urls"]) == 9
+    raw = json.loads(open(card, encoding="utf-8").read())
+    assert len(raw["data"]["extensions"]["lunamoth"]["assets"]["stickers"]) == 9
 
 
 def test_card_asset_save_refuses_builtin_card():

@@ -36,6 +36,33 @@ def _pkg():
     return hub
 
 
+def _brief_of(card: dict) -> dict | None:
+    """The visual brief persisted on a card (extensions.lunamoth.visual_brief), or None."""
+    lm = (((card.get("data") or {}).get("extensions") or {}).get("lunamoth") or {})
+    b = lm.get("visual_brief")
+    return b if isinstance(b, dict) and b else None
+
+
+def _keyvisual_data_uri(path: str, card: dict) -> str | None:
+    """The card's saved keyvisual as a data-URI — the server-side identity ANCHOR fed
+    as a reference into the other kinds so the set stays one character even when the
+    client isn't managing it. None if there's no keyvisual yet."""
+    lm = (((card.get("data") or {}).get("extensions") or {}).get("lunamoth") or {})
+    name = (lm.get("assets") or {}).get("keyvisual")
+    if not isinstance(name, str) or not name:
+        return None
+    try:
+        kv = Path(path).with_name(name)
+        if not kv.is_file():
+            return None
+        raw = kv.read_bytes()
+    except OSError:
+        return None
+    mime = ("image/png" if raw[:8] == b"\x89PNG\r\n\x1a\n"
+            else "image/jpeg" if raw[:3] == b"\xff\xd8\xff" else "image/webp")
+    return f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
+
+
 class HubDispatcher:
     """Board-level JSON-RPC. All handlers are synchronous and run off the event
     loop (the transport calls dispatch() in a worker thread)."""
@@ -113,6 +140,7 @@ class HubDispatcher:
             "weixin.qr_status": lambda p: _sessions.weixin_qr_status(_meta(p), str(p.get("qrcode") or "")),
             "card.avatar_upload": self._card_avatar_upload,
             "card.visual_brief": self._card_visual_brief,
+            "card.visual_brief_save": self._card_visual_brief_save,
             "card.visual_generate": self._card_visual_generate,
             "card.visual_job": self._card_visual_job,
             "card.asset_save": self._card_asset_save,
@@ -305,32 +333,47 @@ class HubDispatcher:
                                       str(p.get("ext") or ""))
 
     def _card_visual_brief(self, p: dict[str, Any]) -> Any:
-        # R9: build (only) the visual brief for a card via the GLOBAL default
-        # text model — the UI shows/edits it, then reuses it across the set so
-        # "generate all" pays for ONE brief, not one per asset.
+        # The visual brief is PERSISTED on the card (extensions.lunamoth.visual_brief)
+        # so viewing/reusing it never re-pays the LLM. Return the stored brief unless a
+        # rebuild is explicitly requested (force); a fresh build is persisted too.
         from ...visuals import pipeline
+        path = str(p.get("path") or "")
+        force = bool(p.get("force"))
         try:
-            card = json.loads(Path(str(p.get("path") or "")).read_text(encoding="utf-8"))
+            card = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise RpcError(-32035, f"unreadable card: {exc}") from exc
+        stored = _brief_of(card)
+        if stored and not force:
+            return {"brief": stored, "stored": True}
         defaults = _config.load_defaults()
         _vp_model = str(defaults.get("image_prompt_model") or "")
-        # The image-prompt model runs on its OWN provider when set, else the main
-        # default (same per-task-provider pattern as read-image / card draft).
+        # The image-prompt model runs on its OWN provider when set, else the main default.
         defaults = _config.task_defaults(defaults, str(defaults.get("image_prompt_provider") or ""))
         try:
-            return {"brief": pipeline.build_brief(
-                card, lambda s, u: _pkg()._complete(defaults, s, u, model=_vp_model, temperature=0.7, max_tokens=3000))}
+            brief = pipeline.build_brief(
+                card, lambda s, u: _pkg()._complete(defaults, s, u, model=_vp_model, temperature=0.7, max_tokens=3000))
         except (RuntimeError, ValueError) as exc:
             raise HubRpcError(-32050, str(exc), {"kind": "visual_brief"}) from exc
+        try:
+            _avatars.visual_brief_save(path, brief)  # best-effort (builtin/PNG aren't writable)
+        except RpcError:
+            pass
+        return {"brief": brief, "stored": False}
+
+    def _card_visual_brief_save(self, p: dict[str, Any]) -> Any:
+        brief = p.get("brief")
+        if not isinstance(brief, dict):
+            raise RpcError(-32602, "card.visual_brief_save expects a brief object")
+        return _avatars.visual_brief_save(str(p.get("path") or ""), brief)
 
     def _card_visual_generate(self, p: dict[str, Any]) -> Any:
-        # R9 (async): card → brief (GLOBAL default text model, or a reused one) →
-        # Seedream image (optionally guided by user refs / a generated anchor) →
-        # optional matte → preview bytes. Generation is SLOW (30–240 s), so this
-        # returns immediately with a job_id; the client polls card.visual_job. The
-        # result bytes are returned for the UI to show/save (avatars via
-        # avatar_upload, single art via asset_save, the sticker set via stickers_save).
+        # Async + AUTO-SAVE: generation is SLOW (30–240 s) AND must survive the user
+        # leaving the card view, so the job generates THEN writes the result straight
+        # to the card (avatar_upload / asset_save / stickers_save). The client polls
+        # card.visual_job only for progress; the card is updated regardless. The brief
+        # is reused-then-persisted, and the saved keyvisual is the server-side identity
+        # anchor for the other kinds. Returns immediately with a job_id.
         from ...visuals import jobs, pipeline
         path = str(p.get("path") or p.get("card_path") or "")
         kind = str(p.get("kind") or "avatar")
@@ -343,8 +386,13 @@ class HubDispatcher:
             raise RpcError(-32035, f"unreadable card: {exc}") from exc
         defaults = _config.load_defaults()
         matte_opt = p.get("matte")
-        brief_in = p.get("brief") if isinstance(p.get("brief"), dict) else None
-        refs_in = [str(r) for r in p.get("refs")] if isinstance(p.get("refs"), list) else None
+        brief_in = p.get("brief") if isinstance(p.get("brief"), dict) else _brief_of(card)
+        refs_in = [str(r) for r in p.get("refs")] if isinstance(p.get("refs"), list) else []
+        if kind != "keyvisual":  # identity-lock: anchor the rest to the saved keyvisual
+            anchor = _keyvisual_data_uri(path, card)
+            if anchor:
+                refs_in = [anchor, *refs_in]
+        refs_in = refs_in or None
 
         def _run() -> dict[str, Any]:
             out = pipeline.generate(
@@ -354,12 +402,23 @@ class HubDispatcher:
                 refs=refs_in,
                 matte=(None if matte_opt is None else bool(matte_opt)),
             )
-            common = {"mime": out["mime"], "ext": out["ext"], "kind": out["kind"],
-                      "matted": out["matted"], "note": out["note"], "brief": out["brief"]}
-            if "stickers" in out:  # a sliced set → a list of base64 cells
-                return {"stickers": [base64.b64encode(c).decode("ascii") for c in out["stickers"]],
-                        **common}
-            return {"data_b64": base64.b64encode(out["data"]).decode("ascii"), **common}
+            try:
+                _avatars.visual_brief_save(path, out["brief"])  # persist (best-effort)
+            except RpcError:
+                pass
+            # AUTO-SAVE to the card so the result is kept even if the client navigated away.
+            if "stickers" in out:
+                cells = [base64.b64encode(c).decode("ascii") for c in out["stickers"]]
+                saved = _avatars.stickers_save(path, cells)
+                return {"saved": True, "kind": kind, "urls": saved["urls"], "note": out["note"]}
+            data = out["data"]
+            if kind == "avatar":
+                from ...content import imaging as _imaging
+                small = _imaging.compress_image_bytes(data, "png", _imaging.CAP_AVATAR)
+                saved = _avatars.avatar_upload(path, base64.b64encode(small).decode("ascii"), "png")
+                return {"saved": True, "kind": kind, "data_uri": saved["data_uri"], "note": out["note"]}
+            saved = _avatars.asset_save(path, kind, base64.b64encode(data).decode("ascii"), out["ext"])
+            return {"saved": True, "kind": kind, "url": saved["url"], "note": out["note"]}
 
         return {"status": "running", "job_id": jobs.submit(_run, label=f"visual:{kind}")}
 

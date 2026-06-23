@@ -291,6 +291,30 @@ def stickers_save(path: str, items: list[str]) -> dict[str, Any]:
     return {"path": str(target), "kind": "stickers", "files": names, "urls": urls}
 
 
+def visual_brief_save(path: str, brief: dict) -> dict[str, Any]:
+    """Persist the visual brief on the card (``extensions.lunamoth.visual_brief``) so
+    it's REUSED instead of re-generated (the brief is an LLM call). Writable cards
+    only (deck cards + a chara's own session card); builtin/PNG raise."""
+    target = _writable_card_path(path)
+    if not isinstance(brief, dict):
+        raise RpcError(-32602, "visual_brief must be an object")
+    raw_card = json.loads(target.read_text(encoding="utf-8"))
+    if not isinstance(raw_card, dict):
+        raise RpcError(-32602, "card is not a JSON object")
+    data = raw_card.get("data")
+    if not isinstance(data, dict):
+        data = raw_card["data"] = {}
+    ext_root = data.get("extensions")
+    if not isinstance(ext_root, dict):
+        ext_root = data["extensions"] = {}
+    lm = ext_root.get("lunamoth")
+    if not isinstance(lm, dict):
+        lm = ext_root["lunamoth"] = {}
+    lm["visual_brief"] = brief
+    target.write_text(json.dumps(raw_card, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"ok": True, "path": str(target)}
+
+
 def asset_delete(path: str, kind: str) -> dict[str, Any]:
     """Remove an art asset (avatar / sprite / background / keyvisual / stickers):
     delete its sidecar file(s) and drop the card's pointer. Idempotent."""
