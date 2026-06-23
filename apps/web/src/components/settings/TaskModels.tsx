@@ -53,12 +53,18 @@ export function TaskModels({
   values,
   imageCatalog,
   keys,
+  modelOptions,
   onApplyImage,
   onApplyTaskProvider,
 }: {
   values: Record<string, string | undefined>;
   imageCatalog: ImageProvider[];
   keys: KeyRow[];
+  // The main text-model catalogue (recommended + the active provider's models) —
+  // shown as the per-task model list so the user picks from a dropdown instead of
+  // having to type the id. Free-typing still works (allowCustom) for a model the
+  // catalogue doesn't list or a different provider.
+  modelOptions: SelectOption[];
   onApplyImage: (provider: string, model: string) => void;
   onApplyTaskProvider: (providerField: string, modelField: string, provider: string, model: string) => void;
 }) {
@@ -84,6 +90,7 @@ export function TaskModels({
             provider={values[task.providerField || ""] || ""}
             model={values[task.field] || ""}
             keys={keys}
+            modelOptions={modelOptions}
             onApply={(p, m) => onApplyTaskProvider(task.providerField || "", task.field, p, m)}
           />
         ),
@@ -101,12 +108,14 @@ function KeyProviderRow({
   provider,
   model,
   keys,
+  modelOptions,
   onApply,
 }: {
   task: TaskModel;
   provider: string;
   model: string;
   keys: KeyRow[];
+  modelOptions: SelectOption[];
   onApply: (provider: string, model: string) => void;
 }) {
   const t = useT();
@@ -150,7 +159,7 @@ function KeyProviderRow({
       ) : (
         <div className="aux-edit img-edit">
           <Select value={pid} options={provOptions} onChange={setPid} placeholder={t("provider")} />
-          <Select value={draft} options={[]} onChange={setDraft} search allowCustom placeholder={t("model-other-ph")} />
+          <Select value={draft} options={modelOptions} onChange={setDraft} search allowCustom placeholder={t("model-other-ph")} />
           {editKey && !editKey.has_key && <div className="img-prov-hint">{t("img-prov-hint")}</div>}
           <div className="acts">
             <button

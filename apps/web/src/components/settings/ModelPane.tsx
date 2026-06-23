@@ -195,6 +195,7 @@ export function ModelPane() {
           values={defaults as unknown as Record<string, string | undefined>}
           imageCatalog={imageCatalog}
           keys={keys}
+          modelOptions={modelOptions}
           onApplyImage={(provider, model) => void persist({ image_provider: provider, image_model: model })}
           onApplyTaskProvider={(pf, mf, provider, model) => void persist({ [pf]: provider, [mf]: model })}
         />
