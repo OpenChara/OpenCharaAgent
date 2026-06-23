@@ -54,6 +54,33 @@ export function CardEditor({
   const fNotes = useRef<FieldHandle>(null);
   const fWorld = useRef<FieldHandle>(null);
 
+  // Cross-tab staging: CardField is uncontrolled (text lives in the DOM), and the
+  // 设定/世界 panes unmount on tab switch — so without this, edits on a tab you leave
+  // are lost. `staged` holds each field's text once it's been flushed (on tab switch
+  // and at save); a remounted pane seeds from it, and Save reads from it, so edits
+  // across all tabs survive until you click 保存.
+  const [staged, setStaged] = useState<Record<string, string>>({});
+  const fieldRefs: Record<string, { current: FieldHandle | null }> = {
+    name: fName, tagline: fTagline, description: fDesc, personality: fPers,
+    scenario: fScen, first_mes: fFirst, goals: fGoals, creator_notes: fNotes, world: fWorld,
+  };
+  const flushFields = () =>
+    setStaged((prev) => {
+      const next = { ...prev };
+      for (const k in fieldRefs) {
+        const v = fieldRefs[k].current?.value();
+        if (v !== undefined) next[k] = v;
+      }
+      return next;
+    });
+  // Flush the mounted tab's edits into `staged` BEFORE switching, so they aren't lost.
+  const switchTab = (k: Tab) => {
+    flushFields();
+    setTab(k);
+  };
+  // The value to seed a field with: a staged edit wins over the card's saved value.
+  const seed = (k: string, fallback: string) => (staged[k] !== undefined ? staged[k] : fallback);
+
   // Dirty-guard (shared hook) — declared with the other hooks, before any early
   // return. A stray Esc/backdrop/Cancel can't silently drop a long card edit; never
   // closes mid save/duplicate. A successful save/delete closes via the raw onClose.
@@ -150,18 +177,22 @@ export function CardEditor({
       // another tab is open, so their refs are null → value() is undefined → the
       // serializer PRESERVES the card's current value. This is what stops a save from
       // the 视觉 tab blanking the soul/world (the data-loss bug). "" still clears.
+      // The live value of a mounted field wins; a field on a tab we visited but left
+      // falls back to `staged`; a field never opened is undefined → preserved. So Save
+      // commits edits from EVERY tab, not just the one currently open.
+      const val = (k: string) => fieldRefs[k].current?.value() ?? staged[k];
       serializeCardFields(
         data,
         {
-          name: fName.current?.value(),
-          description: fDesc.current?.value(),
-          personality: fPers.current?.value(),
-          scenario: fScen.current?.value(),
-          first_mes: fFirst.current?.value(),
-          creator_notes: fNotes.current?.value(),
-          tagline: fTagline.current?.value(),
-          goals: fGoals.current?.value(),
-          world: fWorld.current?.value(),
+          name: val("name"),
+          description: val("description"),
+          personality: val("personality"),
+          scenario: val("scenario"),
+          first_mes: val("first_mes"),
+          creator_notes: val("creator_notes"),
+          tagline: val("tagline"),
+          goals: val("goals"),
+          world: val("world"),
         },
         (raw.name as string) || full.name || "",
       );
@@ -224,7 +255,7 @@ export function CardEditor({
   // Clicking the avatar jumps to the 视觉 tab, where the R9 VisualEditor owns the
   // whole visual set (generate / upload / replace / delete per kind). The old
   // SVG-gen + dual-theme AvatarEditor overlay was retired — VisualEditor replaces it.
-  const goVisual = () => setTab("vis");
+  const goVisual = () => switchTab("vis");
 
   return (
     <DeckModal open variant="cardview" onClose={guardedClose} style={themeStyle(card)}>
@@ -237,9 +268,9 @@ export function CardEditor({
         <div className="cv-header">
           <Avatar name={charName} card={card} cls="avatar-s" onClick={goVisual} title={t("cv-tab-vis")} />
           <div className="cv-id">
-            <CardField ref={fName} editable={editable} initial={full.name || ""} className="cve-name" />
+            <CardField ref={fName} editable={editable} initial={seed("name", full.name || "")} className="cve-name" />
             {(editable || taglineValue) && (
-              <CardField ref={fTagline} editable={editable} initial={taglineValue} placeholder={t("sec-tagline")} className="tagline" />
+              <CardField ref={fTagline} editable={editable} initial={seed("tagline", taglineValue)} placeholder={t("sec-tagline")} className="tagline" />
             )}
             <div className="cv-badges">
               <span className="chip">{full.language || card.lang}</span>
@@ -254,7 +285,7 @@ export function CardEditor({
 
         <div className="cv-tabs">
           {(["set", "vis", "emo", "world"] as Tab[]).map((k) => (
-            <div key={k} className={"cv-tab" + (tab === k ? " on" : "")} onClick={() => setTab(k)}>
+            <div key={k} className={"cv-tab" + (tab === k ? " on" : "")} onClick={() => switchTab(k)}>
               {t(("cv-tab-" + k) as TKey)}
             </div>
           ))}
@@ -266,27 +297,27 @@ export function CardEditor({
             <div className="cv-pane">
               {(editable || full.description) && (
                 <CardBlock labelKey="cve-description" hub={hub} ctx={editorCtx} fieldRef={fDesc} fieldKey={editable ? "description" : undefined}
-                  field={<CardField ref={fDesc} editable={editable} initial={full.description || ""} />} />
+                  field={<CardField ref={fDesc} editable={editable} initial={seed("description", full.description || "")} />} />
               )}
               {(editable || full.personality) && (
                 <CardBlock labelKey="cve-personality" hub={hub} ctx={editorCtx} fieldRef={fPers} fieldKey={editable ? "personality" : undefined}
-                  field={<CardField ref={fPers} editable={editable} initial={full.personality || ""} />} />
+                  field={<CardField ref={fPers} editable={editable} initial={seed("personality", full.personality || "")} />} />
               )}
               {(editable || full.scenario) && (
                 <CardBlock labelKey="cve-scenario" hub={hub} ctx={editorCtx} fieldRef={fScen} fieldKey={editable ? "scenario" : undefined}
-                  field={<CardField ref={fScen} editable={editable} initial={full.scenario || ""} />} />
+                  field={<CardField ref={fScen} editable={editable} initial={seed("scenario", full.scenario || "")} />} />
               )}
               {(editable || full.first_mes) && (
                 <CardBlock labelKey="cv-first" hub={hub} ctx={editorCtx} fieldRef={fFirst} fieldKey={editable ? "first_mes" : undefined}
-                  field={<CardField ref={fFirst} editable={editable} initial={full.first_mes || ""} />} />
+                  field={<CardField ref={fFirst} editable={editable} initial={seed("first_mes", full.first_mes || "")} />} />
               )}
               {(editable || goalsText) && (
                 <CardBlock labelKey="cve-goals" hub={hub} ctx={editorCtx} fieldRef={fGoals} fieldKey={editable ? "goals" : undefined}
-                  field={<CardField ref={fGoals} editable={editable} initial={goalsText} />} />
+                  field={<CardField ref={fGoals} editable={editable} initial={seed("goals", goalsText)} />} />
               )}
               {(editable || full.creator_notes) && (
                 <CardBlock labelKey="cve-notes" hub={hub} ctx={editorCtx} fieldRef={fNotes}
-                  field={<CardField ref={fNotes} editable={editable} initial={full.creator_notes || ""} />} />
+                  field={<CardField ref={fNotes} editable={editable} initial={seed("creator_notes", full.creator_notes || "")} />} />
               )}
               {full.raw && (
                 <details className="cv-raw">
@@ -368,7 +399,7 @@ export function CardEditor({
             <div className="cv-pane">
               {editable ? (
                 <CardBlock labelKey="cve-world" hub={hub} ctx={editorCtx} fieldRef={fWorld} fieldKey="world_entries"
-                  field={<CardField ref={fWorld} editable initial={worldText} />} />
+                  field={<CardField ref={fWorld} editable initial={seed("world", worldText)} />} />
               ) : (
                 <WorldReadOnly entries={book ? book.entries! : []} />
               )}
