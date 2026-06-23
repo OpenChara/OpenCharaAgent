@@ -294,6 +294,12 @@ export const I18N = {
   "wake-inflight-q": ["还有视觉在生成中,仍要现在唤醒吗?", "A visual is still generating — wake anyway?"],
   "cv-tab-vis": ["视觉", "Visual"],
   "cv-tab-emo": ["表情", "Expressions"],
+  "cv-tab-assets": ["素材", "Assets"],
+  "cv-assets-note": [
+    "随卡保存的其他图片(参考图、备选稿等),不含上面「视觉/表情」里的图。上传/删除即时生效。",
+    "Extra images kept with the card (references, alternates) — not the Visual/Expressions set above. Upload/delete saves instantly.",
+  ],
+  "cv-assets-empty": ["暂无素材", "No assets yet"],
   "cv-tab-world": ["世界", "World"],
   "cv-art-sprite": ["立绘", "Sprite"],
   "cv-art-keyvisual": ["主视觉", "Key visual"],

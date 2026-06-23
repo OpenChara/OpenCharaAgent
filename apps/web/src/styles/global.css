@@ -1131,6 +1131,20 @@ body.dragging::after{
   background:var(--soft,rgba(20,40,60,.06))}
 .cv-zone-badge.turn{color:var(--accent-deep,var(--accent));
   background:var(--accent-soft)}
+/* 素材 / card asset library — extra images that travel with the card */
+.cv-assets-mgr{display:flex; flex-direction:column; gap:10px}
+.cv-assets-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:10px}
+.cv-asset{position:relative; display:flex; flex-direction:column; gap:4px}
+.cv-asset>img{width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px;
+  border:1px solid var(--hairline); background:var(--hairline-2)}
+.cv-asset .vis-cand-x{top:2px; right:2px; display:none}
+.cv-asset:hover .vis-cand-x{display:block}
+.cv-asset-name{font-size:10px; color:var(--text-3); overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; text-align:center}
+.cv-asset-add{aspect-ratio:1; border:1.5px dashed var(--hairline); background:none;
+  color:var(--text-3); font-size:26px; border-radius:8px; cursor:pointer; display:flex;
+  align-items:center; justify-content:center; font-weight:300}
+.cv-asset-add:hover{border-color:var(--accent); color:var(--accent)}
 
 /* Per-field AI rewrite: the "✦ AI" affordance + its instruction popover. */
 .ai-edit-btn{

@@ -23,7 +23,7 @@ import { deckToast, deckToastAction } from "../ui/deckToast";
 import { DeckModal } from "../ui/DeckModal";
 import type { DeckCard, FullCard, CardExtLunamoth, WorldBookEntry } from "./types";
 
-type Tab = "set" | "vis" | "emo" | "world";
+type Tab = "set" | "vis" | "emo" | "assets" | "world";
 
 export function CardEditor({
   card,
@@ -401,7 +401,7 @@ export function CardEditor({
         </div>
 
         <div className="cv-tabs">
-          {(["set", "vis", "emo", "world"] as Tab[]).map((k) => (
+          {(["set", "vis", "emo", ...(visualEditable ? ["assets"] as Tab[] : []), "world"] as Tab[]).map((k) => (
             <div
               key={k}
               className={"cv-tab" + (tab === k ? " on" : "")}
@@ -515,6 +515,14 @@ export function CardEditor({
             </div>
           )}
 
+          {/* 素材 — extra images that travel with the card (refs/alternates), not the
+              managed visual set. List/upload/delete, saved immediately. */}
+          {tab === "assets" && visualEditable && (
+            <div className="cv-pane">
+              <AssetsPane cardPath={card.path} disabled={!visualEditable} />
+            </div>
+          )}
+
           {/* 世界 */}
           {tab === "world" && (
             <div className="cv-pane">
@@ -560,6 +568,106 @@ export function CardEditor({
         </div>
       </div>
     </DeckModal>
+  );
+}
+
+function fileToB64(f: File): Promise<string> {
+  return new Promise((res, rej) => {
+    const reader = new FileReader();
+    reader.onload = () => res(String(reader.result || "").split(",")[1] || "");
+    reader.onerror = () => rej(new Error("read failed"));
+    reader.readAsDataURL(f);
+  });
+}
+
+interface CardAsset { name: string; url: string; size: number }
+
+/* 素材 manager — the card's extra image assets (everything beside the card that isn't
+   the managed visual set). View / upload / delete, each saved immediately. */
+function AssetsPane({ cardPath, disabled }: { cardPath: string; disabled: boolean }) {
+  const t = useT();
+  const { hub } = useHubApi();
+  const [items, setItems] = useState<CardAsset[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const fileInput = useRef<HTMLInputElement>(null);
+  const EXTS = ["png", "jpg", "jpeg", "webp", "gif"];
+
+  const load = async () => {
+    try {
+      const r = await hub.call<{ assets?: CardAsset[] }>("card.assets_list", { path: cardPath }, 15000);
+      setItems(r.assets || []);
+    } catch (e) {
+      setErr(rpcErrText(t, e as { message?: string }));
+    }
+  };
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cardPath]);
+
+  const onUpload = async (f: File) => {
+    const ext = (f.name.split(".").pop() || "").toLowerCase();
+    if (!EXTS.includes(ext)) { setErr(t("av-up-type")); return; }
+    if (f.size > 16 * 1024 * 1024) { setErr(t("av-up-size")); return; }
+    setBusy(true); setErr("");
+    try {
+      const b64 = await fileToB64(f);
+      await hub.call("card.asset_file_upload", { path: cardPath, name: f.name, data_b64: b64, ext }, 30000);
+      await load();
+      deckToast(t("saved"));
+    } catch (e) {
+      setErr(rpcErrText(t, e as { message?: string }));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const onDelete = async (name: string) => {
+    if (!confirm(t("vis-del-q"))) return;
+    setBusy(true); setErr("");
+    try {
+      await hub.call("card.asset_file_delete", { path: cardPath, name }, 15000);
+      await load();
+    } catch (e) {
+      setErr(rpcErrText(t, e as { message?: string }));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="cv-assets-mgr">
+      <div className="av-note">{t("cv-assets-note")}</div>
+      <div className="cv-assets-grid">
+        {items.map((a) => (
+          <div className="cv-asset" key={a.name} title={a.name}>
+            <img src={assetUrl(a.url)} alt="" />
+            {!disabled && (
+              <button className="vis-cand-x" title={t("del-word")} disabled={busy} onClick={() => void onDelete(a.name)}>×</button>
+            )}
+            <span className="cv-asset-name">{a.name}</span>
+          </div>
+        ))}
+        {!disabled && (
+          <button className="cv-asset-add" disabled={busy} onClick={() => fileInput.current?.click()}>
+            {busy ? <span className="spin" /> : "＋"}
+          </button>
+        )}
+      </div>
+      {items.length === 0 && disabled && <div className="cv-empty-note">{t("cv-assets-empty")}</div>}
+      {err && <div className="av-note err">{err}</div>}
+      <input
+        ref={fileInput}
+        type="file"
+        accept=".png,.jpg,.jpeg,.webp,.gif,image/png,image/jpeg,image/webp,image/gif"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const f = e.target.files && e.target.files[0];
+          e.target.value = "";
+          if (f) void onUpload(f);
+        }}
+      />
+    </div>
   );
 }
 
