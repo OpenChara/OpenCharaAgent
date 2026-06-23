@@ -15,7 +15,9 @@ from pathlib import Path
 from typing import Any
 
 from ...content.cards import CharacterCard
-from ...content.imaging import CAP_ART, CAP_STICKER, avatar_thumb_data_uri, compress_image_bytes
+from ...content.imaging import (
+    CAP_ART, CAP_AVATAR, CAP_STICKER, avatar_thumb_data_uri, compress_image_bytes, square_crop,
+)
 from ..dispatch import RpcError
 from ._common import HubRpcError, _asset_url, _sanitize_avatar_svg, _writable_card_path
 
@@ -114,7 +116,11 @@ def avatar_upload(path: str, data_b64: str, ext: str) -> dict[str, Any]:
         if magic and not raw.startswith(magic):
             raise HubRpcError(-32602, f"the file does not look like a .{ext} image",
                               {"kind": "avatar_type", "detail": "magic-byte mismatch"})
-        payload = raw
+        # Force a uniform SQUARE avatar (center-crop → PNG) so a rectangular / non-square
+        # image (some generators ignore the 1:1 request) shows as a clean rounded tile,
+        # not a letterboxed rectangle. Both manual upload and generation land here.
+        payload = square_crop(raw, CAP_AVATAR)
+        ext = "png"
     # One sidecar per card: remove any stale sidecar of a different extension.
     for old in _AVATAR_EXTS:
         sc = _avatar_sidecar_path(target, old)

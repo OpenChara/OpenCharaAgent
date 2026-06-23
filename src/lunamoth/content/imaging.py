@@ -256,6 +256,29 @@ def slice_grid(sheet: bytes, rows: int = 3, cols: int = 3, pad_frac: float = 0.0
     return out
 
 
+def square_crop(raw: bytes, size: int = CAP_AVATAR) -> bytes:
+    """Center-crop an image to a SQUARE and resize to `size` → PNG. Forces avatars to a
+    uniform square so a rectangular / non-square generation (some image models ignore
+    the 1:1 request) displays as a clean rounded tile instead of a letterboxed
+    rectangle — the CSS rounds the square tile. Best-effort: returns the input
+    unchanged on a decode/encode failure (never raises)."""
+    try:
+        with Image.open(io.BytesIO(raw)) as im:
+            im.load()
+            im = im.convert("RGBA") if _has_alpha(im) else im.convert("RGB")
+            w, h = im.size
+            s = min(w, h)
+            left, top = (w - s) // 2, (h - s) // 2
+            im = im.crop((left, top, left + s, top + s))
+            if s != size:
+                im = im.resize((size, size), Image.LANCZOS)
+            buf = io.BytesIO()
+            im.save(buf, format="PNG")
+            return buf.getvalue()
+    except Exception:  # noqa: BLE001 — undecodable: leave the avatar untouched
+        return raw
+
+
 def _clear_thumb_cache() -> None:
     """Test seam: drop the in-memory thumbnail cache."""
     _thumb_cache.clear()
