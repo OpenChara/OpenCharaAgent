@@ -116,6 +116,17 @@ EXPR9 = [
     "making a hand-heart, affectionate",
     "a cheerful thumbs up, approving",
 ]
+# Short filename tags aligned to EXPR9 — a sticker is surfaced by writing
+# `MEDIA:<…sticker.<tag>.png>`, so the chara reads the emotion from the filename.
+EXPR9_TAGS = [
+    "neutral", "happy", "laugh", "cry", "angry", "surprised", "shy", "love", "thumbs-up",
+]
+
+
+def sticker_default_names(n: int) -> list[str]:
+    """The default per-image name tags for a freshly sliced sheet (first n of the
+    standard expression set, then generic fallbacks)."""
+    return [EXPR9_TAGS[i] if i < len(EXPR9_TAGS) else f"sticker-{i + 1}" for i in range(n)]
 
 # kind → generation spec. ``matte`` is the default cutout preference for that kind
 # (a full-body sprite wants a transparent cut; a tinted-background avatar does not).
@@ -201,7 +212,7 @@ def _ext_of(data: bytes) -> str:
 _EXT_MIME = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}
 
 
-def prompt_for(kind: str, brief: dict) -> str:
+def prompt_for(kind: str, brief: dict, grid: tuple[int, int] | None = None) -> str:
     a, pal = brief.get("appearance", ""), brief.get("palette", "")
     # The LM-chosen rendering style drives every image. Fall back to the polished
     # anime house look ONLY when the brief omitted a style (older briefs / a model
@@ -221,16 +232,24 @@ def prompt_for(kind: str, brief: dict) -> str:
                 f"identity reference for all the character's other art. No labels, no panel titles, no "
                 f"numbers, no UI frames. {_GUARDS_FIGURE}")
     if kind == "stickers":
-        expr = "; ".join(f"{i+1}) {e}" for i, e in enumerate(EXPR9))
-        return (f"ONE single image: a clean 3x3 grid of exactly nine chibi expression stickers of the "
-                f"SAME character — no more, no fewer, one per cell. {a}. {CHIBI}. A strict 3-row by "
-                f"3-column lattice on a flat pure white background (#FFFFFF), with generous even white "
-                f"gutters between every cell and a white margin around the whole sheet; each cell the "
-                f"same square size. Assign expressions to cells in reading order (left to right, top to "
-                f"bottom): {expr}. Render ONLY the facial expression in each cell — do NOT draw the "
-                f"numbers, words, captions or labels; the numbering only tells you which expression goes "
-                f"where. Each sticker has a subtle soft drop shadow. Consistent character across all nine "
-                f"cells, same colors and design. No text anywhere. {_GUARDS_FIGURE}")
+        rows, cols = grid or KINDS["stickers"]["grid"]
+        n = rows * cols
+        if n <= 1:
+            # A single sticker — no grid, just one centered chibi expression.
+            return (f"ONE single chibi expression sticker of the SAME character, {EXPR9[1]}. {a}. "
+                    f"{CHIBI}. Centered on a flat pure white background (#FFFFFF) with an even white "
+                    f"margin and a subtle soft drop shadow. No text anywhere. {_GUARDS_FIGURE}")
+        exprs = EXPR9[:n]
+        expr = "; ".join(f"{i+1}) {e}" for i, e in enumerate(exprs))
+        return (f"ONE single image: a clean {cols}x{rows} grid of exactly {n} chibi expression stickers "
+                f"of the SAME character — no more, no fewer, one per cell. {a}. {CHIBI}. A strict "
+                f"{rows}-row by {cols}-column lattice on a flat pure white background (#FFFFFF), with "
+                f"generous even white gutters between every cell and a white margin around the whole "
+                f"sheet; each cell the same square size. Assign expressions to cells in reading order "
+                f"(left to right, top to bottom): {expr}. Render ONLY the facial expression in each cell "
+                f"— do NOT draw the numbers, words, captions or labels; the numbering only tells you "
+                f"which expression goes where. Each sticker has a subtle soft drop shadow. Consistent "
+                f"character across all {n} cells, same colors and design. No text anywhere. {_GUARDS_FIGURE}")
     if kind == "avatar":
         # Avatars are intentionally chibi (a cute app-icon bust) regardless of the
         # character's main art style — a tiny realistic bust reads oddly as an icon.
@@ -263,6 +282,7 @@ def generate(
     matte: bool | None = None,
     refs: list[str] | None = None,
     extra: str = "",
+    grid: tuple[int, int] | None = None,
     ark_generate=None,
     download_bytes=None,
 ) -> dict:
@@ -283,7 +303,9 @@ def generate(
             "no image key configured — set it in Settings·生图 before generating visuals.")
 
     brief = brief if brief is not None else build_brief(card, llm_call)
-    prompt = prompt_for(kind, brief)
+    # stickers can be a 1x1 / 2x2 / 3x3 sheet; other kinds ignore grid.
+    grid_used = (tuple(grid) if grid else KINDS[kind].get("grid")) if kind == "stickers" else None
+    prompt = prompt_for(kind, brief, grid=grid_used)
     # An optional per-generation steer (the UI's 额外提示词) — appended so each regen
     # can differ without touching the shared brief.
     extra = (extra or "").strip()
@@ -307,11 +329,14 @@ def generate(
     want = KINDS[kind].get("matte", False) if matte is None else bool(matte)
 
     # stickers: one sheet → slice into the grid → cut each cell → a LIST of PNGs.
-    grid = KINDS[kind].get("grid")
-    if grid:
-        rows, cols = grid
+    # The RAW sheet is returned too (kept as a candidate so a bad slice is recoverable);
+    # a 1x1 sheet IS the sticker, so no separate sheet is kept.
+    if grid_used:
+        rows, cols = grid_used
         cells, matted, note = _slice_and_cut(data, rows, cols, want)
-        return {"stickers": cells, "mime": "image/png", "ext": "png",
+        return {"stickers": cells, "names": sticker_default_names(len(cells)),
+                "sheet": (data if rows * cols > 1 else None), "grid": [rows, cols],
+                "mime": "image/png", "ext": "png",
                 "brief": brief, "kind": kind, "matted": matted, "note": note}
 
     matted = False

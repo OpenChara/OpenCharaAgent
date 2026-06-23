@@ -43,6 +43,23 @@ def _brief_of(card: dict) -> dict | None:
     return b if isinstance(b, dict) and b else None
 
 
+def _norm_grid(v: Any) -> tuple[int, int] | None:
+    """Normalize a sticker grid request: an int n→(n,n), or [rows,cols]; 1..3 each.
+    Returns None (→ the kind default) on anything else."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int) and 1 <= v <= 3:
+        return (v, v)
+    if isinstance(v, (list, tuple)) and len(v) == 2:
+        try:
+            r, c = int(v[0]), int(v[1])
+        except (TypeError, ValueError):
+            return None
+        if 1 <= r <= 3 and 1 <= c <= 3:
+            return (r, c)
+    return None
+
+
 def _keyvisual_data_uri(path: str, card: dict) -> str | None:
     """The card's saved keyvisual as a data-URI — the server-side identity ANCHOR fed
     as a reference into the other kinds so the set stays one character even when the
@@ -148,6 +165,9 @@ class HubDispatcher:
             "card.asset_remove": lambda p: _avatars.asset_remove(str(p.get("path") or ""), str(p.get("kind") or ""), str(p.get("name") or "")),
             "card.asset_matte": lambda p: _avatars.asset_matte(str(p.get("path") or ""), str(p.get("kind") or ""), str(p.get("name") or "")),
             "card.stickers_save": self._card_stickers_save,
+            "card.sticker_remove": lambda p: _avatars.sticker_remove(str(p.get("path") or ""), str(p.get("name") or "")),
+            "card.sticker_rename": lambda p: _avatars.sticker_rename(str(p.get("path") or ""), str(p.get("old") or ""), str(p.get("new") or "")),
+            "card.sticker_reslice": self._card_sticker_reslice,
             "card.asset_delete": lambda p: _avatars.asset_delete(str(p.get("path") or ""), str(p.get("kind") or "")),
             "card.avatar_read": lambda p: _avatars.avatar_read(str(p.get("path") or "")),
             "cards.list": lambda p: _cards.list_cards(),
@@ -392,6 +412,7 @@ class HubDispatcher:
         matte_opt = p.get("matte")
         brief_in = p.get("brief") if isinstance(p.get("brief"), dict) else _brief_of(card)
         extra = str(p.get("extra") or "")  # optional per-generation steer (额外提示词)
+        grid = _norm_grid(p.get("grid"))   # stickers: 1x1 / 2x2 / 3x3 (others ignore it)
         refs_in = [str(r) for r in p.get("refs")] if isinstance(p.get("refs"), list) else []
         if kind != "keyvisual":  # identity-lock: anchor the rest to the saved keyvisual
             anchor = _keyvisual_data_uri(path, card)
@@ -406,6 +427,7 @@ class HubDispatcher:
                 brief=brief_in,
                 refs=refs_in,
                 extra=extra,
+                grid=grid,
                 matte=(None if matte_opt is None else bool(matte_opt)),
             )
             try:
@@ -415,8 +437,11 @@ class HubDispatcher:
             # AUTO-SAVE to the card so the result is kept even if the client navigated away.
             if "stickers" in out:
                 cells = [base64.b64encode(c).decode("ascii") for c in out["stickers"]]
-                saved = _avatars.stickers_save(path, cells)
-                return {"saved": True, "kind": kind, "urls": saved["urls"], "note": out["note"], "matted": bool(out.get("matted"))}
+                sheet_b64 = base64.b64encode(out["sheet"]).decode("ascii") if out.get("sheet") else None
+                saved = _avatars.stickers_save(path, cells, names=out.get("names"),
+                                               sheet=sheet_b64, grid=out.get("grid"))
+                return {"saved": True, "kind": kind, "urls": saved["urls"], "added": saved.get("added"),
+                        "note": out["note"], "matted": bool(out.get("matted"))}
             data = out["data"]
             if kind == "avatar":
                 from ...content import imaging as _imaging
@@ -452,7 +477,26 @@ class HubDispatcher:
         items = p.get("data_b64")
         if not isinstance(items, list):
             raise RpcError(-32602, "card.stickers_save expects data_b64: a list of PNG base64 cells")
-        return _avatars.stickers_save(str(p.get("path") or ""), [str(x) for x in items])
+        names = p.get("names") if isinstance(p.get("names"), list) else None
+        return _avatars.stickers_save(str(p.get("path") or ""), [str(x) for x in items],
+                                      names=[str(n) for n in names] if names else None)
+
+    def _card_sticker_reslice(self, p: dict[str, Any]) -> Any:
+        # Re-cut a KEPT raw sheet into the chosen grid and APPEND the cells (a wrong
+        # auto-slice is recoverable without re-paying for generation). Local-only
+        # (slice + matte), so synchronous.
+        from ...visuals import pipeline
+        path = str(p.get("path") or "")
+        sheet_name = str(p.get("sheet") or p.get("name") or "").strip()
+        target = _avatars._writable_card_path(path)  # raises on builtin/PNG/non-writable
+        sheet_file = target.with_name(sheet_name)
+        if not sheet_name or not sheet_file.is_file():
+            raise RpcError(-32602, f"no such sticker sheet: {sheet_name}")
+        rows, cols = _norm_grid(p.get("grid")) or pipeline.KINDS["stickers"]["grid"]
+        cells, _matted, note = pipeline._slice_and_cut(sheet_file.read_bytes(), rows, cols, True)
+        b64 = [base64.b64encode(c).decode("ascii") for c in cells]
+        saved = _avatars.stickers_save(str(target), b64, names=pipeline.sticker_default_names(len(cells)))
+        return {**saved, "note": note}
 
     def _card_read(self, p: dict[str, Any]) -> Any:
         path = Path(str(p.get("path") or ""))

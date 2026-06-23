@@ -736,9 +736,11 @@ def test_card_asset_matte_noop_on_transparent(monkeypatch):
 
 
 def test_card_stickers_save_and_delete():
-    # The sticker SET is stored as a LIST of sidecars + a list pointer.
-    card, _b64 = _user_card_copy(None)
-    cells = [_b64.b64encode(_PNG_1PX).decode("ascii") for _ in range(9)]
+    # The sticker SET is stored as a LIST of individually-named sidecars. Saves APPEND.
+    import base64 as b64m
+    set_defaults()
+    card = _make_user_card("StickerCard")  # clean card, no bundled stickers
+    cells = [b64m.b64encode(_PNG_1PX).decode("ascii") for _ in range(9)]
     out = result("card.stickers_save", {"path": card, "data_b64": cells})
     assert out["kind"] == "stickers" and len(out["files"]) == 9
     assert all(f.endswith(".png") and ".sticker." in f for f in out["files"])
@@ -747,6 +749,10 @@ def test_card_stickers_save_and_delete():
     names = raw["data"]["extensions"]["lunamoth"]["assets"]["stickers"]
     assert isinstance(names, list) and len(names) == 9
     assert all((Path(card).with_name(n)).is_file() for n in names)
+    # a second save APPENDS (not replaces) — and dedups the auto-named slugs
+    out2 = result("card.stickers_save", {"path": card, "data_b64": cells[:2]})
+    assert len(out2["files"]) == 11 and len(out2["added"]) == 2
+    assert len(set(out2["files"])) == 11  # no filename collisions
     # a non-list payload is a clean param error
     assert rpc_error("card.stickers_save", {"path": card, "data_b64": "notalist"})["code"] == -32602
     # delete drops every cell + the pointer (idempotent)
@@ -754,6 +760,27 @@ def test_card_stickers_save_and_delete():
     raw = json.loads(open(card, encoding="utf-8").read())
     assert "stickers" not in raw["data"]["extensions"]["lunamoth"].get("assets", {})
     assert result("card.asset_delete", {"path": card, "kind": "stickers"})["removed"] is False
+
+
+def test_card_sticker_named_rename_remove():
+    # Stickers carry their meaning in the filename; rename + per-image remove work,
+    # and re-using a name dedups with a -1/-2 suffix.
+    import base64 as b64m
+    set_defaults()
+    card = _make_user_card("StickerNames")
+    cell = b64m.b64encode(_PNG_1PX).decode("ascii")
+    out = result("card.stickers_save",
+                 {"path": card, "data_b64": [cell, cell], "names": ["happy", "happy"]})
+    f0, f1 = out["files"]
+    assert f0.endswith(".sticker.happy.png") and f1.endswith(".sticker.happy-1.png")  # deduped
+    # rename the first → a new slug; file renamed, list updated
+    r = result("card.sticker_rename", {"path": card, "old": f0, "new": "Big Grin!"})
+    assert r["new"].endswith(".sticker.big-grin.png") and r["old"] == f0
+    assert not (Path(card).with_name(f0)).is_file() and (Path(card).with_name(r["new"])).is_file()
+    # remove one → list shrinks, file gone; an untracked name is a clean error
+    rm = result("card.sticker_remove", {"path": card, "name": f1})
+    assert len(rm["files"]) == 1 and not (Path(card).with_name(f1)).is_file()
+    assert rpc_error("card.sticker_remove", {"path": card, "name": "nope.png"})["code"] == -32602
 
 
 def test_keyvisual_generation_receives_user_refs(monkeypatch):
@@ -782,10 +809,12 @@ def test_keyvisual_generation_receives_user_refs(monkeypatch):
 
 
 def test_card_visual_generate_stickers_async(monkeypatch):
-    # kind=stickers → one white sheet → sliced into 9 cells → AUTO-SAVED as a list.
+    # kind=stickers → one white sheet → sliced into 9 cells → AUTO-SAVED as a list,
+    # the raw sheet kept for re-slicing; a 2x2 grid yields 4 cells.
     import io
     from PIL import Image
-    card, _b64 = _user_card_copy(None)
+    set_defaults()
+    card = _make_user_card("StickerGen")  # clean card, no bundled stickers
     H.save_key("火山", provider="volcano",
                base_url="https://ark.cn-beijing.volces.com/api/v3", api_key="sk-img-test")
     H.save_defaults({"image_provider": "volcano", "image_model": "doubao-seedream-x"})
@@ -800,8 +829,20 @@ def test_card_visual_generate_stickers_async(monkeypatch):
     out = _await_visual(sub["job_id"])
     assert out["status"] == "ready" and out["saved"] is True and out["kind"] == "stickers"
     assert len(out["urls"]) == 9
-    raw = json.loads(open(card, encoding="utf-8").read())
-    assert len(raw["data"]["extensions"]["lunamoth"]["assets"]["stickers"]) == 9
+    lm = json.loads(open(card, encoding="utf-8").read())["data"]["extensions"]["lunamoth"]
+    assert len(lm["assets"]["stickers"]) == 9
+    sheets = lm["assets"]["sticker_sheets"]
+    assert len(sheets) == 1 and (Path(card).with_name(sheets[0])).is_file()  # raw sheet kept
+    # default names came from the expression tags
+    assert any(".sticker.neutral.png" in n or ".sticker.happy.png" in n for n in lm["assets"]["stickers"])
+    # re-slice the kept sheet at 2x2 → APPENDS 4 more cells
+    rs = result("card.sticker_reslice", {"path": card, "sheet": sheets[0], "grid": 2})
+    assert len(rs["files"]) == 13
+    # a 2x2 generation yields exactly four cells
+    sub2 = result("card.visual_generate", {"path": card, "kind": "stickers", "grid": 2,
+                                           "brief": {"appearance": "a", "palette": "p", "theme": "#1a2"}})
+    out2 = _await_visual(sub2["job_id"])
+    assert len(out2["added"]) == 4
 
 
 def test_card_asset_save_refuses_builtin_card():

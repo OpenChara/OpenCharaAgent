@@ -70,9 +70,10 @@ def _copy_card_assets(card: "CharacterCard", dest_dir: Path, src_base: Path | No
         lst = opts.get(kind)
         if isinstance(lst, list):
             rels += [s for s in lst if isinstance(s, str)]
-    stk = a.get("stickers")
-    if isinstance(stk, list):
-        rels += [s for s in stk if isinstance(s, str)]
+    for key in ("stickers", "sticker_sheets"):
+        v = a.get(key)
+        if isinstance(v, list):
+            rels += [s for s in v if isinstance(s, str)]
     for rel in rels:
         rel = rel.strip().replace("\\", "/")
         if not rel or rel.startswith("/") or ".." in rel.split("/"):
@@ -92,7 +93,8 @@ def _copy_card_assets(card: "CharacterCard", dest_dir: Path, src_base: Path | No
 # (e.g. `Quinn.avatar.png`, `Quinn.sticker.0.png`). They are NOT cards — the deck
 # scan must skip them, or each one is tried as a character card and spams a load
 # error (avatars always hit this; stickers multiply it 9x).
-_SIDECAR_MARKERS = (".avatar.", ".sprite.", ".background.", ".keyvisual.", ".sticker.")
+_SIDECAR_MARKERS = (".avatar.", ".sprite.", ".background.", ".keyvisual.",
+                    ".sticker.", ".sticker_sheet.")
 
 
 def _is_asset_sidecar(p: Path) -> bool:
@@ -169,6 +171,7 @@ def _card_entry(path: Path, builtin: bool, refs: dict[str, list[str]]) -> dict[s
         "bg_url": _asset_url(card.asset_path("background")),
         "keyvisual_url": _asset_url(card.asset_path("keyvisual")),
         "stickers_urls": [u for u in (_asset_url(p) for p in card.sticker_paths()) if u],
+        "sticker_sheets_urls": [u for u in (_asset_url(p) for p in card.sticker_sheets()) if u],
         # The non-destructive candidate gallery per kind (selected = *_url above).
         "sprite_options": [u for u in (_asset_url(p) for p in card.asset_options("sprite")) if u],
         "bg_options": [u for u in (_asset_url(p) for p in card.asset_options("background")) if u],

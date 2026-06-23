@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import re
 import urllib.parse
 import uuid
 from pathlib import Path
@@ -174,6 +175,19 @@ def _art_candidate_path(card_path: Path, kind: str, ext: str) -> Path:
     return card_path.with_name(f"{card_path.stem}.{kind}.{uuid.uuid4().hex[:8]}.{ext}")
 
 
+def _rel(card_path: Path, name: str) -> Path:
+    """Resolve a STORED asset name (which may be a card-folder-relative sub-path like
+    ``stickers/00.webp`` on a bundled card) to its path beside the card. Unlike
+    ``with_name`` it tolerates a '/'; it never escapes the card folder."""
+    rel = str(name or "").replace("\\", "/").lstrip("/")
+    p = (card_path.parent / rel)
+    base = card_path.parent.resolve()
+    rp = p.resolve()
+    if base != rp and base not in rp.parents:  # confine to the card folder
+        return card_path.with_name(card_path.name)  # a harmless in-folder sentinel
+    return p
+
+
 def _assets_dict(raw_card: dict) -> dict:
     """The card's extensions.lunamoth.assets dict, created if absent."""
     data = raw_card.get("data")
@@ -254,7 +268,7 @@ def asset_save(path: str, kind: str, data_b64: str, ext: str) -> dict[str, Any]:
     target.write_text(json.dumps(raw_card, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"path": str(target), "kind": kind, "file": sidecar.name, "url": _asset_url(sidecar),
             "selected": sidecar.name,
-            "options": [_asset_url(target.with_name(n)) for n in opts]}
+            "options": [_asset_url(_rel(target, n)) for n in opts]}
 
 
 def asset_select(path: str, kind: str, name: str) -> dict[str, Any]:
@@ -270,12 +284,12 @@ def asset_select(path: str, kind: str, name: str) -> dict[str, Any]:
         raise RpcError(-32602, "card is not a JSON object")
     assets = _assets_dict(raw_card)
     opts = _options_list(assets, kind)
-    if name not in opts or not target.with_name(name).is_file():
+    if name not in opts or not _rel(target, name).is_file():
         raise RpcError(-32602, f"no such candidate for {kind}: {name}")
     assets[kind] = name
     target.write_text(json.dumps(raw_card, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"path": str(target), "kind": kind, "selected": name,
-            "url": _asset_url(target.with_name(name))}
+            "url": _asset_url(_rel(target, name))}
 
 
 def asset_remove(path: str, kind: str, name: str) -> dict[str, Any]:
@@ -296,7 +310,7 @@ def asset_remove(path: str, kind: str, name: str) -> dict[str, Any]:
         # stale / mistyped name from the UI can never delete an unrelated sidecar.
         raise RpcError(-32602, f"no such candidate for {kind}: {name}")
     opts.remove(name)
-    sc = target.with_name(name)
+    sc = _rel(target, name)
     if sc.is_file():
         try:
             sc.unlink()
@@ -310,7 +324,7 @@ def asset_remove(path: str, kind: str, name: str) -> dict[str, Any]:
     target.write_text(json.dumps(raw_card, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"path": str(target), "kind": kind, "removed": name,
             "selected": assets.get(kind, ""),
-            "options": [_asset_url(target.with_name(n)) for n in opts]}
+            "options": [_asset_url(_rel(target, n)) for n in opts]}
 
 
 def asset_matte(path: str, kind: str, name: str = "") -> dict[str, Any]:
@@ -328,7 +342,7 @@ def asset_matte(path: str, kind: str, name: str = "") -> dict[str, Any]:
         raise RpcError(-32602, "card is not a JSON object")
     assets = _assets_dict(raw_card)
     src_name = str(name or "").strip() or str(assets.get(kind) or "")
-    src = target.with_name(src_name) if src_name else None
+    src = _rel(target, src_name) if src_name else None
     if src is None or not src.is_file():
         raise RpcError(-32602, f"no image to cut for {kind}")
     data = src.read_bytes()
@@ -355,27 +369,66 @@ def asset_matte(path: str, kind: str, name: str = "") -> dict[str, Any]:
     target.write_text(json.dumps(raw_card, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"path": str(target), "kind": kind, "file": sidecar.name, "url": _asset_url(sidecar),
             "selected": sidecar.name,
-            "options": [_asset_url(target.with_name(n)) for n in opts]}
+            "options": [_asset_url(_rel(target, n)) for n in opts]}
 
 
-# ---- sticker set (表情包) — a LIST of cut cells, not a single sidecar -----------
-_STICKER_MAX = 9
+# ---- sticker set (表情包) — a LIST of individually-NAMED cut cells -------------
+# Each sticker file is `<stem>.sticker.<slug>.png` so the chara reads the emotion from
+# the filename when it surfaces one (MEDIA:<path>). Saves APPEND (新生成 adds more);
+# the raw generated sheet is kept under `sticker_sheets` so a bad slice is recoverable.
+_STICKER_BATCH_MAX = 9       # cells in ONE save (a 3x3 sheet)
+_STICKER_TOTAL_MAX = 36      # soft cap on the whole set so it can't grow without bound
 
 
-def _sticker_sidecar_path(card_path: Path, i: int) -> Path:
-    return card_path.with_name(f"{card_path.stem}.sticker.{i}.png")
+def _slug(s: str) -> str:
+    """A filename-safe lowercase slug; '' → 'sticker'."""
+    s = re.sub(r"[^a-z0-9]+", "-", str(s or "").strip().lower()).strip("-")
+    return s or "sticker"
 
 
-def stickers_save(path: str, items: list[str]) -> dict[str, Any]:
-    """Write a SET of sticker sidecars (``<stem>.sticker.<i>.png``) and point the
-    card's ``extensions.lunamoth.assets['stickers']`` at the ordered name list.
-    ``items`` = base64 PNG cells (the cut 3x3 grid). Replaces any existing set; each
-    cell is magic-checked + compressed to the sticker cap. png only."""
+def _img_ext(raw: bytes) -> str:
+    """The image extension from magic bytes (so a JPEG/WebP sheet isn't mis-saved as png)."""
+    if raw[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if raw[:3] == b"\xff\xd8\xff":
+        return "jpg"
+    if len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "webp"
+    return "png"
+
+
+def _sticker_path(card_path: Path, slug: str) -> Path:
+    return card_path.with_name(f"{card_path.stem}.sticker.{slug}.png")
+
+
+def _unique_sticker_slug(card_path: Path, slug: str, taken: set[str]) -> str:
+    """Dedup a slug against on-disk files AND slugs already claimed this batch (-1/-2…)."""
+    cand, i = slug, 1
+    while cand in taken or _sticker_path(card_path, cand).exists():
+        cand = f"{slug}-{i}"
+        i += 1
+    taken.add(cand)
+    return cand
+
+
+def _sticker_list(assets: dict) -> list[str]:
+    v = assets.get("stickers")
+    return [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
+
+
+def stickers_save(path: str, items: list[str], names: list[str] | None = None,
+                  sheet: str | None = None, grid: list[int] | None = None) -> dict[str, Any]:
+    """APPEND a batch of sticker cells to the card's set, each saved as
+    ``<stem>.sticker.<slug>.png``. ``items`` = base64 PNG cells; ``names`` = the
+    parallel desired name tags (slugified + deduped, defaults applied when short).
+    ``sheet`` = the optional raw generated sheet (base64) kept under ``sticker_sheets``
+    so a wrong slice can be redone. png cells only, each compressed to the sticker cap."""
     target = _writable_card_path(path)
     if not isinstance(items, list) or not items:
         raise RpcError(-32602, "stickers payload must be a non-empty list of PNG cells")
-    if len(items) > _STICKER_MAX:
-        raise RpcError(-32602, f"too many stickers (max {_STICKER_MAX})")
+    if len(items) > _STICKER_BATCH_MAX:
+        raise RpcError(-32602, f"too many stickers in one batch (max {_STICKER_BATCH_MAX})")
+    names = names if isinstance(names, list) else []
     decoded: list[bytes] = []
     for n, b in enumerate(items):
         try:
@@ -391,38 +444,94 @@ def stickers_save(path: str, items: list[str]) -> dict[str, Any]:
             raise HubRpcError(-32602, "a sticker is not a PNG image",
                               {"kind": "asset_type", "detail": "magic-byte mismatch"})
         decoded.append(compress_image_bytes(raw, "png", CAP_STICKER))
-    # clear any stale cells (a previous set may have had more), then write the new set
-    for old in range(_STICKER_MAX):
-        sc = _sticker_sidecar_path(target, old)
-        if sc.exists():
-            try:
-                sc.unlink()
-            except OSError:
-                pass
-    names: list[str] = []
-    for i, raw in enumerate(decoded):
-        sc = _sticker_sidecar_path(target, i)
-        sc.write_bytes(raw)
-        names.append(sc.name)
     raw_card = json.loads(target.read_text(encoding="utf-8"))
     if not isinstance(raw_card, dict):
         raise RpcError(-32602, "card is not a JSON object")
-    data = raw_card.get("data")
-    if not isinstance(data, dict):
-        data = raw_card["data"] = {}
-    ext_root = data.get("extensions")
-    if not isinstance(ext_root, dict):
-        ext_root = data["extensions"] = {}
-    lm = ext_root.get("lunamoth")
-    if not isinstance(lm, dict):
-        lm = ext_root["lunamoth"] = {}
-    assets = lm.get("assets")
-    if not isinstance(assets, dict):
-        assets = lm["assets"] = {}
-    assets["stickers"] = names
+    assets = _assets_dict(raw_card)
+    existing = _sticker_list(assets)
+    if len(existing) + len(decoded) > _STICKER_TOTAL_MAX:
+        raise HubRpcError(-32602, f"too many stickers (max {_STICKER_TOTAL_MAX}) — delete some first",
+                          {"kind": "sticker_cap"})
+    taken: set[str] = set()
+    added: list[str] = []
+    for i, data in enumerate(decoded):
+        want = names[i] if i < len(names) else f"sticker-{len(existing) + i + 1}"
+        slug = _unique_sticker_slug(target, _slug(want), taken)
+        sc = _sticker_path(target, slug)
+        sc.write_bytes(data)
+        added.append(sc.name)
+    assets["stickers"] = existing + added
+    # keep the raw sheet (a wrong slice is then recoverable via card.sticker_reslice)
+    if sheet:
+        try:
+            sheet_raw = base64.b64decode(str(sheet), validate=True)
+        except (ValueError, binascii.Error):
+            sheet_raw = b""
+        if sheet_raw:
+            ext = _img_ext(sheet_raw)
+            if _looks_like(sheet_raw, ext):
+                sheet_raw = compress_image_bytes(sheet_raw, ext, CAP_ART)
+                sh = target.with_name(f"{target.stem}.sticker_sheet.{uuid.uuid4().hex[:8]}.{ext}")
+                sh.write_bytes(sheet_raw)
+                sheets = assets.get("sticker_sheets")
+                sheets = [x for x in sheets if isinstance(x, str)] if isinstance(sheets, list) else []
+                assets["sticker_sheets"] = [*sheets, sh.name]
     target.write_text(json.dumps(raw_card, ensure_ascii=False, indent=2), encoding="utf-8")
-    urls = [_asset_url(_sticker_sidecar_path(target, i)) for i in range(len(names))]
-    return {"path": str(target), "kind": "stickers", "files": names, "urls": urls}
+    full = _sticker_list(assets)
+    sheets = [s for s in (assets.get("sticker_sheets") or []) if isinstance(s, str)]
+    return {"path": str(target), "kind": "stickers", "files": full, "added": added,
+            "urls": [_asset_url(_rel(target, n)) for n in full],
+            "sheets": sheets, "sheet_urls": [_asset_url(_rel(target, n)) for n in sheets]}
+
+
+def sticker_remove(path: str, name: str) -> dict[str, Any]:
+    """Delete one sticker (file + list entry). Idempotent only on a tracked name."""
+    target = _writable_card_path(path)
+    name = str(name or "").strip()
+    raw_card = json.loads(target.read_text(encoding="utf-8"))
+    if not isinstance(raw_card, dict):
+        raise RpcError(-32602, "card is not a JSON object")
+    assets = _assets_dict(raw_card)
+    lst = _sticker_list(assets)
+    if name not in lst:
+        raise RpcError(-32602, f"no such sticker: {name}")
+    lst.remove(name)
+    sc = _rel(target, name)
+    if sc.is_file():
+        try:
+            sc.unlink()
+        except OSError:
+            pass
+    assets["stickers"] = lst
+    target.write_text(json.dumps(raw_card, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"path": str(target), "removed": name, "files": lst,
+            "urls": [_asset_url(_rel(target, n)) for n in lst]}
+
+
+def sticker_rename(path: str, old: str, new: str) -> dict[str, Any]:
+    """Rename one sticker's file → ``<stem>.sticker.<slug(new)>.png`` (deduped) so its
+    filename carries the user's chosen meaning. Updates the list entry in place."""
+    target = _writable_card_path(path)
+    old = str(old or "").strip()
+    raw_card = json.loads(target.read_text(encoding="utf-8"))
+    if not isinstance(raw_card, dict):
+        raise RpcError(-32602, "card is not a JSON object")
+    assets = _assets_dict(raw_card)
+    lst = _sticker_list(assets)
+    if old not in lst:
+        raise RpcError(-32602, f"no such sticker: {old}")
+    new_name = _sticker_path(target, _unique_sticker_slug(target, _slug(new), set())).name
+    src, dst = _rel(target, old), target.with_name(new_name)
+    if src.is_file():
+        try:
+            src.rename(dst)
+        except OSError as exc:
+            raise HubRpcError(-32050, f"rename failed: {exc}", {"kind": "sticker_rename"}) from exc
+    lst[lst.index(old)] = new_name
+    assets["stickers"] = lst
+    target.write_text(json.dumps(raw_card, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"path": str(target), "old": old, "new": new_name, "url": _asset_url(dst),
+            "files": lst, "urls": [_asset_url(_rel(target, n)) for n in lst]}
 
 
 def visual_brief_save(path: str, brief: dict) -> dict[str, Any]:
@@ -499,16 +608,28 @@ def asset_delete(path: str, kind: str) -> dict[str, Any]:
             if isinstance(opts, dict):
                 opts.pop(kind, None)
     elif kind == "stickers":
-        for i in range(_STICKER_MAX):
-            sc = _sticker_sidecar_path(target, i)
-            if sc.exists():
+        # Unlink every listed cell + raw sheet (incl. a bundled card's subdir names)
+        # AND any flat orphan beside the card, then clear both list pointers.
+        assets = lm.get("assets") if isinstance(lm, dict) else None
+        names: set[str] = set()
+        if isinstance(assets, dict):
+            for key in ("stickers", "sticker_sheets"):
+                v = assets.get(key)
+                if isinstance(v, list):
+                    names.update(n for n in v if isinstance(n, str))
+        for sc in list(target.parent.glob(f"{target.stem}.sticker.*")) + \
+                list(target.parent.glob(f"{target.stem}.sticker_sheet.*")):
+            names.add(sc.name)
+        for n in names:
+            sc = _rel(target, n)
+            if sc.is_file():
                 try:
                     sc.unlink(); removed = True
                 except OSError:
                     pass
-        assets = lm.get("assets") if isinstance(lm, dict) else None
         if isinstance(assets, dict):
             assets.pop("stickers", None)
+            assets.pop("sticker_sheets", None)
     else:
         raise RpcError(-32602, f"unknown asset kind: {kind}")
     target.write_text(json.dumps(raw_card, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -277,6 +277,18 @@ class CharacterCard:
                 out.append(p)
         return out
 
+    def sticker_sheets(self) -> list[Path]:
+        """Resolved raw sticker-sheet paths (the un-sliced originals kept for re-slicing)."""
+        raw = self.assets().get("sticker_sheets")
+        if not isinstance(raw, list):
+            return []
+        out = []
+        for v in raw:
+            p = self._resolve(self._asset_rel(v))
+            if p is not None:
+                out.append(p)
+        return out
+
     def has_art(self) -> bool:
         """True if any bundled art asset (sprite/background/keyvisual/stickers) exists."""
         return bool(self.asset_path("sprite") or self.asset_path("background")
