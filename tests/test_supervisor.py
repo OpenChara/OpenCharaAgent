@@ -139,6 +139,41 @@ def test_client_detach_does_not_kill_the_resident_child():
     assert child.proc is None and child.state == "stopped"
 
 
+def test_idle_suspend_due_only_when_idle_detached_no_gateway():
+    """A chat-mode (autonomy-off) chara auto-suspends only when it's been idle past
+    SUSPEND_AFTER, nobody is in its room, and no gateway is live — and a recent operator
+    message resets the idle clock."""
+    import time as _t
+
+    from lunamoth.server.supervisor import CharaChild
+    from lunamoth.session.sessions import SessionMeta
+
+    child = CharaChild(SessionMeta(name="t"), supervisor=None)
+    child.SUSPEND_AFTER = 100.0
+    child._gateway_enabled = lambda: False
+    now = _t.monotonic()
+
+    assert child._idle_suspend_due(now) is False          # never entered chat mode
+    child._chat_mode_since = now - 200.0
+    assert child._idle_suspend_due(now) is True            # idle 200s, detached, no gateway
+    child.driver_slot.current = object()
+    assert child._idle_suspend_due(now) is False           # someone in the room
+    child.driver_slot.current = None
+    child._client_stream_ids.add(1)
+    assert child._idle_suspend_due(now) is False           # an in-flight turn
+    child._client_stream_ids.clear()
+    child.idle.last_user_mono = now - 10.0
+    assert child._idle_suspend_due(now) is False           # a recent message reset the clock
+    child.idle.last_user_mono = now - 300.0
+    assert child._idle_suspend_due(now) is True            # last message long ago
+    child._gateway_enabled = lambda: True
+    assert child._idle_suspend_due(now) is False           # a live gateway blocks suspend
+    child._gateway_enabled = lambda: False
+    child._chat_mode_since = now - 50.0
+    child.idle.last_user_mono = 0.0
+    assert child._idle_suspend_due(now) is False           # only 50s < SUSPEND_AFTER
+
+
 # ---- RestartBackoff primitive (injectable clock) ---------------------------
 
 def test_restart_backoff_exponential_floor_cap_and_strikes():

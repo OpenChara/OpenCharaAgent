@@ -85,6 +85,11 @@ class _Driver:
 
 class CharaChild:
     SNAPSHOT_TTL = 5.0
+    # Auto-suspend a chat-mode (autonomy-off) chara after this long idle + nobody in its
+    # room + no live gateway — the next message / autonomy-on lazily restarts it (history
+    # restored). This is the ONLY lifecycle effect of autonomy-off; there is no separate
+    # restart concept for the user. Env-overridable for tests.
+    SUSPEND_AFTER = float(os.environ.get("LUNAMOTH_SUSPEND_AFTER", "1800"))
 
     def __init__(self, meta: S.SessionMeta, supervisor: "Supervisor") -> None:
         self.meta = meta
@@ -107,6 +112,7 @@ class CharaChild:
         self._client_stream_ids: set[Any] = set()
         self.idle = IdleGate()
         self.life: LifeState | None = None
+        self._chat_mode_since = 0.0  # when this run entered chat mode (for idle-suspend)
         # Supervised auto-restart: an unexpected exit restarts with backoff
         # (60s→1800s) up to 3 consecutive crashes, then suspends (terminal
         # crashed). A healthy run resets both. Operator start clears suspension.
@@ -114,6 +120,26 @@ class CharaChild:
 
     def status(self) -> dict[str, Any]:
         return {"state": self.state, "detail": self.detail, "pid": self.proc.pid if self.proc else 0, "life": dataclasses.asdict(self.life) if self.life else None}
+
+    def _gateway_enabled(self) -> bool:
+        """True if a messaging gateway is configured on for this chara — its in-child host
+        would die with the process, so an enabled gateway blocks idle-suspend."""
+        try:
+            data = json.loads((self.meta.root / "messaging.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        return bool(isinstance(data, dict) and data.get("enabled"))
+
+    def _idle_suspend_due(self, now: float) -> bool:
+        """Whether an idle chat-mode chara should be auto-suspended now: it entered chat
+        mode (``_chat_mode_since`` set), has been idle past ``SUSPEND_AFTER`` (since the
+        later of chat-mode entry / last operator message), nobody is in its room, and no
+        gateway is live. Pure decision — the loop owns the stop + the clock reset."""
+        if self._chat_mode_since == 0.0:
+            return False
+        attached = self.driver_slot.current is not None or bool(self._client_stream_ids)
+        idle_for = now - max(self.idle.last_user_mono, self._chat_mode_since)
+        return not attached and idle_for >= self.SUSPEND_AFTER and not self._gateway_enabled()
 
     async def start(self, *, operator: bool = True) -> dict[str, Any]:
         # operator=True is an explicit start (user message / WS attach / RPC):
@@ -462,8 +488,20 @@ class CharaChild:
                 # on, only the board/in-chat autonomy switch (which flips mode).
                 if str(snap.get("mode") or "live") != "live":
                     self._emit_life(LifeState("waiting"))
+                    # Idle-suspend: a chat-mode (autonomy-off) chara that's been idle past
+                    # SUSPEND_AFTER, with nobody in its room and no live gateway, is shut
+                    # down to free resources. The next message / autonomy-on lazily restarts
+                    # it (ensure_started, history restored) — which is also how a restart
+                    # happens at all, so autonomy stays the ONE switch.
+                    if self._chat_mode_since == 0.0:
+                        self._chat_mode_since = time.monotonic()
+                    if self._idle_suspend_due(time.monotonic()):
+                        self._emit_life(LifeState("waiting", detail="suspended (idle)"))
+                        asyncio.create_task(self.stop(), name=f"chara-{self.name}-suspend")
+                        return
                     await asyncio.sleep(1.0)
                     continue
+                self._chat_mode_since = 0.0  # autonomous again → reset the idle-suspend clock
                 # Autonomous (mode=live). Conversation vs self-work is the
                 # engagement window: present + recently spoke → conversation
                 # ("waiting · back to its own work in N min", via IdleGate);
