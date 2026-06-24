@@ -20,6 +20,7 @@ import { useT, type TFn, type TKey } from "../../i18n";
 import { useHubApi, useHubState } from "../../state/hub";
 import { useNavigate } from "../../hooks/useHashRoute";
 import { rpcErrText } from "../../lib/status";
+import { fileToB64 } from "../../lib/file";
 import { deckToast } from "../ui/deckToast";
 import { AVATAR_EXTS, AVATAR_UPLOAD_MAX } from "../overlays/avatar";
 import { avatarSrc } from "./visual";
@@ -28,9 +29,6 @@ import type { DeckCard } from "./types";
 const ART_EXTS = ["png", "jpg", "jpeg", "webp"];
 const ART_UPLOAD_MAX = 16 * 1024 * 1024;
 const DEFAULT_KINDS = ["keyvisual", "avatar", "sprite", "stickers", "background"] as const;
-const GENERATABLE: Record<string, boolean> = {
-  keyvisual: true, avatar: true, sprite: true, stickers: true, background: true,
-};
 const REF_MAX = 3; // user reference images per generation
 
 type VisKind = "avatar" | "sprite" | "background" | "keyvisual" | "stickers";
@@ -66,7 +64,6 @@ interface GenResult {
   url?: string;        // sprite/background/keyvisual/avatar asset url
   options?: string[];  // the kind's full candidate gallery (after this generation)
   urls?: string[];     // stickers (the saved set)
-  added?: string[];    // stickers just added this generation
   sheet_urls?: string[]; // stickers: the kept raw sheets
   data_uri?: string;   // avatar (inlined, for a fast preview)
   note?: string;
@@ -96,15 +93,6 @@ async function runVisualJob(
     if (st.status === "unknown") throw new Error("the generation job expired — please try again");
   }
   throw new Error("generation timed out");
-}
-
-function fileToB64(f: File): Promise<string> {
-  return new Promise((res, rej) => {
-    const reader = new FileReader();
-    reader.onload = () => res(String(reader.result || "").split(",")[1] || "");
-    reader.onerror = () => rej(new Error("read failed"));
-    reader.readAsDataURL(f);
-  });
 }
 
 function initUrlFor(kind: VisKind, card: DeckCard): string {
@@ -258,7 +246,7 @@ export function VisualEditor({
     : k === "background" ? !!card.bg_url
     : (card.stickers_urls || []).length > 0;
 
-  const genKinds = kinds.filter((k) => GENERATABLE[k]);
+  const genKinds = [...kinds];  // every visual kind is generatable
   // Anchor (keyvisual) first so the rest reference it (the backend reads the saved one).
   const orderedGenKinds = [
     ...genKinds.filter((k) => k === "keyvisual"),
@@ -450,7 +438,7 @@ export function VisualEditor({
           initSet={kind === "stickers" ? (card.stickers_urls || []).map((u) => assetUrl(String(u))) : []}
           initSheets={kind === "stickers" ? (card.sticker_sheets_urls || []).map((u) => assetUrl(String(u))) : []}
           disabled={disabled}
-          canGenerate={hasImageKey && !!GENERATABLE[kind]}
+          canGenerate={hasImageKey}
           hasBrief={hasBrief}
           getBrief={() => loadBrief(false)}
           getRefs={refData}
@@ -581,7 +569,7 @@ function VisualSlot({
         setSelName(assetName(u));
         if (out.options) setOptions(out.options.map((o) => assetUrl(String(o))));
         else setOptions((prev) => (prev.includes(u) ? prev : [...prev, u]));
-      } else if (kind === "avatar") setCurSrc(out.data_uri || "");
+      }
       // Cut wanted but skipped → flag it (engine not ready); the image is still saved.
       setMatteSkipped(wantsCut && out.matted === false);
       setIdle();

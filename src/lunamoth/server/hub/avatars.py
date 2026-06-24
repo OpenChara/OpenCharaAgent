@@ -92,8 +92,6 @@ def avatar_upload(path: str, data_b64: str, ext: str) -> dict[str, Any]:
     dropped once a sidecar exists — the sidecar is now the source of truth."""
     target = _writable_card_path(path)
     ext = str(ext or "").strip().lower().lstrip(".")
-    if ext == "jpeg":
-        ext = "jpeg"  # keep the extension the caller chose; mime is the same
     if ext not in _AVATAR_EXTS:
         raise RpcError(-32602, f"unsupported avatar type: .{ext} (allowed: {', '.join(_AVATAR_EXTS)})")
     try:
@@ -140,9 +138,8 @@ def avatar_upload(path: str, data_b64: str, ext: str) -> dict[str, Any]:
         opts.append(sidecar.name)
     assets["avatar"] = sidecar.name
     _cap_gallery(target, opts, sidecar.name)
-    lm = _lm_dict(raw_card)
-    lm["avatar_file"] = sidecar.name
-    lm.pop("avatar_svg", None)
+    _sync_avatar_pointer(raw_card)        # avatar_file ← the selected candidate
+    _lm_dict(raw_card).pop("avatar_svg", None)  # inline SVG fallback is gone once a sidecar exists
     _atomic_write_json(target, raw_card)
     return {"path": str(target), "avatar_file": sidecar.name, "selected": sidecar.name,
             "url": _asset_url(sidecar),
@@ -186,15 +183,7 @@ def _rel(card_path: Path, name: str) -> Path:
 
 def _assets_dict(raw_card: dict) -> dict:
     """The card's extensions.lunamoth.assets dict, created if absent."""
-    data = raw_card.get("data")
-    if not isinstance(data, dict):
-        data = raw_card["data"] = {}
-    ext_root = data.get("extensions")
-    if not isinstance(ext_root, dict):
-        ext_root = data["extensions"] = {}
-    lm = ext_root.get("lunamoth")
-    if not isinstance(lm, dict):
-        lm = ext_root["lunamoth"] = {}
+    lm = _lm_dict(raw_card)
     assets = lm.get("assets")
     if not isinstance(assets, dict):
         assets = lm["assets"] = {}
@@ -204,7 +193,7 @@ def _assets_dict(raw_card: dict) -> dict:
 # The avatar is a gallery kind too (candidates + select), but it keeps its own pointer
 # `lunamoth.avatar_file` in sync with the selected candidate so the inline board thumb +
 # card.avatar_path() keep resolving it. sprite/background/keyvisual point via assets[kind].
-_GALLERY_KINDS = ("sprite", "background", "keyvisual", "avatar")
+_GALLERY_KINDS = (*_ART_ASSET_KINDS, "avatar")
 
 
 def _lm_dict(raw_card: dict) -> dict:
@@ -219,6 +208,19 @@ def _lm_dict(raw_card: dict) -> dict:
     if not isinstance(lm, dict):
         lm = ext_root["lunamoth"] = {}
     return lm
+
+
+def _sync_avatar_pointer(raw_card: dict) -> None:
+    """Keep ``lunamoth.avatar_file`` (the inline board thumb + card.avatar_path() pointer)
+    in sync with the selected avatar gallery candidate (``assets['avatar']``), or drop it
+    when none remains. The avatar's legacy pointer predates the gallery and is read by
+    paths that never look at ``assets`` — this is the one bridge."""
+    sel = _assets_dict(raw_card).get("avatar")
+    lm = _lm_dict(raw_card)
+    if isinstance(sel, str) and sel:
+        lm["avatar_file"] = sel
+    else:
+        lm.pop("avatar_file", None)
 
 
 def _options_list(assets: dict, kind: str) -> list:
@@ -333,7 +335,7 @@ def asset_select(path: str, kind: str, name: str) -> dict[str, Any]:
         raise RpcError(-32602, f"no such candidate for {kind}: {name}")
     assets[kind] = name
     if kind == "avatar":
-        _lm_dict(raw_card)["avatar_file"] = name  # keep the inline-thumb pointer in sync
+        _sync_avatar_pointer(raw_card)  # keep the inline-thumb pointer on the selection
     _atomic_write_json(target, raw_card)
     return {"path": str(target), "kind": kind, "selected": name,
             "url": _asset_url(_rel(target, name))}
@@ -368,12 +370,8 @@ def asset_remove(path: str, kind: str, name: str) -> dict[str, Any]:
         assets[kind] = opts[-1] if opts else None
         if assets[kind] is None:
             assets.pop(kind, None)
-    if kind == "avatar":  # keep the inline-thumb pointer in sync with the selection
-        lm = _lm_dict(raw_card)
-        if assets.get("avatar"):
-            lm["avatar_file"] = assets["avatar"]
-        else:
-            lm.pop("avatar_file", None)
+    if kind == "avatar":
+        _sync_avatar_pointer(raw_card)  # keep the inline-thumb pointer in sync
     _atomic_write_json(target, raw_card)
     return {"path": str(target), "kind": kind, "removed": name,
             "selected": assets.get(kind, ""),
@@ -784,16 +782,7 @@ def visual_brief_save(path: str, brief: dict) -> dict[str, Any]:
     raw_card = json.loads(target.read_text(encoding="utf-8"))
     if not isinstance(raw_card, dict):
         raise RpcError(-32602, "card is not a JSON object")
-    data = raw_card.get("data")
-    if not isinstance(data, dict):
-        data = raw_card["data"] = {}
-    ext_root = data.get("extensions")
-    if not isinstance(ext_root, dict):
-        ext_root = data["extensions"] = {}
-    lm = ext_root.get("lunamoth")
-    if not isinstance(lm, dict):
-        lm = ext_root["lunamoth"] = {}
-    lm["visual_brief"] = brief
+    _lm_dict(raw_card)["visual_brief"] = brief
     _atomic_write_json(target, raw_card)
     return {"ok": True, "path": str(target)}
 

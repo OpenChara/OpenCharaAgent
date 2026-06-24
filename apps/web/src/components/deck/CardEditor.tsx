@@ -13,7 +13,8 @@ import { assetUrl } from "../../rpc";
 import { useT, type TKey } from "../../i18n";
 import { useHubApi, useHubState } from "../../state/hub";
 import { rpcErrText } from "../../lib/status";
-import { glyphOf, paletteClass } from "../../lib/format";
+import { glyphOf, paletteClass, fmtSize } from "../../lib/format";
+import { fileToB64 } from "../../lib/file";
 import { sectionText, serializeCardFields, type NormalizedDraft, type CardData } from "../../lib/cards";
 import { CardField, CardBlock, cardCtxString, type FieldHandle } from "./CardField";
 import { Avatar, avatarSrc, themeOf, themeStyle } from "./visual";
@@ -111,8 +112,10 @@ export function CardEditor({
   }, []);
 
   // Poll whether a visual is still generating for this card → the wake button shows
-  // 生成中 and warns (waking mid-generation would freeze a card missing the image).
+  // 生成中 and warns (waking mid-generation would freeze a card missing the image). Only
+  // for generatable cards (a builtin / PNG can't generate, so don't poll the hub for it).
   useEffect(() => {
+    if (card.builtin || !isJsonCard) return;
     let alive = true;
     const tick = () =>
       hub
@@ -556,15 +559,6 @@ export function CardEditor({
   );
 }
 
-function fileToB64(f: File): Promise<string> {
-  return new Promise((res, rej) => {
-    const reader = new FileReader();
-    reader.onload = () => res(String(reader.result || "").split(",")[1] || "");
-    reader.onerror = () => rej(new Error("read failed"));
-    reader.readAsDataURL(f);
-  });
-}
-
 interface CardAsset { rel: string; name: string; url: string | null; size: number; kind: string }
 
 const KIND_GLYPH: Record<string, string> = {
@@ -573,11 +567,6 @@ const KIND_GLYPH: Record<string, string> = {
 function assetExt(name: string): string {
   const i = name.lastIndexOf(".");
   return i > 0 ? name.slice(i + 1).toUpperCase().slice(0, 4) : "";
-}
-function humanSize(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
 /* 素材 manager — the card's extra files of ANY format (everything beside the card that
@@ -659,7 +648,7 @@ function AssetsPane({ cardPath, disabled }: { cardPath: string; disabled: boolea
       <div className="av-note">{t("cv-assets-note")}</div>
       <div className="cv-assets-grid">
         {items.map((a) => (
-          <div className="cv-asset" key={a.rel} title={`${a.name} · ${humanSize(a.size)}`}>
+          <div className="cv-asset" key={a.rel} title={`${a.name} · ${fmtSize(a.size)}`}>
             {a.kind === "image" && a.url ? (
               <img src={assetUrl(a.url)} alt="" onClick={() => void download(a)} />
             ) : (
