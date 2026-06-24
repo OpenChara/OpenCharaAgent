@@ -58,11 +58,14 @@ def is_excluded_skill_path(path: Path) -> bool:
     return any(part in EXCLUDED_SKILL_DIRS for part in parts)
 
 
-def iter_skill_index_files(skills_dir: Path, filename: str = "SKILL.md"):
+def iter_skill_index_files(skills_dir: Path, filename: str = "SKILL.md", *, followlinks: bool = True):
     """Walk *skills_dir* yielding sorted paths matching *filename*, excluding
-    VCS / virtualenv / cache directories so dependencies can't register skills."""
+    VCS / virtualenv / cache directories so dependencies can't register skills.
+    *followlinks* defaults True (discovery follows a symlinked skill library); the
+    per-turn freshness scan passes False so a stray symlink loop can't turn the
+    hot-path stat-walk into a full external-tree traversal."""
     matches: List[Path] = []
-    for root, dirs, files in os.walk(skills_dir, followlinks=True):
+    for root, dirs, files in os.walk(skills_dir, followlinks=followlinks):
         dirs[:] = [d for d in dirs if d not in EXCLUDED_SKILL_DIRS]
         if filename in files:
             matches.append(Path(root) / filename)
@@ -162,7 +165,7 @@ class SkillStore:
             if not base.is_dir():
                 continue
             try:
-                for skill_md in iter_skill_index_files(base):
+                for skill_md in iter_skill_index_files(base, followlinks=False):
                     try:
                         st = skill_md.stat()
                         fp[str(skill_md)] = (st.st_mtime_ns, st.st_size)

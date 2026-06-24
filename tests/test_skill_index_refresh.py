@@ -53,6 +53,22 @@ def test_unchanged_skills_keep_the_cached_prefix(agent):
     assert p1 is p2  # identical cached object — nothing changed, no rebuild/thrash
 
 
+def test_manifest_does_not_follow_symlink_cycles(agent):
+    # The per-turn freshness scan walks with followlinks=False, so a symlink cycle in a
+    # skills dir can't turn the hot-path stat-walk into an infinite loop / huge traversal.
+    a = agent()
+    sd = a.skills.skills_dir
+    sd.mkdir(parents=True, exist_ok=True)
+    _write_skill(a.skills, "real-skill", "A genuine one.")
+    try:
+        (sd / "loop").symlink_to(sd, target_is_directory=True)  # a cycle back to the root
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not supported here")
+    fp = a.skills.manifest()  # returns (no hang), and still sees the real skill
+    assert isinstance(fp, dict)
+    assert any("real-skill" in k for k in fp)
+
+
 def test_a_filesystem_hiccup_does_not_kill_the_turn(agent, monkeypatch):
     a = agent()
     a._build_system_messages("hi")  # warm
