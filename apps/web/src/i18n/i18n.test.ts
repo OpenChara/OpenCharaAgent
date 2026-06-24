@@ -81,8 +81,10 @@ describe("I18N strings map", () => {
   // (upd-current, upd-ch-dev, upd-ch-wheel, upd-check, upd-checking, upd-available,
   // upd-uptodate, upd-apply, upd-applying, upd-done, upd-restart, upd-failed,
   // upd-changelog, upd-installed, upd-no-notes, upd-behind, upd-nudge, upd-nudge-view) → 654.
-  it("preserves the full key set from the source dict (654 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(654);
+  // World-book reorder moved from drag to up/down buttons (touch/keyboard-friendly):
+  // dropped wb-reorder, added wb-move-up + wb-move-down → 655.
+  it("preserves the full key set from the source dict (655 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(655);
   });
 
   it("every value is a [zh, en] string tuple", () => {

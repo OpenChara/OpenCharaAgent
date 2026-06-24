@@ -1,8 +1,10 @@
 /* WorldBookEditor — a structured per-entry editor for a card's world book
  * (character_book). Each entry is a small card: a constant/keyword pill toggle,
- * a keyword chip-input, and a multi-line content box; entries can be added,
- * removed, and reordered by dragging the ⠿ handle. A toolbar offers "add entry"
- * and an AI generate/expand action (card.generate_worldbook, wired by the parent).
+ * a keyword chip-input, and a content box that auto-grows to fit its text;
+ * entries can be added, removed, and reordered with up/down controls (which work
+ * with mouse, touch, AND keyboard — unlike drag, which silently dies on touch).
+ * A toolbar offers "add entry" and an AI generate/expand action
+ * (card.generate_worldbook, wired by the parent).
  *
  * The editor is CONTROLLED: it holds no entry state of its own (the parent owns it
  * so edits survive a tab switch). Edits spread over the original entry object, so
@@ -11,7 +13,7 @@
  * Binding UI rule: the generate action shows a working spinner; reorder/add/remove
  * are optimistic (they flip the parent state immediately). */
 
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import type { WorldEntryFull } from "../../lib/cards";
 
@@ -38,22 +40,16 @@ export function WorldBookEditor({
   badge?: React.ReactNode;
 }) {
   const t = useT();
-  const dragFrom = useRef<number | null>(null);
-  const [dragOver, setDragOver] = useState<number | null>(null);
 
   const patch = (i: number, p: Partial<WorldEntryFull>) =>
     onChange(entries.map((e, j) => (j === i ? { ...e, ...p } : e)));
   const remove = (i: number) => onChange(entries.filter((_, j) => j !== i));
   const add = () => onChange([...entries, emptyEntry()]);
-
-  const drop = (to: number) => {
-    const from = dragFrom.current;
-    dragFrom.current = null;
-    setDragOver(null);
-    if (from === null || from === to) return;
+  const move = (i: number, dir: -1 | 1) => {
+    const j = i + dir;
+    if (j < 0 || j >= entries.length) return;
     const next = entries.slice();
-    const [moved] = next.splice(from, 1);
-    next.splice(to, 0, moved);
+    [next[i], next[j]] = [next[j], next[i]];
     onChange(next);
   };
 
@@ -90,19 +86,12 @@ export function WorldBookEditor({
               key={i}
               entry={e}
               editable={editable}
-              over={dragOver === i}
+              isFirst={i === 0}
+              isLast={i === entries.length - 1}
               onPatch={(p) => patch(i, p)}
               onRemove={() => remove(i)}
-              onDragStart={() => (dragFrom.current = i)}
-              onDragOver={(ev) => {
-                ev.preventDefault();
-                if (dragOver !== i) setDragOver(i);
-              }}
-              onDrop={() => drop(i)}
-              onDragEnd={() => {
-                dragFrom.current = null;
-                setDragOver(null);
-              }}
+              onMoveUp={() => move(i, -1)}
+              onMoveDown={() => move(i, 1)}
             />
           ))}
         </div>
@@ -114,27 +103,36 @@ export function WorldBookEditor({
 function EntryRow({
   entry,
   editable,
-  over,
+  isFirst,
+  isLast,
   onPatch,
   onRemove,
-  onDragStart,
-  onDragOver,
-  onDrop,
-  onDragEnd,
+  onMoveUp,
+  onMoveDown,
 }: {
   entry: WorldEntryFull;
   editable: boolean;
-  over: boolean;
+  isFirst: boolean;
+  isLast: boolean;
   onPatch: (p: Partial<WorldEntryFull>) => void;
   onRemove: () => void;
-  onDragStart: () => void;
-  onDragOver: (ev: React.DragEvent) => void;
-  onDrop: () => void;
-  onDragEnd: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
 }) {
   const t = useT();
   const [kin, setKin] = useState("");
+  const taRef = useRef<HTMLTextAreaElement>(null);
   const keys = entry.keys || [];
+
+  // Auto-grow the content box to fit its text, so a multi-paragraph entry is
+  // fully visible without an internal scrollbar or a manual drag-resize. Runs on
+  // mount (tab open) and whenever the content changes.
+  useLayoutEffect(() => {
+    const ta = taRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = ta.scrollHeight + "px";
+  }, [entry.content]);
 
   const addKeys = (raw: string) => {
     const parts = raw
@@ -146,22 +144,29 @@ function EntryRow({
   };
 
   return (
-    <div
-      className={"wb-entry" + (over ? " over" : "")}
-      onDragOver={editable ? onDragOver : undefined}
-      onDrop={editable ? onDrop : undefined}
-    >
+    <div className="wb-entry">
       <div className="wb-head">
         {editable && (
-          <span
-            className="wb-handle"
-            draggable
-            onDragStart={onDragStart}
-            onDragEnd={onDragEnd}
-            title={t("wb-reorder")}
-          >
-            ⠿
-          </span>
+          <div className="wb-reorder">
+            <button
+              type="button"
+              className="wb-move"
+              disabled={isFirst}
+              title={t("wb-move-up")}
+              onClick={onMoveUp}
+            >
+              ▲
+            </button>
+            <button
+              type="button"
+              className="wb-move"
+              disabled={isLast}
+              title={t("wb-move-down")}
+              onClick={onMoveDown}
+            >
+              ▼
+            </button>
+          </div>
         )}
         <button
           type="button"
@@ -217,6 +222,7 @@ function EntryRow({
         )}
       </div>
       <textarea
+        ref={taRef}
         className="wb-content"
         value={entry.content}
         placeholder={t("wb-content-ph")}

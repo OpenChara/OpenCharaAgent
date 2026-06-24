@@ -1314,15 +1314,17 @@ details.cv-raw pre{
 .wb-list{display:flex; flex-direction:column; gap:10px}
 .wb-entry{
   border:1px solid var(--hairline); border-radius:11px; background:var(--panel);
-  padding:10px 12px 12px; transition:box-shadow .12s, border-color .12s;
+  padding:10px 12px 12px;
 }
-.wb-entry.over{border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft)}
 .wb-head{display:flex; align-items:flex-start; gap:8px; flex-wrap:wrap}
-.wb-handle{
-  cursor:grab; color:var(--text-3); font-size:14px; line-height:1.6; user-select:none;
-  padding:2px 2px 0; flex:none; align-self:center;
+/* reorder via up/down (works with mouse, touch AND keyboard — drag does not) */
+.wb-reorder{display:flex; flex-direction:column; gap:1px; flex:none; align-self:center}
+.wb-move{
+  border:none; background:none; cursor:pointer; color:var(--text-3); font-size:9px;
+  line-height:1; padding:2px 5px; border-radius:5px;
 }
-.wb-handle:active{cursor:grabbing}
+.wb-move:hover:not([disabled]){color:var(--accent-deep); background:var(--accent-soft)}
+.wb-move[disabled]{opacity:.3; cursor:default}
 .wb-head .cv-st{cursor:pointer; border:1px solid transparent; flex:none; align-self:center; transition:filter .12s}
 .wb-head .cv-st:hover{filter:brightness(.97)}
 .wb-head .cv-st[disabled]{cursor:default; opacity:.7}
@@ -1347,14 +1349,18 @@ details.cv-raw pre{
 }
 .wb-del:hover{color:var(--red); background:rgba(229,72,77,.08)}
 .wb-content{
-  width:100%; margin-top:9px; box-sizing:border-box; resize:vertical; min-height:64px;
+  width:100%; margin-top:9px; box-sizing:border-box; resize:none; overflow:hidden; min-height:42px;
   font:inherit; font-size:13px; line-height:1.7; color:var(--text); white-space:pre-wrap;
   background:rgba(20,40,60,.035); border:none; border-radius:8px; padding:8px 11px;
   box-shadow:inset 0 0 0 1px var(--hairline-2); outline:none;
 }
 .wb-content:focus{box-shadow:inset 0 0 0 1px var(--accent); background:rgba(91,159,212,.05)}
 .wb-content::placeholder{color:var(--text-3)}
-.wb-content[readonly]{background:none; box-shadow:none; resize:none}
+.wb-content[readonly]{background:none; box-shadow:none}
+/* dark mode: the dark-blue alpha fills vanish on a dark panel, so the chips lose
+   their pill shape and the content box its surface — give them a light alpha. */
+body.dark .wb-key{background:rgba(255,255,255,.08)}
+body.dark .wb-content{background:rgba(255,255,255,.04)}
 
 /* ---------- 模态层 ---------- */
 .modal-layer{
