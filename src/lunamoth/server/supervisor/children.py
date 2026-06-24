@@ -103,6 +103,10 @@ class CharaChild:
         self._stdout_task: asyncio.Task | None = None
         self._idle_task: asyncio.Task | None = None
         self._restart_task: asyncio.Task | None = None
+        # Strong refs for fire-and-forget tasks (life-frame sends, idle-suspend stop):
+        # the event loop only holds a WEAK ref, so without this a task can be GC'd
+        # mid-flight and the frame/stop silently vanishes.
+        self._bg_tasks: set[asyncio.Task] = set()
         self._pending: dict[Any, asyncio.Future] = {}
         self._rpc_id = 0
         self._lock = asyncio.Lock()
@@ -456,10 +460,17 @@ class CharaChild:
                 return False
         return True
 
+    def _spawn(self, coro, *, name: "str | None" = None) -> None:
+        """Fire-and-forget a coroutine while keeping a STRONG ref (the loop holds only
+        a weak one) so it can't be garbage-collected mid-flight."""
+        task = asyncio.create_task(coro, name=name)
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+
     def _send_life_to(self, driver: _Driver) -> None:
         if self.life is None:
             return
-        asyncio.create_task(driver.send(self.life.frame()))
+        self._spawn(driver.send(self.life.frame()))
 
     def _emit_life(self, state: LifeState) -> None:
         if self.life == state:
@@ -467,7 +478,7 @@ class CharaChild:
         self.life = state
         driver = self.driver_slot.current
         if driver is not None and driver.joined:
-            asyncio.create_task(driver.send(state.frame()))
+            self._spawn(driver.send(state.frame()))
 
     async def _idle_loop(self) -> None:
         try:
@@ -497,7 +508,7 @@ class CharaChild:
                         self._chat_mode_since = time.monotonic()
                     if self._idle_suspend_due(time.monotonic()):
                         self._emit_life(LifeState("waiting", detail="suspended (idle)"))
-                        asyncio.create_task(self.stop(), name=f"chara-{self.name}-suspend")
+                        self._spawn(self.stop(), name=f"chara-{self.name}-suspend")
                         return
                     await asyncio.sleep(1.0)
                     continue

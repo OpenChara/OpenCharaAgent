@@ -114,9 +114,10 @@ class SessionMeta:
         return Path(path).stem if path else "default"
 
     def save(self) -> None:
+        from ..config import atomic_write_text
         self.root.mkdir(parents=True, exist_ok=True)
         data = {k: v for k, v in asdict(self).items()}
-        self.meta_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        atomic_write_text(self.meta_path, json.dumps(data, ensure_ascii=False, indent=2))
 
     def env(self) -> dict[str, str]:
         """Environment that points the runtime at this session — the COMPLETE

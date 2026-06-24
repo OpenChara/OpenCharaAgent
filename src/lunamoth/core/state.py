@@ -101,7 +101,8 @@ class EnvState:
         )
 
     def save(self, data: dict[str, Any]) -> None:
-        self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        from ..config import atomic_write_text
+        atomic_write_text(self.path, json.dumps(data, ensure_ascii=False, indent=2))
 
     def set_network(self, allowed: bool) -> dict[str, Any]:
         data = self.load()

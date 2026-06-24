@@ -75,6 +75,9 @@ class Supervisor:
         self.charas: dict[str, CharaChild] = {}
         self.gateways: dict[str, GatewayChild] = {}
         self._pty_bridges: set[PtyBridge] = set()
+        # Strong refs for fire-and-forget hub-dispatch tasks — the loop holds only a
+        # weak ref, so without this an in-flight RPC can be GC'd and silently dropped.
+        self._bg_tasks: set[asyncio.Task] = set()
         self._httpd: http.server.ThreadingHTTPServer | None = None
         self._shutdown = asyncio.Event()
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -416,7 +419,9 @@ class Supervisor:
                 except json.JSONDecodeError:
                     await sink.write_async({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "parse error"}})
                     continue
-                loop.create_task(self._dispatch_hub_async(dispatcher, req, sink))
+                task = loop.create_task(self._dispatch_hub_async(dispatcher, req, sink))
+                self._bg_tasks.add(task)
+                task.add_done_callback(self._bg_tasks.discard)
         finally:
             sink.close()
 

@@ -29,6 +29,33 @@ def openrouter_attribution_headers(base_url: str | None) -> dict[str, str]:
     return {}
 
 
+def atomic_write_text(path: Path, text: str, *, private: bool = False) -> None:
+    """Write *text* to *path* atomically (temp file in the same dir + ``os.replace``)
+    so a crash mid-write can never truncate a config/state file, and a concurrent
+    reader sees either the whole old or whole new file. ``private`` chmods 0600 (for
+    files that may hold secrets). The leaf helper for ``session/`` + ``core/state``;
+    the hub keeps its own copy in server/hub/_common."""
+    import tempfile
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        if private:
+            try:
+                os.chmod(tmp, 0o600)
+            except OSError:
+                pass
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def content_dir(name: str) -> Path:
     """Resolve a bundled-content dir (``cards`` / ``toolpacks``).
 
