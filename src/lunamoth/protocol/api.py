@@ -38,8 +38,8 @@ class Reply:
 
 @dataclass(frozen=True)
 class CommandInfo:
-    name: str   # "wish"
-    usage: str  # "/wish [text | done <id> | drop <id>]"
+    name: str   # "aspiration"
+    usage: str  # "/aspiration [text | clear]"
     help: str   # one line
 
 
@@ -102,9 +102,9 @@ class StateSnapshot:
     # The chara's provider endpoint, so a per-chara model picker can show WHICH
     # saved provider key is active (matched by provider+base_url). '' when unset.
     base_url: str = ""
-    # Wishes/skills/MCP listings are NOT here on purpose: the snapshot feeds a
+    # Aspiration/skills/MCP listings are NOT here on purpose: the snapshot feeds a
     # status line polled several times a second, and those need disk walks.
-    # Rich UIs get them from /wish /skills /mcp Reply.data on demand.
+    # Rich UIs get them from /aspiration /skills /mcp Reply.data on demand.
 
 
 def test_connection(settings) -> tuple[bool, str]:

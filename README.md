@@ -47,6 +47,8 @@ curl -fsSL https://raw.githubusercontent.com/Lunamos/LunaMoth/main/install.sh | 
 lunamoth              # opens the webui in your browser  (lunamoth tui = terminal UI; lunamoth doctor checks your setup)
 ```
 
+> While the repo is private, the installer fetches the release wheel through a token — prefix the command with `GITHUB_TOKEN=<a PAT with repo:read>`. To build from source instead, append `| bash -s -- --dev`.
+
 Or run the full desktop app from a clone (this is how we develop it) — needs [uv](https://docs.astral.sh/uv/) + Node:
 
 ```bash
@@ -63,6 +65,8 @@ Install on the server and leave a chara living in the background:
 curl -fsSL https://raw.githubusercontent.com/Lunamos/LunaMoth/main/install.sh | bash
 lunamoth desktop --daemon      # resident supervisor; charas keep running between visits
 ```
+
+> Same token note as above: while the repo is private, prefix with `GITHUB_TOKEN=<a PAT with repo:read>` (or `| bash -s -- --dev` to build from source).
 
 Then, from your own machine, tunnel in over SSH — no open ports, encryption and auth come from SSH, and your browser opens pointed at the server:
 
@@ -170,7 +174,7 @@ lunamoth desktop --daemon # the resident supervisor; `daemon status` / `daemon s
 lunamoth new muse --isolation admin
 ```
 
-In a session, everything is a `/command` — `/help`, `/wish`, `/skills`, `/mcp`, `/status`, `/memory`, `/files`, `/mode live|chat`, `/patience`, `/net on|off`, `/allow-dir`, `/settings`, `/exit`. Verbose output goes to a side panel so the console stays a clean chat log; `! <cmd>` runs your own shell command in the chara's jail.
+In a session, everything is a `/command` — `/help`, `/aspiration`, `/skills`, `/mcp`, `/status`, `/memory`, `/files`, `/mode live|chat`, `/patience`, `/net on|off`, `/allow-dir`, `/settings`, `/exit`. Verbose output goes to a side panel so the console stays a clean chat log; `! <cmd>` runs your own shell command in the chara's jail.
 
 Frontend dev loop: `uv run lunamoth desktop --no-open` in one terminal, `cd apps/web && npm run dev` in another (Vite proxies to the backend).
 

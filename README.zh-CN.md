@@ -47,6 +47,8 @@ curl -fsSL https://raw.githubusercontent.com/Lunamos/LunaMoth/main/install.sh | 
 lunamoth              # 在浏览器里打开 webui（lunamoth tui 是终端 UI;lunamoth doctor 检查环境）
 ```
 
+> 仓库目前是私有的,安装器要带 token 拉取 release wheel —— 在命令前加 `GITHUB_TOKEN=<带 repo:read 的 PAT>`。想从源码构建则在末尾加 `| bash -s -- --dev`。
+
 或者从 clone 跑完整桌面端(我们就是这么开发的)—— 需要 [uv](https://docs.astral.sh/uv/) + Node:
 
 ```bash
@@ -63,6 +65,8 @@ cd apps/desktop && npm install && npm run dev      # 打开桌面窗口
 curl -fsSL https://raw.githubusercontent.com/Lunamos/LunaMoth/main/install.sh | bash
 lunamoth desktop --daemon      # 常驻监督进程;chara 在你不在时也继续跑
 ```
+
+> 同上:仓库私有期间请加 `GITHUB_TOKEN=<带 repo:read 的 PAT>`(或 `| bash -s -- --dev` 从源码构建)。
 
 然后,在你自己的机器上,用 SSH 隧道连进去 —— 不开任何端口,加密和鉴权都交给 SSH,浏览器会自动打开并指向服务器:
 
@@ -170,7 +174,7 @@ lunamoth desktop --daemon # 常驻监督进程;`daemon status` / `daemon stop`
 lunamoth new muse --isolation admin
 ```
 
-会话里一切都是 `/命令` —— `/help`、`/wish`、`/skills`、`/mcp`、`/status`、`/memory`、`/files`、`/mode live|chat`、`/patience`、`/net on|off`、`/allow-dir`、`/settings`、`/exit`。冗长输出进侧栏,控制台始终是干净的聊天记录;`! <cmd>` 以你的身份在 chara 牢笼里跑命令。
+会话里一切都是 `/命令` —— `/help`、`/aspiration`、`/skills`、`/mcp`、`/status`、`/memory`、`/files`、`/mode live|chat`、`/patience`、`/net on|off`、`/allow-dir`、`/settings`、`/exit`。冗长输出进侧栏,控制台始终是干净的聊天记录;`! <cmd>` 以你的身份在 chara 牢笼里跑命令。
 
 前端开发:一个终端 `uv run lunamoth desktop --no-open`,另一个 `cd apps/web && npm run dev`(Vite 反代到后端)。
 

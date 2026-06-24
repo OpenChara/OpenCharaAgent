@@ -159,6 +159,37 @@ if [ -n "${GITHUB_TOKEN:-}" ]; then
   INSTALL_TARGET="$TMP_WHEEL"
 fi
 
+# Integrity: if the release publishes a checksum for the wheel, verify the
+# downloaded bytes before installing — this product hands an LLM a shell, so a
+# tampered wheel is the worst case. If no checksum is published we say so plainly
+# rather than implying the download was verified.
+if [ -n "$TMP_WHEEL" ]; then
+  WHEEL_BASENAME="${WHEEL_URL##*/}"
+  SUM_URL="$(printf '%s' "$release_json" \
+    | grep -oE '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]+(SHA256SUMS|\.sha256)"' \
+    | head -n1 | sed -E 's/.*"(https[^"]+)"/\1/')"
+  if [ -n "$SUM_URL" ]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+      ACTUAL_SHA="$(sha256sum "$TMP_WHEEL" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then
+      ACTUAL_SHA="$(shasum -a 256 "$TMP_WHEEL" | awk '{print $1}')"
+    else
+      ACTUAL_SHA=""
+    fi
+    if [ -n "$ACTUAL_SHA" ]; then
+      EXPECTED_SHA="$(curl -fsSL ${AUTH_HEADER[@]+"${AUTH_HEADER[@]}"} -H "Accept: application/octet-stream" "$SUM_URL" \
+        | grep -oiE '[0-9a-f]{64}' | head -n1)"
+      if [ -n "$EXPECTED_SHA" ] && [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+        rm -f "$TMP_WHEEL"
+        fail "wheel checksum MISMATCH (expected $EXPECTED_SHA, got $ACTUAL_SHA) — refusing to install"
+      fi
+      [ -n "$EXPECTED_SHA" ] && say "wheel checksum verified ($ACTUAL_SHA)"
+    fi
+  else
+    say "NOTE: this release publishes no checksum — wheel integrity NOT verified."
+  fi
+fi
+
 say "installing lunamoth (server + messaging extras) ..."
 # `uv tool install` puts an isolated venv under uv's data dir and links the
 # `lunamoth` entrypoint onto PATH. Re-running upgrades in place (--force).
