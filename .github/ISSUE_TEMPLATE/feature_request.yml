@@ -1,0 +1,34 @@
+name: Feature request
+description: Suggest an idea or improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: The use case or pain point, not just the proposed solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What you'd like to see. Sketches / API shapes welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you weighed, and why this one.
+  - type: dropdown
+    id: audience
+    attributes:
+      label: Who is this for?
+      options:
+        - OC creators (building a character)
+        - The charas (how they live / their tools)
+        - Developers / agent users (CLI / API / gateway)
+        - Other
+    validations:
+      required: true

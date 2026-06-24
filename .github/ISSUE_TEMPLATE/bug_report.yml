@@ -1,0 +1,44 @@
+name: Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For a **security vulnerability**, please do NOT
+        file a public issue — follow SECURITY.md instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+      placeholder: Steps to reproduce, expected vs actual.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output / logs
+      description: Error text, a `lunamoth doctor` excerpt, or log lines. Redact any secrets.
+      render: shell
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which surface?
+      options:
+        - CLI / TUI
+        - Web / desktop UI
+        - JSON-RPC / gateway
+        - Sandbox / tools
+        - Messaging (WeChat / QQ / Telegram)
+        - Other / not sure
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: OS + version, install method (installer wheel vs source), isolation mode.
+      placeholder: "macOS 15.5, source clone, sandbox isolation"
+    validations:
+      required: true
