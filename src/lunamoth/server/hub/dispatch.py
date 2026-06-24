@@ -192,6 +192,7 @@ class HubDispatcher:
             "card.merge_world": self._card_merge_world,
             "cards.draft": self._cards_draft,
             "card.from_draft": self._card_from_draft,
+            "card.generate_worldbook": self._card_generate_worldbook,
             "defaults.get": lambda p: _config._public_defaults(_config.load_defaults()),
             "image.catalog": self._image_catalog,
             "defaults.set": self._defaults_set,
@@ -610,6 +611,26 @@ class HubDispatcher:
         return _cards.save_card(
             _card_draft.draft_to_card(draft, origin_text=str(p.get("origin") or ""), as_draft=bool(p.get("as_draft"))),
             path=str(p.get("path") or ""),
+        )
+
+    def _card_generate_worldbook(self, p: dict[str, Any]) -> Any:
+        # Generate / expand a card's world book from its persona — same per-task
+        # card_model + card_provider as cards.draft (Settings · 模型 · 其他模态).
+        _d = _config.load_defaults()
+        _route = _config.task_defaults(_d, str(_d.get("card_provider") or ""))
+        raw_count = p.get("count")
+        count = int(raw_count) if isinstance(raw_count, (int, float)) else 8
+        return _card_draft.generate_worldbook(
+            _route,
+            name=str(p.get("name") or ""),
+            description=str(p.get("description") or ""),
+            personality=str(p.get("personality") or ""),
+            scenario=str(p.get("scenario") or ""),
+            first_mes=str(p.get("first_mes") or ""),
+            existing=p.get("existing") if isinstance(p.get("existing"), list) else [],
+            mode=str(p.get("mode") or "fresh"),
+            count=count,
+            model=str(_d.get("card_model") or ""),
         )
 
     def _image_catalog(self, p: dict[str, Any]) -> Any:

@@ -51,7 +51,7 @@ Requirements:
 - personality: a concise distillation of the character's temperament and traits (a phrase or a few sentences).
 - scenario: the current situation / setting the character is in right now (1-3 sentences).
 - first_mes: an opening message in character — the FIRST thing the character says, in their own voice.
-- world_entries: up to 4 lorebook entries (0 is fine). keys are short trigger words/names. At most one entry may be constant=true.
+- world_entries: the character's world book — 6-8 lorebook entries that give the character real substance to draw on (a thin world makes a thin character, so be generous and concrete; never return an empty or one-line world). Cover the things that actually shape THIS character: the core setting/premise, key people and relationships, places, history and formative events, factions or groups, signature items, the character's domains of knowledge or interest, and their rules/boundaries. Each entry: `keys` = 3-6 short trigger words or names that would surface it in conversation; `content` = a substantial, self-contained paragraph (roughly 2-5 sentences) written as reference notes in the character's world, not a single short phrase. Mark the 1-2 always-relevant core entries (the central premise, the character's grounding) constant=true; the rest constant=false (keyword-triggered).
 - polaris: the character's North Star — ONE grand, somewhat abstract ideal it lives toward but can never fully reach or finish (not a task list, not a small goal). A single sentence in the character's spirit. May be "" if none fits.
 - tagline: one line.
 - theme_color: the character's PRIMARY signature color, a hex like "#5B9FD4".
@@ -101,23 +101,28 @@ def _string_field(obj: dict[str, Any], key: str) -> str:
     return value.strip()
 
 
+_MAX_WORLD_ENTRIES = 10
+_MAX_WORLD_CONSTANTS = 3
+
+
 def _validate_world_entries(value: Any) -> list[dict[str, Any]]:
-    """Lenient: keep the well-formed entries (cap 4, at most one constant) and skip
-    the rest. An empty or odd-sized list is fine — a card may simply have little
-    world. Generation must NOT fail because the model returned the wrong count."""
+    """Lenient: keep the well-formed entries (cap 10, a few constants allowed) and
+    skip the rest. An empty or odd-sized list is fine — a card may simply have
+    little world. Generation must NOT fail because the model returned the wrong
+    count; richer is better, so the cap is generous rather than tight."""
     out: list[dict[str, Any]] = []
     constants = 0
     if not isinstance(value, list):
         return out
     for entry in value:
-        if len(out) >= 4 or not isinstance(entry, dict):
+        if len(out) >= _MAX_WORLD_ENTRIES or not isinstance(entry, dict):
             continue
         keys = entry.get("keys")
         clean_keys = [str(k).strip() for k in keys if isinstance(k, str) and str(k).strip()] if isinstance(keys, list) else []
         content = entry.get("content")
         if not clean_keys or not isinstance(content, str) or not content.strip():
             continue
-        constant = bool(entry.get("constant")) and constants == 0
+        constant = bool(entry.get("constant")) and constants < _MAX_WORLD_CONSTANTS
         constants += 1 if constant else 0
         out.append({"keys": clean_keys[:6], "content": content.strip(), "constant": constant})
     return out
@@ -208,6 +213,85 @@ def draft_card_from_inspiration(defaults: dict[str, str], inspiration: str, mode
     if not raw.strip():
         raise HubRpcError(-32050, "the model returned an empty draft", {"kind": "draft_json", "detail": "empty response"})
     return _parse_card_draft(raw)
+
+
+# ---- standalone world-book generation / expansion -------------------------------
+
+_WORLDBOOK_SYSTEM = """You are a world-book author for a SillyTavern/LunaMoth character card.
+A world book is a set of lorebook entries — reference notes the character can draw on, each \
+surfaced by trigger keywords during play. Given the character below, write a rich, concrete world book.
+
+Write every entry in the SAME LANGUAGE as the character's description.
+
+Reply with STRICT JSON ONLY — one object, no markdown, no commentary:
+{"entries": [{"keys": [string, ...], "content": string, "constant": boolean}]}
+
+Each entry:
+- keys: 3-6 short trigger words or names (people, places, terms) that would naturally surface this entry in conversation.
+- content: a substantial, self-contained paragraph (roughly 2-5 sentences) of reference notes set in the character's world — not a one-liner.
+- constant: true for an always-relevant core entry (the central premise / the character's grounding), false for the rest. Mark only 1-2 as constant.
+
+Cover the things that actually shape THIS character: core setting/premise, key people and relationships, \
+places, history and formative events, factions or groups, signature items, the character's domains of \
+knowledge or interest, and their rules/boundaries. Be generous and concrete — a thin world makes a thin character."""
+
+
+def _existing_summary(existing: Any) -> list[str]:
+    """One short bullet per existing entry, so an expand call can avoid repeats."""
+    out: list[str] = []
+    for e in (existing if isinstance(existing, list) else [])[:_MAX_WORLD_ENTRIES]:
+        if not isinstance(e, dict):
+            continue
+        raw_keys = e.get("keys") or ([e.get("key")] if e.get("key") else [])
+        keys = [str(k).strip() for k in raw_keys if str(k).strip()]
+        content = str(e.get("content") or e.get("desc") or "").strip()
+        if keys and content:
+            out.append(f"- [{', '.join(keys)}] {content[:160]}")
+    return out
+
+
+def generate_worldbook(defaults: dict[str, str], *, name: str = "", description: str = "",
+                       personality: str = "", scenario: str = "", first_mes: str = "",
+                       existing: Any = None, mode: str = "fresh", count: int = 8,
+                       model: str = "") -> dict[str, Any]:
+    """Generate (or, with ``mode="expand"``, extend) a character's world book from its
+    persona/scenario. Returns ``{"entries": [{keys, content, constant}]}`` — the same
+    entry shape ``cards.draft`` emits. No fallback: an empty/invalid model reply errors."""
+    if not any(s.strip() for s in (name, description, personality, scenario, first_mes)):
+        raise RpcError(-32602, "card.generate_worldbook needs some character content")
+    want = max(1, min(int(count or 8), _MAX_WORLD_ENTRIES))
+    parts: list[str] = []
+    if name.strip():
+        parts.append(f"Name: {name.strip()}")
+    if description.strip():
+        parts.append(f"Description:\n{description.strip()[:2000]}")
+    if personality.strip():
+        parts.append(f"Personality:\n{personality.strip()[:800]}")
+    if scenario.strip():
+        parts.append(f"Scenario:\n{scenario.strip()[:800]}")
+    if first_mes.strip():
+        parts.append(f"Opening line:\n{first_mes.strip()[:600]}")
+    have = _existing_summary(existing)
+    if mode == "expand" and have:
+        parts.append("Existing entries (do NOT repeat these — write DIFFERENT ones):\n" + "\n".join(have))
+        parts.append(f"\nWrite about {want} NEW world-book entries that expand this world without duplicating the existing ones.")
+    else:
+        parts.append(f"\nWrite a world book of about {want} entries for this character.")
+    raw = _pkg()._complete(
+        defaults, _WORLDBOOK_SYSTEM, "\n\n".join(parts),
+        model=model, max_tokens=4096, temperature=0.8,
+        response_format={"type": "json_object"},
+    )
+    if not raw.strip():
+        raise HubRpcError(-32050, "the model returned an empty world book",
+                          {"kind": "worldbook", "detail": "empty response"})
+    try:
+        obj = json.loads(raw.strip())
+    except json.JSONDecodeError as exc:
+        raise HubRpcError(-32050, f"the model did not return strict JSON ({exc.msg} at line {exc.lineno})",
+                          {"kind": "worldbook_json", "detail": str(exc)}) from exc
+    entries_raw = obj.get("entries") if isinstance(obj, dict) else obj
+    return {"entries": _validate_world_entries(entries_raw)}
 
 
 # ---- per-field AI edit (natural-language rewrite of ONE card field) -------------

@@ -1159,6 +1159,53 @@ def test_generation_helpers_use_system_default_model(monkeypatch):
     assert seen == [""]
 
 
+def test_validate_world_entries_keeps_up_to_ten_and_a_few_constants():
+    """A richer world book: the draft validator now keeps up to 10 entries (was 4)
+    and a few constants (was at most one), so generated cards aren't world-starved."""
+    raw = [{"keys": [f"k{i}"], "content": f"content {i}", "constant": True} for i in range(12)]
+    out = H._validate_world_entries(raw)
+    assert len(out) == 10
+    assert sum(1 for e in out if e["constant"]) == H.card_draft._MAX_WORLD_CONSTANTS
+
+
+def test_generate_worldbook_fresh_and_expand(monkeypatch):
+    set_defaults()
+    canned = json.dumps({"entries": [
+        {"keys": ["Aria", "sister"], "content": "Aria is the protagonist's botanist sister.", "constant": False},
+        {"keys": ["The Vault"], "content": "The sealed archive beneath the city.", "constant": True},
+    ]})
+    seen = {}
+
+    def fake_complete(defaults, system, user, model="", **kw):
+        seen["user"] = user
+        seen["model"] = model
+        return canned
+
+    monkeypatch.setattr(H, "_complete", fake_complete)
+    # fresh: returns the structured entries; uses the system default model (model="").
+    r = result("card.generate_worldbook", {"name": "Hero", "description": "a long enough persona to pass the guard"})
+    assert [e["keys"] for e in r["entries"]] == [["Aria", "sister"], ["The Vault"]]
+    assert seen["model"] == ""
+
+    # expand: the existing entries are shown to the model so it won't duplicate them.
+    result("card.generate_worldbook", {
+        "name": "Hero", "description": "persona text here",
+        "existing": [{"keys": ["Aria"], "content": "the sister"}], "mode": "expand",
+    })
+    assert "Aria" in seen["user"] and "do NOT repeat" in seen["user"]
+
+
+def test_generate_worldbook_needs_content_and_surfaces_empty(monkeypatch):
+    set_defaults()
+    # no character content at all → a clear request error, never a fabricated book.
+    err = rpc_error("card.generate_worldbook", {})
+    assert err["code"] == -32602
+    # an empty model reply surfaces as an error (no-fallback rule), not an empty book.
+    monkeypatch.setattr(H, "_complete", lambda *a, **k: "")
+    err2 = rpc_error("card.generate_worldbook", {"description": "enough persona content here"})
+    assert "world book" in err2["message"].lower()
+
+
 def test_defaults_no_longer_carries_aux_models():
     set_defaults()
     pub = result("defaults.set", {"model": "main/model", "aux_models": {"avatar": "x"}})

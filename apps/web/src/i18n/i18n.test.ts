@@ -75,8 +75,10 @@ describe("I18N strings map", () => {
   // cv-assets-note, cv-assets-empty) → 624; the any-format rework added 2
   // (cv-asset-download, cv-asset-toobig) → 626. Dropped the aspiration profile hint
   // (polaris-hint — the 理想 pane shows the value or the empty/CTA line, no preamble) → 625.
-  it("preserves the full key set from the source dict (625 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(625);
+  // The structured world-book editor added 11 (wb-add, wb-gen, wb-expand, wb-empty,
+  // wb-reorder, wb-type-tip, wb-key-ph, wb-key-del, wb-del, wb-content-ph, wb-gen-empty) → 636.
+  it("preserves the full key set from the source dict (636 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(636);
   });
 
   it("every value is a [zh, en] string tuple", () => {

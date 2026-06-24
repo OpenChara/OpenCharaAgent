@@ -101,6 +101,7 @@ body.dark .searchfield{background:#1C2228; border-color:rgba(255,255,255,.14); c
 .btn.danger{background:var(--red); color:#fff}
 .btn.danger[disabled]{background:#EBB9BB; cursor:not-allowed}
 .btn.big{padding:10px 22px; font-size:14px; border-radius:9px}
+.btn.sm{padding:4px 10px; font-size:12px; border-radius:7px}
 .btn.text{background:none; color:var(--text-2); padding:6px 8px}
 .btn.text:hover{color:var(--text)}
 .btn.stacked{display:flex; flex-direction:column; align-items:center; gap:1px; padding:10px 26px; line-height:1.4; min-width:220px}
@@ -1301,6 +1302,59 @@ details.cv-raw pre{
 .cv-st.kw{background:#E9F8EF; color:#1E8E4A; border:1px solid rgba(47,191,90,.3)}
 .cv-we-keys{margin-left:auto; font-size:12px; color:var(--text-3)}
 .cv-we-body{padding:0 14px 13px; font-size:13px; line-height:1.7; color:var(--text-2); white-space:pre-wrap}
+
+/* ---------- 世界书 structured editor (WorldBookEditor) ---------- */
+.wb-editor{display:flex; flex-direction:column; gap:10px}
+.wb-toolbar{display:flex; align-items:center; gap:8px}
+.wb-toolbar .wb-gen{color:var(--accent-deep)}
+.wb-empty{
+  font-size:12.5px; color:var(--text-3); line-height:1.6; padding:16px 14px;
+  border:1px dashed var(--hairline); border-radius:11px; text-align:center;
+}
+.wb-list{display:flex; flex-direction:column; gap:10px}
+.wb-entry{
+  border:1px solid var(--hairline); border-radius:11px; background:var(--panel);
+  padding:10px 12px 12px; transition:box-shadow .12s, border-color .12s;
+}
+.wb-entry.over{border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-soft)}
+.wb-head{display:flex; align-items:flex-start; gap:8px; flex-wrap:wrap}
+.wb-handle{
+  cursor:grab; color:var(--text-3); font-size:14px; line-height:1.6; user-select:none;
+  padding:2px 2px 0; flex:none; align-self:center;
+}
+.wb-handle:active{cursor:grabbing}
+.wb-head .cv-st{cursor:pointer; border:1px solid transparent; flex:none; align-self:center; transition:filter .12s}
+.wb-head .cv-st:hover{filter:brightness(.97)}
+.wb-head .cv-st[disabled]{cursor:default; opacity:.7}
+.wb-keys{display:flex; flex-wrap:wrap; align-items:center; gap:5px; flex:1; min-width:120px}
+.wb-key{
+  display:inline-flex; align-items:center; gap:3px; font-size:12px; color:var(--text);
+  background:rgba(20,40,60,.06); padding:2px 4px 2px 9px; border-radius:99px; white-space:nowrap;
+}
+.wb-key-x{
+  border:none; background:none; cursor:pointer; color:var(--text-3); font-size:13px;
+  line-height:1; padding:0 3px; border-radius:99px;
+}
+.wb-key-x:hover{color:var(--red)}
+.wb-key-in{
+  border:none; outline:none; background:none; font:inherit; font-size:12.5px; color:var(--text);
+  min-width:96px; flex:1; padding:3px 4px;
+}
+.wb-key-in::placeholder{color:var(--text-3)}
+.wb-del{
+  border:none; background:none; cursor:pointer; color:var(--text-3); font-size:13px;
+  line-height:1; padding:4px 6px; border-radius:7px; flex:none; align-self:center;
+}
+.wb-del:hover{color:var(--red); background:rgba(229,72,77,.08)}
+.wb-content{
+  width:100%; margin-top:9px; box-sizing:border-box; resize:vertical; min-height:64px;
+  font:inherit; font-size:13px; line-height:1.7; color:var(--text); white-space:pre-wrap;
+  background:rgba(20,40,60,.035); border:none; border-radius:8px; padding:8px 11px;
+  box-shadow:inset 0 0 0 1px var(--hairline-2); outline:none;
+}
+.wb-content:focus{box-shadow:inset 0 0 0 1px var(--accent); background:rgba(91,159,212,.05)}
+.wb-content::placeholder{color:var(--text-3)}
+.wb-content[readonly]{background:none; box-shadow:none; resize:none}
 
 /* ---------- 模态层 ---------- */
 .modal-layer{

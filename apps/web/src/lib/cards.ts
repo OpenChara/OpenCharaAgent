@@ -20,6 +20,18 @@ export interface WorldEntry {
   constant: boolean;
 }
 
+/** A world-book entry for the structured editor / save path: the edited fields
+ *  plus any passthrough (secondary_keys, selective, comment…) preserved as-is, so
+ *  round-tripping through the editor never silently drops a power-user field. */
+export interface WorldEntryFull {
+  keys: string[];
+  content: string;
+  constant: boolean;
+  enabled?: boolean;
+  insertion_order?: number;
+  [k: string]: unknown;
+}
+
 /** The theme dual-color. */
 export interface Theme {
   primary: string;
@@ -66,6 +78,26 @@ export interface NormalizedDraft {
   force_roleplay: boolean;
   website: boolean;
   [k: string]: unknown;
+}
+
+/** Normalize raw character_book entries (the card.read / draft shape) into the
+ *  structured-editor type: keys/content/constant coerced, all other fields
+ *  (secondary_keys, selective, comment, enabled, insertion_order…) preserved. */
+export function toWorldEntries(raw: ReadonlyArray<unknown> | undefined): WorldEntryFull[] {
+  const out: WorldEntryFull[] = [];
+  for (const item of raw || []) {
+    if (!item || typeof item !== "object") continue;
+    const e = item as Record<string, unknown>;
+    const keysRaw = e.keys ?? (e.key ? [e.key] : []);
+    const keys = Array.isArray(keysRaw) ? keysRaw.map((k) => String(k)).filter(Boolean) : [];
+    out.push({
+      ...e,
+      keys,
+      content: String(e.content ?? e.desc ?? ""),
+      constant: !!e.constant,
+    });
+  }
+  return out;
 }
 
 const HEX6 = /^#[0-9a-fA-F]{6}$/;
@@ -183,8 +215,11 @@ export interface CardFields {
   tagline?: string;
   /** Polaris / north-star text (textContent of the field). */
   goals?: string;
-  /** World book, in the "keys — content [constant]" line form. */
+  /** World book, in the "keys — content [constant]" line form (legacy text path). */
   world?: string;
+  /** World book as structured entries (preferred — lossless, multi-line content).
+   *  Takes precedence over `world` when present; undefined = world not edited. */
+  worldEntries?: WorldEntryFull[];
   user_name?: string;
   user_persona?: string;
   /** data.creator_notes (NOT under lunamoth). */
@@ -239,8 +274,32 @@ export function serializeCardFields(
     if (polaris) lm.polaris = polaris;
     else delete lm.polaris;
   }
-  // World book — only rebuilt when the world editor was actually present. undefined
-  // (its tab wasn't open) preserves the card's existing character_book untouched.
+  // World book — structured path (preferred): lossless per-entry save. Empty entries
+  // (no keys or no content) are dropped; passthrough fields (secondary_keys, selective,
+  // comment…) are preserved; insertion_order is re-indexed to the editor's order.
+  if (fields.worldEntries !== undefined) {
+    const entries = fields.worldEntries
+      .map((w) => ({
+        ...w,
+        keys: (w.keys || []).map((k) => k.trim()).filter(Boolean),
+        content: String(w.content ?? ""),
+        constant: !!w.constant,
+        enabled: w.enabled !== false,
+      }))
+      .filter((w) => w.keys.length > 0 && w.content.trim() !== "")
+      .map((w, i) => ({ ...w, insertion_order: i }));
+    // Always write an explicit book (even entries:[]) on the structured path. This save
+    // goes through card.patch, where a MISSING key is PRESERVED, not cleared — so a
+    // `delete` would silently keep stale entries on disk after the user removed them all.
+    // Writing entries:[] makes a "clear everything" actually persist.
+    data.character_book = {
+      name: (data.character_book && data.character_book.name) || data.name,
+      entries,
+    };
+    return data;
+  }
+  // World book — legacy text path: only rebuilt when the world editor was present.
+  // undefined (its tab wasn't open) preserves the card's existing character_book.
   if (fields.world !== undefined) {
     const tmp: Partial<NormalizedDraft> = {};
     putSection(tmp, "world_entries", fields.world);

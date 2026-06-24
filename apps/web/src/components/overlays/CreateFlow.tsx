@@ -11,7 +11,7 @@
  * Binding UI rule: generation shows a ticking "思考 Ns" state and surfaces errors
  * with a retry; save buttons show working states. The telling never disappears. */
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { useHub } from "../../state/hub";
 import { useNavigate } from "../../hooks/useHashRoute";
@@ -21,9 +21,12 @@ import {
   normalizeDraft,
   sectionText,
   putSection,
+  toWorldEntries,
   type NormalizedDraft,
+  type WorldEntryFull,
 } from "../../lib/cards";
 import { CardField, CardBlock, cardCtxString, type FieldHandle } from "../deck/CardField";
+import { WorldBookEditor } from "../deck/WorldBookEditor";
 import { useDirtyGuard } from "../../hooks/useDirtyGuard";
 import { DeckModal } from "../ui/DeckModal";
 import { deckToast } from "../ui/deckToast";
@@ -36,7 +39,7 @@ const SECTION_DEFS: ReadonlyArray<readonly [string, TKey]> = [
   ["personality", "cve-personality"],
   ["scenario", "cve-scenario"],
   ["first_mes", "sec-first"],
-  ["world_entries", "sec-world"],
+  // world_entries is edited by the structured WorldBookEditor (not a text section).
   ["seed_goals", "sec-goals"],
   ["tagline", "sec-tagline"],
 ] as const;
@@ -286,6 +289,11 @@ function ShapeStep({
   const [savingDraft, setSavingDraft] = useState(false);
   const [landing, setLanding] = useState(false);
   const [landed, setLanded] = useState<{ path: string; name: string } | null>(null);
+  // World book: structured entries (seeded from the draft), edited by WorldBookEditor.
+  const [worldEntries, setWorldEntries] = useState<WorldEntryFull[]>(() =>
+    toWorldEntries(draft.world_entries),
+  );
+  const [worldGenBusy, setWorldGenBusy] = useState(false);
 
   // Field handles (uncontrolled, read on collect). name/user_name/user_persona are
   // plain; SECTION_DEFS get the AI rewrite.
@@ -305,12 +313,47 @@ function ShapeStep({
       const text = secRefs.current[key].current?.value() ?? "";
       putSection(data, key, text);
     }
+    // world_entries rides the structured editor state (not a text section).
+    data.world_entries = worldEntries;
     data.force_roleplay = forceRoleplay;
     data.website = personalSite;
     return data;
   };
 
   const ctx = () => cardCtxString({ ...collect() });
+
+  // ✦ AI world-book generation for the in-progress draft (uses the current shape).
+  const genWorld = async (mode: "fresh" | "expand") => {
+    setWorldGenBusy(true);
+    try {
+      const cur = collect();
+      const r = await hub.call<{ entries?: WorldEntryFull[] }>(
+        "card.generate_worldbook",
+        {
+          name: cur.name,
+          description: String(cur.description || ""),
+          personality: String(cur.personality || ""),
+          scenario: String(cur.scenario || ""),
+          first_mes: String(cur.first_mes || ""),
+          existing: mode === "expand"
+            ? worldEntries.map((e) => ({ keys: e.keys, content: e.content, constant: e.constant }))
+            : [],
+          mode,
+        },
+        240000,
+      );
+      const gen = toWorldEntries(r.entries || []);
+      if (!gen.length) {
+        deckToast(t("wb-gen-empty"), true);
+        return;
+      }
+      setWorldEntries(mode === "expand" ? [...worldEntries, ...gen] : gen);
+    } catch (e) {
+      deckToast(rpcErrText(t, e as { message?: string }), true);
+    } finally {
+      setWorldGenBusy(false);
+    }
+  };
 
   const onSaveDraft = async () => {
     setSavingDraft(true);
@@ -384,16 +427,30 @@ function ShapeStep({
         {plain(fUserPersona, "sec-user-persona", draft.user_persona)}
 
         {SECTION_DEFS.map(([key, labelKey]) => (
-          <div className="sec" key={key} data-sec={key}>
-            <CardBlock
-              labelKey={labelKey}
-              hub={hub}
-              ctx={ctx}
-              fieldRef={secRefs.current[key]}
-              fieldKey={key}
-              field={<CardField ref={secRefs.current[key]} editable initial={sectionText(draft, key)} />}
-            />
-          </div>
+          <Fragment key={key}>
+            <div className="sec" data-sec={key}>
+              <CardBlock
+                labelKey={labelKey}
+                hub={hub}
+                ctx={ctx}
+                fieldRef={secRefs.current[key]}
+                fieldKey={key}
+                field={<CardField ref={secRefs.current[key]} editable initial={sectionText(draft, key)} />}
+              />
+            </div>
+            {key === "first_mes" && (
+              <div className="sec" data-sec="world_entries">
+                <h3>{t("sec-world")}</h3>
+                <WorldBookEditor
+                  entries={worldEntries}
+                  editable
+                  onChange={setWorldEntries}
+                  onGenerate={(mode) => void genWorld(mode)}
+                  genBusy={worldGenBusy}
+                />
+              </div>
+            )}
+          </Fragment>
         ))}
 
         <div className="sec embodiment-sec">

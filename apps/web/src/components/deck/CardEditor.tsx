@@ -15,8 +15,9 @@ import { useHubApi, useHubState } from "../../state/hub";
 import { rpcErrText } from "../../lib/status";
 import { glyphOf, paletteClass, fmtSize } from "../../lib/format";
 import { fileToB64 } from "../../lib/file";
-import { sectionText, serializeCardFields, type NormalizedDraft, type CardData } from "../../lib/cards";
+import { serializeCardFields, toWorldEntries, type WorldEntryFull, type CardData } from "../../lib/cards";
 import { CardField, CardBlock, cardCtxString, type FieldHandle } from "./CardField";
+import { WorldBookEditor } from "./WorldBookEditor";
 import { Avatar, avatarSrc, themeOf, themeStyle } from "./visual";
 import { VisualEditor } from "./VisualEditor";
 import { deckToast, deckToastAction } from "../ui/deckToast";
@@ -24,6 +25,12 @@ import { DeckModal } from "../ui/DeckModal";
 import type { DeckCard, FullCard, CardExtLunamoth, WorldBookEntry } from "./types";
 
 type Tab = "set" | "vis" | "emo" | "assets" | "world";
+
+/** A stable signature of the world book's editable content + order, for dirty
+ *  detection (passthrough fields don't trigger a save; reordering does). */
+function worldKey(entries: WorldEntryFull[]): string {
+  return JSON.stringify(entries.map((e) => [e.keys || [], e.content || "", !!e.constant]));
+}
 
 export function CardEditor({
   card,
@@ -44,6 +51,11 @@ export function CardEditor({
   const [tab, setTab] = useState<Tab>("set");
   const [dupBusy, setDupBusy] = useState(false);
   const [genRunning, setGenRunning] = useState(false);
+  // World book: structured entries are controlled here (so edits survive a tab
+  // switch); worldBaseline is the last-saved signature for dirty detection.
+  const [worldEntries, setWorldEntries] = useState<WorldEntryFull[]>([]);
+  const [worldGenBusy, setWorldGenBusy] = useState(false);
+  const worldBaseline = useRef<string>("");
 
   // A living chara's OWN frozen card (locked + owner) is edited LIVE: persistence is
   // immediate (card.patch field-level + chara.set_aspiration), activation is per
@@ -60,7 +72,6 @@ export function CardEditor({
   const fFirst = useRef<FieldHandle>(null);
   const fGoals = useRef<FieldHandle>(null);
   const fNotes = useRef<FieldHandle>(null);
-  const fWorld = useRef<FieldHandle>(null);
   const liveSaveTimer = useRef<number | null>(null);
   const lastAspiration = useRef<string | null>(null);
   const baseline = useRef<Record<string, string>>({});  // last-saved soul values
@@ -74,7 +85,7 @@ export function CardEditor({
   const [staged, setStaged] = useState<Record<string, string>>({});
   const fieldRefs: Record<string, { current: FieldHandle | null }> = {
     name: fName, tagline: fTagline, description: fDesc, personality: fPers,
-    scenario: fScen, first_mes: fFirst, goals: fGoals, creator_notes: fNotes, world: fWorld,
+    scenario: fScen, first_mes: fFirst, goals: fGoals, creator_notes: fNotes,
   };
   const flushFields = () =>
     setStaged((prev) => {
@@ -97,7 +108,13 @@ export function CardEditor({
     let alive = true;
     hub
       .call<FullCard>("card.read", { path: card.path }, 20000)
-      .then((f) => alive && setFull(f))
+      .then((f) => {
+        if (!alive) return;
+        setFull(f);
+        const we = toWorldEntries(f.character_book?.entries);
+        setWorldEntries(we);
+        worldBaseline.current = worldKey(we);
+      })
       .catch((e) => alive && setErr(rpcErrText(t, e as { message?: string })));
     return () => {
       alive = false;
@@ -160,16 +177,6 @@ export function CardEditor({
   const taglineValue = String(ext.tagline || card.tagline || "");
   const book =
     full.character_book && Array.isArray(full.character_book.entries) ? full.character_book : null;
-  const worldText = sectionText(
-    {
-      world_entries: (book ? book.entries! : []).map((e2) => ({
-        keys: e2.keys || [],
-        content: e2.content || "",
-        constant: !!e2.constant,
-      })),
-    } as NormalizedDraft,
-    "world_entries",
-  );
   // Polaris: a single north-star string (was the old wishes/goals list).
   const goalsText = typeof ext.polaris === "string" ? ext.polaris : "";
 
@@ -197,11 +204,12 @@ export function CardEditor({
   // start, flags 待应用); its aspiration → chara.set_aspiration (next turn). A deck
   // card's aspiration is just a card field, folded into the same patch. We only patch
   // when a field actually changed, so an aspiration-only edit never shows 待应用.
-  const SOUL_KEYS = ["name", "description", "personality", "scenario", "first_mes", "creator_notes", "tagline", "world"];
+  // The world book is handled separately (structured entries, not a contenteditable),
+  // so it's NOT in SOUL_KEYS; its dirty/save path is worldEntries + worldBaseline.
+  const SOUL_KEYS = ["name", "description", "personality", "scenario", "first_mes", "creator_notes", "tagline"];
   const origVal = (k: string): string =>
     k === "name" ? full?.name || ""
     : k === "tagline" ? taglineValue
-    : k === "world" ? worldText
     : k === "goals" ? goalsText
     : String((full as Record<string, unknown> | null)?.[k] ?? "");
   const base = (k: string) => baseline.current[k] ?? origVal(k);  // moving last-saved value
@@ -213,7 +221,8 @@ export function CardEditor({
     const val = (k: string) => fieldRefs[k].current?.value() ?? staged[k];
     if (lastAspiration.current === null) lastAspiration.current = goalsText;
     try {
-      const changed = patchKeys.some((k) => (val(k) ?? base(k)) !== base(k));
+      const worldChanged = worldKey(worldEntries) !== worldBaseline.current;
+      const changed = worldChanged || patchKeys.some((k) => (val(k) ?? base(k)) !== base(k));
       if (changed) {
         const data: CardData = {};
         serializeCardFields(
@@ -221,7 +230,10 @@ export function CardEditor({
           {
             name: val("name"), description: val("description"), personality: val("personality"),
             scenario: val("scenario"), first_mes: val("first_mes"), creator_notes: val("creator_notes"),
-            tagline: val("tagline"), world: val("world"),
+            tagline: val("tagline"),
+            // world book rides the lossless structured path; undefined when unchanged
+            // leaves the card's existing character_book untouched.
+            worldEntries: worldChanged ? worldEntries : undefined,
             // a deck card folds aspiration into the patch; a live chara handles it below
             goals: aspLive ? undefined : val("goals"),
           },
@@ -231,6 +243,7 @@ export function CardEditor({
         // advance the baseline so a later auto-save doesn't re-patch (and re-mark a live
         // chara dirty) the same content — especially the trailing save after 立即应用.
         for (const k of patchKeys) baseline.current[k] = val(k) ?? base(k);
+        if (worldChanged) worldBaseline.current = worldKey(worldEntries);
       }
       if (aspLive) {
         const asp = val("goals");
@@ -248,6 +261,40 @@ export function CardEditor({
   const liveSaveDebounced = () => {
     if (liveSaveTimer.current) window.clearTimeout(liveSaveTimer.current);
     liveSaveTimer.current = window.setTimeout(() => void liveSave(), 600);
+  };
+  // ✦ AI world-book generation: "fresh" replaces an empty world, "expand" appends
+  // NEW entries to an existing one. Uses the card's CURRENT (possibly-unsaved) persona
+  // so the generated world fits what you're editing; the result auto-saves.
+  const genWorld = async (mode: "fresh" | "expand") => {
+    setWorldGenBusy(true);
+    try {
+      const r = await hub.call<{ entries?: WorldEntryFull[] }>(
+        "card.generate_worldbook",
+        {
+          name: charName,
+          description: fDesc.current?.value() ?? full.description ?? "",
+          personality: fPers.current?.value() ?? full.personality ?? "",
+          scenario: fScen.current?.value() ?? full.scenario ?? "",
+          first_mes: fFirst.current?.value() ?? full.first_mes ?? "",
+          existing: mode === "expand"
+            ? worldEntries.map((e) => ({ keys: e.keys, content: e.content, constant: e.constant }))
+            : [],
+          mode,
+        },
+        240000,
+      );
+      const gen = toWorldEntries(r.entries || []);
+      if (!gen.length) {
+        deckToast(t("wb-gen-empty"), true);
+        return;
+      }
+      setWorldEntries(mode === "expand" ? [...worldEntries, ...gen] : gen);
+      liveSaveDebounced();
+    } catch (e) {
+      deckToast(rpcErrText(t, e as { message?: string }), true);
+    } finally {
+      setWorldGenBusy(false);
+    }
   };
   // Patch one extension field immediately (used by the editable theme-color pickers).
   const patchExt = async (patch: Record<string, unknown>) => {
@@ -518,12 +565,20 @@ export function CardEditor({
           {/* 世界 */}
           {tab === "world" && (
             <div className="cv-pane">
-              {editable ? (
-                <CardBlock labelKey="cve-world" hub={hub} ctx={editorCtx} fieldRef={fWorld} fieldKey="world_entries" badge={soulBadge}
-                  field={<CardField ref={fWorld} editable initial={seed("world", worldText)} />} />
-              ) : (
-                <WorldReadOnly entries={book ? book.entries! : []} />
-              )}
+              <div className="cv-block">
+                <h4>{t("cve-world")}{editable && soulBadge}</h4>
+                {editable ? (
+                  <WorldBookEditor
+                    entries={worldEntries}
+                    editable
+                    onChange={(next) => { setWorldEntries(next); liveSaveDebounced(); }}
+                    onGenerate={(mode) => void genWorld(mode)}
+                    genBusy={worldGenBusy}
+                  />
+                ) : (
+                  <WorldReadOnly entries={book ? book.entries! : []} />
+                )}
+              </div>
             </div>
           )}
         </div>

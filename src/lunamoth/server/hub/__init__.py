@@ -105,6 +105,7 @@ from .card_draft import (  # noqa: F401
     _validate_world_entries,
     draft_card_from_inspiration,
     draft_to_card,
+    generate_worldbook,
     rewrite_card_field,
     transcribe_card,
 )

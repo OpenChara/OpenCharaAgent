@@ -4,9 +4,11 @@ import {
   sectionText,
   putSection,
   serializeCardFields,
+  toWorldEntries,
   type NormalizedDraft,
   type CardFields,
   type CardData,
+  type WorldEntryFull,
 } from "./cards";
 
 describe("normalizeDraft", () => {
@@ -142,6 +144,104 @@ describe("serializeCardFields", () => {
     const data: CardData = { character_book: { name: "Lore", entries: [{ old: true }] } };
     serializeCardFields(data, fields, "fallback");
     expect(data.character_book).toEqual({ name: "Lore", entries: [] });
+  });
+
+  describe("structured worldEntries path", () => {
+    const sfields = (worldEntries: WorldEntryFull[]): CardFields => ({
+      ...baseFields(),
+      world: undefined, // the structured path takes precedence; ensure it's used
+      worldEntries,
+    });
+
+    it("builds character_book from structured entries (re-indexes order, defaults enabled)", () => {
+      const data: CardData = { name: "Quinn" };
+      serializeCardFields(
+        data,
+        sfields([
+          { keys: ["a", "b"], content: "first\nmulti-line", constant: true },
+          { keys: ["c"], content: "second", constant: false },
+        ]),
+        "fallback",
+      );
+      expect(data.character_book).toEqual({
+        name: "Quinn",
+        entries: [
+          { keys: ["a", "b"], content: "first\nmulti-line", constant: true, enabled: true, insertion_order: 0 },
+          { keys: ["c"], content: "second", constant: false, enabled: true, insertion_order: 1 },
+        ],
+      });
+    });
+
+    it("preserves passthrough fields (secondary_keys, selective, comment) and an explicit enabled:false", () => {
+      const data: CardData = { name: "Quinn" };
+      serializeCardFields(
+        data,
+        sfields([
+          { keys: ["x"], content: "c", constant: false, enabled: false, secondary_keys: ["y"], selective: true, comment: "note" },
+        ]),
+        "fallback",
+      );
+      expect(data.character_book!.entries![0]).toEqual({
+        keys: ["x"], content: "c", constant: false, enabled: false,
+        secondary_keys: ["y"], selective: true, comment: "note", insertion_order: 0,
+      });
+    });
+
+    it("drops entries with no keys or blank content; trims keys", () => {
+      const data: CardData = { name: "Quinn" };
+      serializeCardFields(
+        data,
+        sfields([
+          { keys: [" k "], content: "kept", constant: false },
+          { keys: [], content: "no keys", constant: false },
+          { keys: ["k2"], content: "   ", constant: false },
+        ]),
+        "fallback",
+      );
+      expect(data.character_book!.entries).toEqual([
+        { keys: ["k"], content: "kept", constant: false, enabled: true, insertion_order: 0 },
+      ]);
+    });
+
+    it("writes an explicit empty book when cleared (so a card.patch overwrites, not preserves)", () => {
+      // card.patch preserves a MISSING key, so a "clear everything" must be expressed as
+      // entries:[] rather than by deleting the key — else the old entries linger on disk.
+      const data: CardData = { name: "Quinn" };
+      serializeCardFields(data, sfields([{ keys: [], content: "", constant: false }]), "fallback");
+      expect(data.character_book).toEqual({ name: "Quinn", entries: [] });
+    });
+
+    it("worldEntries takes precedence over the legacy world blob", () => {
+      const data: CardData = { name: "Quinn" };
+      serializeCardFields(
+        data,
+        { ...baseFields(), world: "blob, key — ignored", worldEntries: [{ keys: ["s"], content: "structured", constant: false }] },
+        "fallback",
+      );
+      expect(data.character_book!.entries).toEqual([
+        { keys: ["s"], content: "structured", constant: false, enabled: true, insertion_order: 0 },
+      ]);
+    });
+  });
+
+  describe("toWorldEntries", () => {
+    it("normalizes keys/content/constant and preserves passthrough", () => {
+      expect(
+        toWorldEntries([
+          { keys: ["a", "b"], content: "c", constant: true, enabled: false, secondary_keys: ["x"] },
+          { key: "single", desc: "legacy-desc" },
+          "junk",
+          null,
+        ]),
+      ).toEqual([
+        { keys: ["a", "b"], content: "c", constant: true, enabled: false, secondary_keys: ["x"] },
+        { key: "single", keys: ["single"], content: "legacy-desc", constant: false, desc: "legacy-desc" },
+      ]);
+    });
+
+    it("returns [] for undefined", () => {
+      expect(toWorldEntries(undefined)).toEqual([]);
+    });
   });
 
   it("undefined surface-specific fields PRESERVE existing card values (card-editor path)", () => {
