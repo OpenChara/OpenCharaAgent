@@ -337,6 +337,23 @@ class TranscriptStore:
             ).fetchall()
         finally:
             conn.close()
+        # The export ZIP LEAVES the machine, so scrub credential shapes — consistent
+        # with the redacted requests.jsonl mirror. Redact only on export, never on
+        # append: the live transcript stays faithful for context restore. Redact each
+        # STRING VALUE (recursively, incl. nested tool_call arguments) BEFORE
+        # serializing — never the serialized line, since a greedy token pattern would
+        # eat a JSON quote and corrupt the structure.
+        from .redact import redact_sensitive_text
+
+        def _redact_obj(v: Any) -> Any:
+            if isinstance(v, str):
+                return redact_sensitive_text(v)
+            if isinstance(v, list):
+                return [_redact_obj(x) for x in v]
+            if isinstance(v, dict):
+                return {k: _redact_obj(x) for k, x in v.items()}
+            return v
+
         with path.open("w", encoding="utf-8") as fh:
             for row_id, ts, role, content, kind in rows:
                 obj: dict[str, Any] = {"id": int(row_id), "ts": float(ts or 0.0),
@@ -355,7 +372,7 @@ class TranscriptStore:
                         obj["content"] = str(content)
                 else:
                     obj["content"] = str(content)
-                fh.write(json.dumps(obj, ensure_ascii=False) + "\n")
+                fh.write(json.dumps(_redact_obj(obj), ensure_ascii=False) + "\n")
                 written += 1
         return written
 

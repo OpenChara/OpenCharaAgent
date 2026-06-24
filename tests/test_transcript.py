@@ -125,6 +125,28 @@ def test_export_jsonl_complete_roundtrip(tmp_path):
     assert all("id" in o and "ts" in o for o in lines)
 
 
+def test_export_jsonl_redacts_credentials(tmp_path):
+    # The export ZIP leaves the machine, so credential shapes are scrubbed (the live
+    # transcript stays faithful for restore — redaction is export-only).
+    import json
+
+    t = TranscriptStore(tmp_path / "t.db")
+    t.append_message({"role": "user", "content": "my key is sk-abcdefghijklmnop1234567890 ok?"})
+    t.append_message({"role": "tool", "tool_call_id": "c1",
+                      "content": "Authorization: Bearer ghp_AAAAAAAAAAAAAAAAAAAAAAAA"})
+    out = tmp_path / "conv.jsonl"
+    t.export_jsonl(out)
+    blob = out.read_text(encoding="utf-8")
+    assert "sk-abcdefghijklmnop1234567890" not in blob
+    assert "ghp_AAAAAAAAAAAAAAAAAAAAAAAA" not in blob
+    # still valid JSON lines, structure intact
+    lines = [json.loads(ln) for ln in blob.splitlines()]
+    assert len(lines) == 2 and lines[0]["role"] == "user"
+    # the live transcript (restore path) is NOT redacted — faithful context
+    restored = t.load(max_messages=0)
+    assert any("sk-abcdefghijklmnop1234567890" in str(m.get("content", "")) for m in restored)
+
+
 def test_export_jsonl_only_current_epoch(tmp_path):
     import json
 
