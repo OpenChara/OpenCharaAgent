@@ -216,13 +216,11 @@ def test_execute_code_rpc_server_dispatches(tmp_path):
     th.start()
     try:
         # Allowed tool.
-        (rpc_dir / "req_000001").write_text(
-            json.dumps({"tool": "read_file", "args": {"path": "x"}}), encoding="utf-8")
+        _write_req(rpc_dir, "req_000001", {"tool": "read_file", "args": {"path": "x"}})
         res = _wait_for(rpc_dir / "res_000001")
         assert json.loads(res)["echo"] == {"path": "x"}
         # Disallowed tool — never dispatched.
-        (rpc_dir / "req_000002").write_text(
-            json.dumps({"tool": "memory", "args": {}}), encoding="utf-8")
+        _write_req(rpc_dir, "req_000002", {"tool": "memory", "args": {}})
         res2 = _wait_for(rpc_dir / "res_000002")
         assert "error" in json.loads(res2)
         assert all(name != "memory" for name, _ in calls)
@@ -250,10 +248,10 @@ def test_execute_code_rpc_strips_terminal_blocked_params(tmp_path):
     )
     th.start()
     try:
-        (rpc_dir / "req_000001").write_text(json.dumps({
+        _write_req(rpc_dir, "req_000001", {
             "tool": "terminal",
             "args": {"command": "ls", "background": True, "pty": True},
-        }), encoding="utf-8")
+        })
         _wait_for(rpc_dir / "res_000001")
         assert seen and "background" not in seen[0][1] and "pty" not in seen[0][1]
         assert seen[0][1]["command"] == "ls"
@@ -276,8 +274,7 @@ def test_execute_code_rpc_call_limit(tmp_path):
     )
     th.start()
     try:
-        (rpc_dir / "req_000001").write_text(
-            json.dumps({"tool": "read_file", "args": {}}), encoding="utf-8")
+        _write_req(rpc_dir, "req_000001", {"tool": "read_file", "args": {}})
         res = _wait_for(rpc_dir / "res_000001")
         assert "Tool call limit reached" in json.loads(res)["error"]
     finally:
@@ -308,6 +305,18 @@ def _wait_for(path: Path, timeout=3.0) -> str:
             return path.read_text(encoding="utf-8")
         time.sleep(0.01)
     raise AssertionError(f"timed out waiting for {path}")
+
+
+def _write_req(rpc_dir: Path, name: str, payload: dict) -> None:
+    """Write a req_* file ATOMICALLY (tmp + rename) — exactly like the real producer
+    (_rpc_send). The loop polls on a short interval and skips *.tmp, so this is what
+    keeps it from reading a half-written request (a non-atomic write_text races the
+    poll, the partial JSON fails to parse, an error response is written without ever
+    dispatching — the source of the macOS-CI flake)."""
+    req = rpc_dir / name
+    tmp = rpc_dir / (name + ".tmp")
+    tmp.write_text(json.dumps(payload), encoding="utf-8")
+    tmp.rename(req)
 
 
 # ---------------------------------------------------------------------------
