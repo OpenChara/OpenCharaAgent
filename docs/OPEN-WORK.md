@@ -117,6 +117,42 @@ product backlog behind it.
   - Icon assets already exist (`apps/desktop/assets/icon.png` + the menu-bar
     `trayTemplate*`). The menu-bar-resident idea (above) composes with this.
 
+### Mobile / responsive webui — DIRECTION DECIDED (owner 2026-06-24), build deferred ("再议")
+
+Decision: **make the existing webui responsive; do NOT build a native app.** If "installable /
+push / app-store" is wanted later, wrap the SAME responsive SPA in a PWA / Capacitor shell —
+near-zero rewrite — rather than a from-scratch native client.
+
+Why (grounded in the code, 2026-06-24):
+- The SPA has **no Electron-specific API usage** (`apps/web/src`: no `ipcRenderer`/`window.electron`/
+  `require`) — Electron is just a shell, so the same SPA already runs in a phone browser.
+- `index.html` already ships the viewport meta (`width=device-width … viewport-fit=cover`).
+- A **partial mobile foundation already exists**: `@media (max-width:680px)` in `global.css`
+  already does board→1-col, deck→2-col, settings→stacked nav, chat right-panel→overlay. It's
+  incomplete, not absent.
+- **Reachability is the same for web and native**: the hub + chara processes live on the user's
+  computer, so a phone must reach it over LAN (`http://<ip>:<port>` + the existing password login)
+  or a tunnel (the `connect ssh://` / cc-switch remote story). Native does NOT avoid this.
+- A native app would re-implement the whole UI + the protocol client (`rpc.ts` transport, the
+  event union, `useCharaStream`) + i18n + state, ×2 platforms, for a backend that still lives on
+  the desktop = mostly duplication for marginal gain + permanent parallel maintenance.
+
+Scoped build plan (when resumed) — incremental, one commit per area, mostly CSS + a tiny
+`useIsMobile()` hook for the few drawer-vs-pane conditionals; standardize on ONE breakpoint
+(reuse/raise the existing 680px, or 768px) so the layout flips at a single cutoff:
+1. **Shell** (CSS-only, no component change): left `.sidebar` (`<aside>` in `Sidebar.tsx`) →
+   fixed bottom tab bar (`#app` is a flex row → it/`.main` get `padding-bottom` + safe-area);
+   hide or fold `#statusbar` (the conn dot) on mobile.
+2. **Chat** (the core view): hide the `.chat-bg` background on mobile, full-width bubbles, the
+   right Profile `.panel` → a slide-up drawer / tab (the 680px block already half-does this).
+3. **Deck + cards**: `DeckModal` (`cardview`/`wide` = card editor + wake) → full-screen sheet on
+   mobile; deck grid → 1 col; touch-friendly editor tabs; the visuals stage/rail already stacks
+   at 680px (tune touch sizes + the sticker grids).
+4. **Board / Settings / Gateways / overlays**: board + settings already stack — verify, polish,
+   touch-target (44px) pass, safe-area insets.
+Effort: medium (a focused pass per view), NOT weeks; reuses all logic/protocol/state. Can't be
+device-tested from here, so resume by piloting Chat first and testing on a real phone, then fan out.
+
 ### Web tools — FUTURE (owner 2026-06-19, deferred LOW; settled — do not re-litigate)
 web_search/web_extract are intentionally OFF (`_WEB_TOOLS_ENABLED = False`). Keeping
 them off makes the chara do less fruitless trial-and-error, and we run no search
