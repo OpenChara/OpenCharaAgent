@@ -39,6 +39,14 @@ function paneFromHash(): Pane {
   return PANES.some(([k]) => k === seg) ? seg : "model";
 }
 
+// The hash sub-segment, but ONLY when it names a real pane — so a bare or malformed
+// `#/settings(/bogus)` collapses to "" (the mobile MENU), never a detail view of the
+// fallback pane.
+function segFromHash(): string {
+  const seg = location.hash.split("/")[2] || "";
+  return PANES.some(([k]) => k === seg) ? seg : "";
+}
+
 function currentDisplay(): Display {
   try {
     return localStorage.getItem("lm-display") === "technical" ? "technical" : "product";
@@ -55,11 +63,11 @@ export function Settings() {
   const [pane, setPane] = useState<Pane>(paneFromHash);
   // The hash sub-segment, tracked so mobile can show a drill-down: bare `#/settings`
   // = the section MENU on a phone (desktop still defaults to the model pane).
-  const [seg, setSeg] = useState(() => location.hash.split("/")[2] || "");
+  const [seg, setSeg] = useState(segFromHash);
   useEffect(() => {
     const on = () => {
       setPane(paneFromHash());
-      setSeg(location.hash.split("/")[2] || "");
+      setSeg(segFromHash());
     };
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
