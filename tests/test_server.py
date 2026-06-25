@@ -143,8 +143,8 @@ def test_attach_send_roundtrip_streams_text_notifications():
     assert done["result"] == {"ok": True, "interrupted": False}
     events = [f for f in frames if f.get("method") == "event"]
     assert [e["params"] for e in events] == [
-        {"type": "text", "text": "echo: ", "channel": "say"},
-        {"type": "text", "text": "hi", "channel": "say"},
+        {"type": "text", "text": "echo: ", "channel": "say", "superchat": False},
+        {"type": "text", "text": "hi", "channel": "say", "superchat": False},
     ]
 
 

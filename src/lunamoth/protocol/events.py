@@ -26,6 +26,12 @@ class TextDelta:
     """A chunk of the chara's streamed prose."""
     text: str
     channel: str = SAY
+    # True only for words from the `speak` tool (the chara's deliberate "reach the
+    # user" superchat), as opposed to ordinary `say` reply prose. Lets a delivery
+    # edge forward a speak to EVERY gateway in any turn (incl. a desktop turn),
+    # while ordinary replies stay where they were said. Optional + default False:
+    # codec round-trips it (asdict) and older clients ignore the extra field.
+    superchat: bool = False
 
 
 @dataclass(frozen=True)

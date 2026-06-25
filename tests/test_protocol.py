@@ -22,7 +22,7 @@ def test_codec_round_trips_every_event():
 
 def test_wire_format_is_stable_json():
     d = to_dict(TextDelta("hi"))
-    assert d == {"type": "text", "text": "hi", "channel": SAY}
+    assert d == {"type": "text", "text": "hi", "channel": SAY, "superchat": False}
     assert to_dict(Notice("retry"))["type"] == "notice"
 
 

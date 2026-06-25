@@ -344,10 +344,13 @@ def test_proactive_idle_superchat_pushed_to_gateway():
     adapter = _Adapter()
     host = MessagingHost(None, "/tmp/x.json")
     host._adapters = [adapter]
-    host._on_stream_event("idle", TextDelta("hey — I made progress", SAY), False, False)
+    # a speak emits a superchat-marked say; ordinary say (non-superchat) and muse don't leave
+    host._on_stream_event("idle", TextDelta("hey — I made progress", SAY, superchat=True), False, False)
+    host._on_stream_event("idle", TextDelta(" plain narration", SAY), False, False)  # not a speak → skipped
     host._on_stream_event("idle", TextDelta(" still going", MUSE), False, False)  # muse skipped
     host._on_stream_event("idle", None, True, False)  # turn end → flush
     assert any("made progress" in s for s in adapter.sent)
+    assert not any("plain narration" in s for s in adapter.sent)
     assert not any("still going" in s for s in adapter.sent)  # panoramic muse never leaves
 
 
@@ -355,22 +358,25 @@ def test_idle_superchat_not_pushed_when_interrupted():
     adapter = _Adapter()
     host = MessagingHost(None, "/tmp/x.json")
     host._adapters = [adapter]
-    host._on_stream_event("idle", TextDelta("half a thought", SAY), False, False)
+    host._on_stream_event("idle", TextDelta("half a thought", SAY, superchat=True), False, False)
     host._on_stream_event("idle", None, True, True)  # interrupted → discard
     assert adapter.sent == []
 
 
-def test_non_idle_turns_are_not_pushed_proactively():
+def test_desktop_send_turn_pushes_the_speak_but_not_the_reply():
     adapter = _Adapter()
     host = MessagingHost(None, "/tmp/x.json")
     host._adapters = [adapter]
-    # a desktop 'send' turn is operator-local — its reply must NOT go to WeChat
+    # a desktop 'send' turn: the ordinary reply is operator-local (must NOT leave),
+    # but a deliberate speak during it reaches every gateway (the fix).
     host._on_stream_event("send", TextDelta("desktop-only reply", SAY), False, False)
+    host._on_stream_event("send", TextDelta("everyone, news!", SAY, superchat=True), False, False)
     host._on_stream_event("send", None, True, False)
-    assert adapter.sent == []
+    assert any("everyone, news!" in s for s in adapter.sent)
+    assert not any("desktop-only reply" in s for s in adapter.sent)
 
 
-def test_dispatcher_observer_wires_idle_say_to_the_host():
+def test_dispatcher_observer_wires_speak_to_the_host():
     # integration: the real dispatcher's stream tap drives the host push.
     handle = _Handle()
     adapter = _Adapter()
@@ -379,11 +385,36 @@ def test_dispatcher_observer_wires_idle_say_to_the_host():
     dispatch.set_stream_observer(host._on_stream_event)
     dispatch.run_stream_sync(
         "idle",
-        lambda: iter([TextDelta("a real superchat", SAY), TextDelta(" inner", MUSE)]),
+        lambda: iter([TextDelta("a real superchat", SAY, superchat=True), TextDelta(" inner", MUSE)]),
         None,
     )
     assert any("a real superchat" in s for s in adapter.sent)
     assert not any("inner" in s for s in adapter.sent)
+
+
+def test_inbound_speak_fans_out_to_the_other_gateways_once():
+    # A speak made WHILE replying to one platform also reaches the OTHER gateways;
+    # the source gets it only inside its own reply (no double-send), the other
+    # gateway gets ONLY the speak — never the platform-private reply prose.
+    class _SpeakHandle(_Handle):
+        def stream_user(self, text):
+            yield TextDelta("a private reply ", SAY)
+            yield TextDelta("everyone, big news", SAY, superchat=True)
+
+    handle = _SpeakHandle()
+    source = _Adapter("weixin")
+    other = _Adapter("telegram")
+    dispatch, host = _host_with_adapter(handle, source, [])
+    host._adapters = [source, other]
+    host._process(source, InboundMessage("u1", "Alice", "hi"))
+
+    # source: the full reply (private prose + the speak), and exactly once
+    assert any("a private reply" in s for s in source.sent)
+    assert any("everyone, big news" in s for s in source.sent)
+    assert sum(s.count("everyone, big news") for s in source.sent) == 1
+    # other gateway: ONLY the speak, never the private reply prose
+    assert any("everyone, big news" in s for s in other.sent)
+    assert not any("a private reply" in s for s in other.sent)
 
 
 class _BlockingAdapter(_Adapter):

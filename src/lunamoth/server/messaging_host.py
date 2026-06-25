@@ -328,10 +328,13 @@ class MessagingHost:
                     self._send(adapter, reply.text)
                 return
             chunks: list[str] = []
+            speaks: list[str] = []  # the superchat-marked say — also pushed to the OTHER gateways
 
             def collect(ev: Any) -> None:
                 if isinstance(ev, TextDelta) and ev.channel == SAY:
                     chunks.append(ev.text)
+                    if getattr(ev, "superchat", False):
+                        speaks.append(ev.text)
 
             # Show the incoming message in the app window first (an incoming
             # bubble), THEN stream the chara's reply — so the conversation reads
@@ -378,6 +381,16 @@ class MessagingHost:
                 self._send(adapter, self._busy_text())
                 return
             self._emit_reply(adapter, "".join(chunks))
+            # A speak made DURING this inbound turn already reached the sender via
+            # the reply above (chunks include it); also push it to the OTHER
+            # gateways so a deliberate speak lands on every platform. The source is
+            # skipped, so nobody gets the same speak twice.
+            speak_text = "".join(speaks).strip()
+            if speak_text:
+                with self._lock:
+                    others = [a for a in self._adapters if a is not adapter]
+                for other in others:
+                    self._emit_reply(other, speak_text)
         finally:
             adapter.clear_reply_target()
 
@@ -405,12 +418,16 @@ class MessagingHost:
             self._send(adapter, missing_media_note(rel, zh))
 
     def _on_stream_event(self, kind: str, ev: Any, turn_end: bool, interrupted: bool) -> None:
-        """Dispatcher stream tap. Only PROACTIVE self-work turns (kind=='idle',
-        driven by the supervisor — never this host's own 'wechat' turns) are
-        forwarded: buffer their say-channel output and, at turn end, push it to
-        the gateway as a superchat. The host's inbound replies are handled in
-        _process; desktop 'send' turns are operator-local and never pushed."""
-        if kind != "idle" or not self._adapters:
+        """Dispatcher stream tap. Forward the chara's SPEAK (the superchat-marked
+        say from the speak tool) to EVERY gateway — for autonomous self-work
+        (kind=='idle'), world-event (kind=='event'), AND desktop (kind=='send')
+        turns alike, so a deliberate speak always reaches the gateways no matter
+        what triggered it. ONLY the speak is forwarded, never ordinary reply prose,
+        so a desktop conversation is not echoed out to the gateways. Inbound
+        platform turns (kind=='wechat') are handled in _process (the reply goes to
+        the source, the speak to the OTHER gateways), so they're excluded here to
+        avoid sending the same speak twice."""
+        if kind not in ("idle", "send", "event") or not self._adapters:
             return
         if turn_end:
             if interrupted:
@@ -419,15 +436,15 @@ class MessagingHost:
                 return
             self._flush_proactive()
             return
-        if isinstance(ev, TextDelta) and ev.channel == SAY:
+        if isinstance(ev, TextDelta) and ev.channel == SAY and getattr(ev, "superchat", False):
             with self._lock:
                 self._proactive_say.append(ev.text)
 
     def _flush_proactive(self) -> None:
-        """Push a completed idle turn's buffered superchat to every adapter (no
-        reply target → the adapter's default/last peer). Honest: an adapter with
-        no destination yet raises DeliveryDeferred, caught in _send. File markers in
-        the buffered text are extracted and delivered the same way as a reply."""
+        """Push a completed idle/send/event turn's buffered SPEAK to every adapter
+        (no reply target → the adapter's default/last peer). Honest: an adapter
+        with no destination yet raises DeliveryDeferred, caught in _send. File
+        markers in the buffered text are extracted and delivered like a reply."""
         with self._lock:
             raw = "".join(self._proactive_say)
             adapters = list(self._adapters)

@@ -835,7 +835,10 @@ class LLMClient:
                             # A tool surfaced words ADDRESSED TO THE USER (the
                             # speak tool): always the say channel — every
                             # frontend delivers it, whatever this turn's channel.
-                            yield TextDelta(str(res["say"]) + "\n", "say")
+                            # superchat=True marks it as the deliberate "reach the
+                            # user" speak (vs ordinary reply prose) so a delivery
+                            # edge can broadcast it to every gateway in any turn.
+                            yield TextDelta(str(res["say"]) + "\n", "say", superchat=True)
                         # Files are no longer surfaced by a tool: the chara puts a
                         # file in front of the user by writing a `MEDIA:<path>` line
                         # in its reply, which the agent extracts (see agent._media_filter).
