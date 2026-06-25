@@ -256,7 +256,10 @@ def _provider_id(value: Any) -> str:
 
 
 def _base_url_id(value: Any) -> str:
-    return str(value or "").strip().rstrip("/")
+    # The ONE base_url normalizer (shared with the keyring route match) — case-insensitive,
+    # matching this function's "ignoring cosmetic case" contract (it previously wasn't).
+    from ...session.settings import normalize_base_url
+    return normalize_base_url(value)
 
 
 def _config_matches_model_route(cfg: dict[str, Any], defaults: dict[str, str]) -> bool:

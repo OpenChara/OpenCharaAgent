@@ -52,8 +52,15 @@ PROVIDER_PRESETS: tuple[dict[str, str], ...] = (
 _PROVIDER_LABELS = {p["provider"]: p["label"] for p in PROVIDER_PRESETS}
 
 
-def _norm(s: object) -> str:
+def normalize_base_url(s: object) -> str:
+    """Canonical base_url for ROUTE COMPARISON: trimmed, no trailing slash, lower-cased
+    (the host is case-insensitive). The ONE normalizer the keyring route match (here) and
+    the hub's route comparison (server/hub/config) share, so a key always matches its own
+    route regardless of cosmetic case/slash differences."""
     return str(s or "").strip().rstrip("/").lower()
+
+
+_norm = normalize_base_url  # short internal alias used by the keyring matchers
 
 
 def migrate_legacy_default_key() -> None:
@@ -207,6 +214,10 @@ def _is_session_config() -> bool:
 
 # Real LLM providers that go through the OpenAI-compatible HTTP path.
 LIVE_PROVIDERS = {"openai_compatible", "openai", "ollama", "openrouter"}
+
+# The reasoning-effort enum (default "medium"). Mirrored by the SPA's ModelPane
+# REASONING; the two are pinned equal by a cross-language drift test.
+REASONING_EFFORTS = ("off", "low", "medium", "high")
 
 
 @dataclass
@@ -371,7 +382,7 @@ def _coerce(name: str, raw: Any) -> Any:
         return normalize_mode(str(raw))
     if name == "reasoning":
         v = str(raw).strip().lower()
-        return v if v in {"off", "low", "medium", "high"} else "medium"
+        return v if v in REASONING_EFFORTS else "medium"
     if name in {"show_thinking", "patience_override"}:
         return str(raw).strip().lower() in {"1", "true", "yes", "on"}
     if name == "embodiment_override":

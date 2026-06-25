@@ -650,17 +650,14 @@ body.dark .drop-overlay{background:color-mix(in srgb, var(--accent) 22%, transpa
    自己的事 / 休息到 HH:MM）；视觉只做静态基色变化，不做动画。
    仅存的动效 = 状态点呼吸与工具 spinner（它们陈述的是正在发生的活动）。
    --chara-accent 来自卡片 theme_color，只作静态身份色。 */
-.chat-root[data-life="waiting"] .composer{
-  box-shadow:0 0 0 1px color-mix(in srgb, var(--chara-accent) 26%, var(--hairline)),0 2px 8px rgba(10,30,50,.06);
-}
 /* working / idle_countdown 合并为同一 register：在做自己的事（状态词陈述，无特效） */
 /* resting：灯暗了——整体降饱和、不动。输入永远不做 disabled 视觉 */
+/* NOTE: Chat.tsx maps the rich life.state to only working|resting|"" (data-life), so
+   the former waiting/backoff selectors never matched and were removed (dead). Re-add
+   them here AND widen Chat.tsx's lifeAttr together if those states get their own look. */
 .chat-root[data-life="resting"] .chat-pages,
 .chat-root[data-life="resting"] .panel{filter:saturate(.84) brightness(.97)}
 .chat-root[data-life="resting"] .composer{opacity:.93}
-.chat-root[data-life="backoff"] .composer{filter:saturate(.5)}
-.chat-root[data-life="backoff"] .work-status{color:var(--red)}
-.chat-root[data-life="backoff"] .work-status::before{background:var(--red); animation:none}
 @media (prefers-reduced-motion: reduce){
   .dot.live,.mini-dot,.spin,.think-head.streaming::before,.work-status::before,
   .lm-thinking::before,.av-note.thinking::before,.transcribing i,.matte-fill.indet{animation:none !important}

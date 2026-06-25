@@ -84,6 +84,27 @@ def test_provider_presets_in_sync_py_ts():
     )
 
 
+def test_live_providers_match_across_core_and_session():
+    # The LIVE (OpenAI-compatible HTTP) provider set is mirrored in core/llm + session/
+    # settings (core keeps its session imports function-local, so it can't import the
+    # constant at module scope). Adding a provider to one but not the other makes the
+    # client gate and Settings.is_live() disagree.
+    from lunamoth.core import llm
+    from lunamoth.session import settings as S
+    assert llm.LIVE_PROVIDERS == S.LIVE_PROVIDERS, "core/llm LIVE_PROVIDERS drifted from session/settings"
+
+
+def test_reasoning_efforts_in_sync_py_ts():
+    # The reasoning-effort enum: a Python validation tuple (settings.REASONING_EFFORTS)
+    # + the SPA's ModelPane picker. A new tier added to one drifts picker vs validator.
+    from lunamoth.session import settings as S
+    ts = (_REPO / "apps/web/src/components/settings/ModelPane.tsx").read_text(encoding="utf-8")
+    m = re.search(r"const REASONING\s*=\s*\[(.*?)\]", ts, re.DOTALL)
+    assert m, "could not find REASONING in ModelPane.tsx"
+    ts_efforts = tuple(re.findall(r'"([^"]+)"', m.group(1)))
+    assert ts_efforts == S.REASONING_EFFORTS, "ModelPane REASONING drifted from settings.REASONING_EFFORTS"
+
+
 def test_browser_shares_the_one_exfil_regex():
     # The browser navigation guard must be the SAME compiled regex as the fetch/URL
     # guard (deduped), so the two can't drift apart.
