@@ -2017,7 +2017,7 @@ body.dark .bp-dots i.on{background:var(--accent)}
   display:flex; align-items:center; gap:8px; width:100%; text-align:left; cursor:pointer;
   border:none; background:none; border-radius:2px; padding:7px 10px; font-size:12.5px; color:var(--text); font-family:var(--mono);
 }
-.sel-item:hover{background:rgba(91,159,212,.10)}
+.sel-item:hover,.sel-item.active{background:rgba(91,159,212,.10)}
 .sel-item.on{background:var(--accent-soft)}
 .sel-name{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .sel-note{font-size:10.5px; color:var(--text-3); flex:none; font-family:var(--sans)}
@@ -2040,7 +2040,7 @@ body.dark .bp-dots i.on{background:var(--accent)}
 .model-nokey{border:none; background:none; cursor:pointer; text-align:left; padding:0}
 body.dark .sel-trigger,body.dark .sel-pop{background:#1C2228}
 body.dark .sel-search{background:rgba(255,255,255,.06)}
-body.dark .sel-item:hover{background:rgba(91,159,212,.16)}
+body.dark .sel-item:hover,body.dark .sel-item.active{background:rgba(91,159,212,.16)}
 
 /* 其他模态 — Hermes auxiliary-models rows */
 .aux-sec{max-width:680px; margin-top:26px}
