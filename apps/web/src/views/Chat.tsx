@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useT } from "../i18n";
 import { useNavigate, type ChatSub } from "../hooks/useHashRoute";
+import { isMobileViewport } from "../hooks/useIsMobile";
 import { useHubApi, useHubState, type BoardSession } from "../state/hub";
 import { glyphOf, paletteClass } from "../lib/format";
 import { assetUrl } from "../rpc";
@@ -28,6 +29,10 @@ export function Chat({ name, sub }: { name: string; sub: ChatSub }) {
   const nav = useNavigate();
   const stream = useCharaStream(name);
   const [panelOpen, setPanelOpen] = useState(() => {
+    // On a phone the panel is a full-screen page over the chat, so it starts CLOSED
+    // (the conversation is the primary surface). On desktop it's the persistent side
+    // column — restore the saved preference (default open).
+    if (isMobileViewport()) return false;
     try {
       return localStorage.getItem("lm-panel-open") !== "0";
     } catch {
@@ -51,10 +56,14 @@ export function Chat({ name, sub }: { name: string; sub: ChatSub }) {
   const togglePanel = () => {
     setPanelOpen((open) => {
       const next = !open;
-      try {
-        localStorage.setItem("lm-panel-open", next ? "1" : "0");
-      } catch {
-        /* ok */
+      // Persist only on desktop — on a phone the panel is a transient full-screen page,
+      // not a layout preference (persisting "open" would cover the chat on next load).
+      if (!isMobileViewport()) {
+        try {
+          localStorage.setItem("lm-panel-open", next ? "1" : "0");
+        } catch {
+          /* ok */
+        }
       }
       return next;
     });
@@ -133,7 +142,7 @@ export function Chat({ name, sub }: { name: string; sub: ChatSub }) {
         {panelOpen && (
           <>
             <div className="vsplit" />
-            <ChatPanel stream={stream} name={name} />
+            <ChatPanel stream={stream} name={name} onClose={() => setPanelOpen(false)} />
           </>
         )}
       </div>

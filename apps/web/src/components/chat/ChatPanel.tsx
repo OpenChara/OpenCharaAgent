@@ -25,11 +25,27 @@ const TABS: { key: PanelTab; label: string }[] = [
   { key: "settings", label: "pg-settings" },
 ];
 
-export function ChatPanel({ stream, name }: { stream: CharaStream; name: string }) {
+export function ChatPanel({
+  stream,
+  name,
+  onClose,
+}: {
+  stream: CharaStream;
+  name: string;
+  onClose?: () => void;
+}) {
   const t = useT();
   const [tab, setTab] = useState<PanelTab>("status");
   return (
     <aside className="panel">
+      {/* Mobile-only header: on a phone the panel is a full-screen page, so it needs its
+          own back button (the chat header underneath is covered). Hidden on desktop. */}
+      <div className="panel-mhead">
+        <button className="back" onClick={onClose} aria-label="Back">
+          ‹
+        </button>
+        <b>{name}</b>
+      </div>
       <div className="panel-tabs">
         {TABS.map((tb) => (
           <span key={tb.key} className={tab === tb.key ? "on" : ""} onClick={() => setTab(tb.key)}>

@@ -10,6 +10,7 @@
 
 import { useEffect, useState } from "react";
 import { navTo } from "../hooks/useHashRoute";
+import { useIsMobile } from "../hooks/useIsMobile";
 import { useT, useLang } from "../i18n";
 import { useHub } from "../state/hub";
 import { applyTheme, currentThemePref, type ThemePref } from "../theme";
@@ -50,12 +51,22 @@ export function Settings() {
   const t = useT();
   const { lang, setLang } = useLang();
   const { hub, snapshot } = useHub();
+  const isMobile = useIsMobile();
   const [pane, setPane] = useState<Pane>(paneFromHash);
+  // The hash sub-segment, tracked so mobile can show a drill-down: bare `#/settings`
+  // = the section MENU on a phone (desktop still defaults to the model pane).
+  const [seg, setSeg] = useState(() => location.hash.split("/")[2] || "");
   useEffect(() => {
-    const on = () => setPane(paneFromHash());
+    const on = () => {
+      setPane(paneFromHash());
+      setSeg(location.hash.split("/")[2] || "");
+    };
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);
+  // Mobile is a 2-level drill-down: "menu" (the section list) → "detail" (one pane,
+  // with a back button). Desktop keeps the side-nav + pane side by side.
+  const mview = isMobile ? (seg ? "detail" : "menu") : "";
   const [theme, setTheme] = useState<ThemePref>(currentThemePref());
   const [display, setDisplay] = useState<Display>(currentDisplay());
 
@@ -95,19 +106,24 @@ export function Settings() {
       <div className="toolbar">
         <h1>{t("nav-settings")}</h1>
       </div>
-      <div className="settings-root">
+      <div className="settings-root" data-mview={mview || undefined}>
         <nav className="settings-nav">
           {PANES.map(([key, label]) => (
             <button
               key={key}
               className={pane === key ? "on" : ""}
-              onClick={() => { setPane(key); navTo(key === "model" ? "#/settings" : `#/settings/${key}`); }}
+              onClick={() => { setPane(key); navTo(`#/settings/${key}`); }}
             >
               {t(label)}
             </button>
           ))}
         </nav>
         <div className="settings-body">
+          {isMobile && seg && (
+            <button className="m-back" onClick={() => navTo("#/settings")}>
+              ‹ {t("nav-settings")}
+            </button>
+          )}
           {pane === "model" && <ModelPane />}
 
           {/* #5 — the unified Keys surface: BOTH the saved text/provider keys

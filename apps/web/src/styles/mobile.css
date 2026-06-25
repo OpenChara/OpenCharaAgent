@@ -40,3 +40,56 @@
      legible on a small screen (the chara's bubbles are the content). */
   .chat-bg, .chat-veil { display: none !important; }
 }
+
+/* The chat-side panel's mobile-only header is hidden on desktop (where the panel is a
+   side column). Declared outside the media query so the default everywhere is hidden. */
+.panel-mhead { display: none; }
+
+@media (max-width: 680px) {
+  /* (2) Settings as a 2-level drill-down — the flat horizontal tab strip (global.css)
+     was hard to operate. Bare #/settings = the section LIST (menu); tapping a section
+     opens its pane (detail) with a back button. Overrides the global mobile rules. */
+  .settings-root[data-mview] { flex-direction: column; }
+  .settings-root[data-mview] .settings-nav {
+    flex-direction: column; width: auto; overflow: visible; gap: 0;
+    padding: 4px 0 0; border-bottom: none;
+  }
+  .settings-root[data-mview] .settings-nav button {
+    width: 100%; text-align: left; white-space: normal; flex: none;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 15px 18px; border-radius: 0; font-size: 15px;
+    border-bottom: 1px solid var(--hairline-2); background: none;
+  }
+  .settings-root[data-mview] .settings-nav button::after { content: "›"; opacity: .35; font-size: 19px; }
+  .settings-root[data-mview] .settings-nav button.on { background: none; font-weight: 500; }
+  /* menu screen shows the list; detail screen shows the pane. */
+  .settings-root[data-mview="menu"] .settings-body { display: none; }
+  .settings-root[data-mview="detail"] .settings-nav { display: none; }
+  .settings-root[data-mview="detail"] .settings-body { padding-top: 8px; }
+  .m-back {
+    display: inline-flex; align-items: center; gap: 4px; margin: 0 0 12px; padding: 6px 2px;
+    background: none; border: none; color: var(--accent); font-size: 15px; cursor: pointer;
+  }
+
+  /* (3) The chat right panel becomes a full-screen PAGE over the conversation (it was a
+     partial 380px overlay with no way to close — the ▤ toggle sat underneath it). Now it
+     spans full width, slides in, and carries its own back header (.panel-mhead). */
+  .chat-root > .panel {
+    width: 100%; left: 0; z-index: 25; background: var(--panel);
+    box-shadow: none; animation: panel-page-in .18s ease;
+  }
+  .panel-mhead {
+    display: flex; align-items: center; gap: 6px; flex: none;
+    padding: 10px 8px; border-bottom: 1px solid var(--hairline-2);
+  }
+  .panel-mhead .back {
+    border: none; background: none; font-size: 26px; line-height: 1; color: var(--text-2);
+    padding: 0 6px; cursor: pointer;
+  }
+  .panel-mhead b { font-size: 15px; }
+}
+
+@keyframes panel-page-in {
+  from { transform: translateX(7%); opacity: .5; }
+  to { transform: none; opacity: 1; }
+}
