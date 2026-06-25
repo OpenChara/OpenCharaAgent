@@ -55,7 +55,7 @@ def test_handle_logs_a_faithful_request(agent):
 
 
 def test_request_log_caps_at_200_lines(agent):
-    from lunamoth.core import agent as agent_mod
+    from lunamoth.core import request_log as agent_mod
 
     path = _requests_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -76,7 +76,7 @@ def test_request_log_caps_at_200_lines(agent):
 
 
 def test_request_log_never_raises(agent, monkeypatch):
-    from lunamoth.core import agent as agent_mod
+    from lunamoth.core import request_log as agent_mod
 
     # A non-serializable payload must be swallowed, not raised.
     agent_mod._append_request_log("send", ["sys"], [{"role": "user", "content": object()}], [], "m")
@@ -85,7 +85,7 @@ def test_request_log_never_raises(agent, monkeypatch):
 def test_request_log_redacts_secrets(agent):
     """A secret flowing through context (this file is bundled into the export
     ZIP) must be masked before it ever lands on disk — never cleartext."""
-    from lunamoth.core import agent as agent_mod
+    from lunamoth.core import request_log as agent_mod
 
     path = _requests_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -106,7 +106,7 @@ def test_request_log_redacts_secrets(agent):
 def test_request_log_stays_bounded_after_many_appends(agent):
     """Many appends keep the file bounded near the cap (no unbounded growth),
     and the file is never corrupted (every line parses) under repeated writes."""
-    from lunamoth.core import agent as agent_mod
+    from lunamoth.core import request_log as agent_mod
 
     path = _requests_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,7 +131,7 @@ def test_request_log_stays_bounded_after_many_appends(agent):
 
 def test_request_log_no_temp_files_left_behind(agent):
     """The atomic trim must not leave .tmp scratch files in the logs dir."""
-    from lunamoth.core import agent as agent_mod
+    from lunamoth.core import request_log as agent_mod
 
     path = _requests_path()
     path.parent.mkdir(parents=True, exist_ok=True)
