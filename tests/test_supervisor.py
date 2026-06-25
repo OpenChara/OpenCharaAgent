@@ -592,8 +592,11 @@ def test_set_autonomy_and_the_board_agree_via_mode(tmp_path, monkeypatch):
     from lunamoth.server.supervisor import Supervisor
     from lunamoth.session import sessions as S
 
-    H.save_defaults({"provider": "openrouter", "base_url": "https://x.invalid/v1",
-                     "api_key": "k", "model": "m"})
+    # The keyring is the ONE key store (no top-level api_key); seed a provider key
+    # and activate it so wake resolves a key by route.
+    H.save_key("default", provider="openrouter", base_url="https://x.invalid/v1",
+               api_key="k", model="m")
+    H.use_key("default")
     entry = H.wake(card_path=str(H.bundled_cards_dir() / "Quinn" / "card.json"))
     meta = S.load_session(entry["name"])
 
