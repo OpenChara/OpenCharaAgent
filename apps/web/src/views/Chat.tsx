@@ -91,31 +91,43 @@ export function Chat({ name, sub }: { name: string; sub: ChatSub }) {
             <div className="who">
               <b>{stream.charName}</b>
             </div>
-            <div className="chat-tabs">
-              <span
+            <div className="chat-tabs" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sub === "chat"}
                 className={sub === "chat" ? "on" : ""}
                 onClick={() => nav(`#/chara/${encodeURIComponent(name)}`)}
               >
                 {t("tab-chat")}
-              </span>
-              <span
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sub === "works"}
                 className={sub === "works" ? "on" : ""}
                 onClick={() => nav(`#/chara/${encodeURIComponent(name)}/works`)}
               >
                 {t("tab-works")}
-              </span>
-              <span
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sub === "term"}
                 className={sub === "term" ? "on" : ""}
                 onClick={() => nav(`#/chara/${encodeURIComponent(name)}/term`)}
               >
                 {t("tab-terminal")}
-              </span>
-              <span
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={sub === "home"}
                 className={sub === "home" ? "on" : ""}
                 onClick={() => nav(`#/chara/${encodeURIComponent(name)}/home`)}
               >
                 {t("tab-home")}
-              </span>
+              </button>
             </div>
             <div className="grow" />
             {netOff && (
