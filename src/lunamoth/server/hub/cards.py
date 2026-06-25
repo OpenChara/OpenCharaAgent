@@ -393,7 +393,13 @@ def _safe_extensions_for_ui(extensions: dict[str, Any]) -> dict[str, Any]:
     if theme:
         safe["theme"] = theme
         # Mirror primary into the legacy field so older renderers still color.
-        safe["theme_color"] = theme["primary"]
+        # _clean_theme can return a secondary-only dict (a card with a secondary
+        # color but no valid primary), so guard the access — a bare theme["primary"]
+        # raised KeyError here and broke the whole card view ("handler error: 'primary'").
+        if theme.get("primary"):
+            safe["theme_color"] = theme["primary"]
+        else:
+            safe.pop("theme_color", None)
     else:
         safe.pop("theme", None)
         safe.pop("theme_color", None)
