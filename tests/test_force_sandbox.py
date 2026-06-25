@@ -71,6 +71,37 @@ def test_wake_clamps_isolation_to_sandbox_when_forced(hub_env):
     assert cfg["py_backend"] == "sandbox"  # child launches jailed
 
 
+def test_downgrade_admin_sessions_rewrites_both_stores(tmp_path, monkeypatch):
+    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("LUNAMOTH_FORCE_SANDBOX", raising=False)
+    adm = S.create_session("adm", isolation="admin")
+    adm.config_path.write_text(json.dumps({"character_path": "/x/card.json", "isolation": "admin",
+                                            "py_backend": "admin", "model": "m"}), encoding="utf-8")
+    box = S.create_session("box", isolation="sandbox")
+    box.config_path.write_text(json.dumps({"isolation": "sandbox", "py_backend": "sandbox"}), encoding="utf-8")
+
+    assert S.downgrade_admin_sessions() == ["adm"]  # only the admin chara
+    assert S.load_session("adm").isolation == "sandbox"  # session.json (the jail authority)
+    cfg = json.loads(adm.config_path.read_text(encoding="utf-8"))
+    assert cfg["isolation"] == "sandbox" and cfg["py_backend"] == "sandbox"  # config.json mirror
+    assert cfg["model"] == "m"  # unrelated config preserved
+    # Idempotent (so a restart that's already locked is a no-op), and it STAYS sandbox
+    # after the lock is removed — no spring-back to admin.
+    assert S.downgrade_admin_sessions() == []
+    assert S.load_session("adm").isolation == "sandbox"
+
+
+def test_downgrade_catches_config_only_admin(tmp_path, monkeypatch):
+    # session.json sandbox but config.json admin (the set_isolation-writes-config case) is
+    # still caught + reconciled to sandbox in both stores.
+    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("LUNAMOTH_FORCE_SANDBOX", raising=False)
+    m = S.create_session("mixed", isolation="sandbox")
+    m.config_path.write_text(json.dumps({"isolation": "admin", "py_backend": "admin"}), encoding="utf-8")
+    assert S.downgrade_admin_sessions() == ["mixed"]
+    assert json.loads(m.config_path.read_text(encoding="utf-8"))["isolation"] == "sandbox"
+
+
 def test_set_isolation_refuses_admin_when_forced(hub_env):
     card = str(hub_env.bundled_cards_dir() / "LunaMoth" / "card.json")
     entry = _dispatch(hub_env, "session.wake", {"card": card})["result"]

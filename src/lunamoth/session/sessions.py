@@ -225,6 +225,38 @@ def list_sessions() -> list[SessionMeta]:
     return out
 
 
+def downgrade_admin_sessions() -> list[str]:
+    """Distribution-lock startup step: persistently rewrite every ``admin`` chara to
+    ``sandbox`` — in BOTH stores (session.json ``isolation`` = the jail authority via
+    env(), and config.json ``isolation``/``py_backend`` = the UI/snapshot mirror) — so
+    the downgrade STICKS: after the lock is later removed the chara stays sandbox (the
+    toggle just re-enables). Idempotent; returns the names that were downgraded.
+
+    Called at startup when force_sandbox() is on. (backend() also clamps at runtime, so
+    the jail is safe regardless; this is what makes the downgrade survive removing the
+    lock instead of springing back to admin.)"""
+    from ..config import atomic_write_text
+
+    downgraded: list[str] = []
+    for meta in list_sessions():
+        try:
+            cfg = json.loads(meta.config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            cfg = None
+        cfg_admin = isinstance(cfg, dict) and normalize_isolation(str(cfg.get("isolation") or "")) == "admin"
+        if meta.isolation != "admin" and not cfg_admin:
+            continue
+        meta.isolation = "sandbox"
+        meta.save()  # session.json — the jail authority (meta.env())
+        if isinstance(cfg, dict):
+            cfg["isolation"] = "sandbox"
+            if "py_backend" in cfg:
+                cfg["py_backend"] = "sandbox"
+            atomic_write_text(meta.config_path, json.dumps(cfg, ensure_ascii=False, indent=2), private=True)
+        downgraded.append(meta.name)
+    return downgraded
+
+
 def delete_session(name: str) -> None:
     import shutil
 

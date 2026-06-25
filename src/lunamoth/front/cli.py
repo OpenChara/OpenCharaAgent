@@ -489,6 +489,14 @@ def cmd_desktop(args: argparse.Namespace) -> int:
     # (which inherit it) pin to the sandbox jail and refuse admin. Env or flag, either works.
     if getattr(args, "force_sandbox", False):
         os.environ["LUNAMOTH_FORCE_SANDBOX"] = "1"
+    from ..session.isolation import force_sandbox
+    if force_sandbox():
+        # Persistently downgrade any existing admin chara to sandbox at startup, so it
+        # STAYS sandbox even after the lock is later removed (the toggle re-enables then).
+        from ..session.sessions import downgrade_admin_sessions
+        downgraded = downgrade_admin_sessions()
+        if downgraded:
+            print(f"force-sandbox: downgraded {len(downgraded)} chara(s) to the sandbox: {', '.join(downgraded)}")
     host = getattr(args, "host", None) or "127.0.0.1"
     # An explicit token may come from --token OR the LUNAMOTH_TOKEN env (the Docker
     # entrypoint sets the latter, generating one if unset). Either counts as the
