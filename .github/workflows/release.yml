@@ -1,0 +1,49 @@
+name: Release
+
+# On a version tag (v*), build the wheel that bundles the SPA, generate a
+# SHA256SUMS manifest, and publish both as GitHub Release assets. install.sh
+# fetches that manifest and refuses to install on a checksum mismatch, so this
+# closes the supply-chain loop: the bytes a user installs are verified against
+# what CI built.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write   # create the release + upload assets
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build wheel + checksum, publish release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Set up Python
+        run: uv python install 3.11
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Build wheel (bundles the SPA) + SHA256SUMS
+        run: bash scripts/build-wheel.sh
+      - name: Verify the checksum manifest matches the wheel
+        run: |
+          cd dist
+          sha256sum --check SHA256SUMS
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.whl
+            dist/SHA256SUMS
+          generate_release_notes: true
+          fail_on_unmatched_files: true

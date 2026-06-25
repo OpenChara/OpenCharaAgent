@@ -101,5 +101,19 @@ need(lambda n: "_bundled/skills/" in n and n.endswith("SKILL.md"), "_bundled/ski
 print(f"WHEEL OK: webui + cards + toolpacks + skills bundled in {whl}")
 PY
 
+# --- 4. emit a checksum manifest so installs can verify integrity -----------
+# install.sh fetches a SHA256SUMS release asset and refuses on mismatch; the
+# release workflow uploads this file alongside the wheel. Generated here so a
+# local build produces the same artifact CI publishes.
+say "writing dist/SHA256SUMS ..."
+( cd "$DIST_DIR"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum *.whl > SHA256SUMS
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 *.whl > SHA256SUMS
+  else
+    fail "no sha256sum/shasum available to write SHA256SUMS"
+  fi )
+
 say "done. wheel(s):"
-ls -1 "$DIST_DIR"/*.whl
+ls -1 "$DIST_DIR"/*.whl "$DIST_DIR"/SHA256SUMS
