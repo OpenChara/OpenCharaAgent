@@ -111,28 +111,30 @@ def _save_disk_catalogue(base: str, fetched_at: float, models: list[dict]) -> No
         _log.debug("could not persist model catalogue", exc_info=True)
 
 
-def _catalogue(base_url: str, api_key: str = "", *,
-               refresh_seconds: float | None = None, provider: str = "") -> list[dict]:
-    """Provider /models catalogue (id + modality + context), DISK-cached. Pulls live
-    only when the cache is older than ``refresh_seconds`` (default: the configured
-    interval, ~one day); on a fetch failure falls back to the stale disk copy, then
-    to a curated built-in list — never raises, never returns empty for a known
-    provider just because it's offline."""
+def _catalogue_meta(base_url: str, api_key: str = "", *,
+                    refresh_seconds: float | None = None, provider: str = "") -> tuple[list[dict], str]:
+    """Provider /models catalogue plus its SOURCE, so callers can tell the user when
+    a list isn't live. Source is one of:
+      ``fresh``    — served from the in-interval memo / disk cache, or a live pull
+      ``stale``    — a live pull failed; serving an OLDER disk copy
+      ``fallback`` — no cache AND offline → the curated built-in list
+    DISK-cached; pulls live only when older than ``refresh_seconds`` (default ~one
+    day). Never raises, never empty for a known provider just because it's offline."""
     base = base_url.rstrip("/")
     if not base:
-        return _fallback_models(provider, base)
+        return _fallback_models(provider, base), "fallback"
     if refresh_seconds is None:
         refresh_seconds = refresh_interval_seconds()
     now = time.time()  # wall clock (the disk cache must survive restarts)
     memo = _models_cache.get(base)
     if memo and now - memo[0] < refresh_seconds:
-        return memo[1]
+        return memo[1], "fresh"
     disk = _load_disk_catalogue()
     entry = disk.get(base) if isinstance(disk.get(base), dict) else None
     if entry and isinstance(entry.get("models"), list) \
             and now - float(entry.get("fetched_at") or 0) < refresh_seconds:
         _models_cache[base] = (float(entry["fetched_at"]), entry["models"])
-        return entry["models"]
+        return entry["models"], "fresh"
     # cache stale or missing → try a live pull
     try:
         data = _pkg()._http_json(base + "/models", api_key)
@@ -140,12 +142,18 @@ def _catalogue(base_url: str, api_key: str = "", *,
         if isinstance(models, list) and models:
             _models_cache[base] = (now, models)
             _save_disk_catalogue(base, now, models)
-            return models
+            return models, "fresh"
     except Exception:  # noqa: BLE001 - offline / rate-limited / sparse → fall back
         _log.debug("model catalogue fetch failed for %s", base, exc_info=True)
     if entry and isinstance(entry.get("models"), list):
-        return entry["models"]  # stale-but-real beats a guess
-    return _fallback_models(provider, base)
+        return entry["models"], "stale"  # stale-but-real beats a guess
+    return _fallback_models(provider, base), "fallback"
+
+
+def _catalogue(base_url: str, api_key: str = "", *,
+               refresh_seconds: float | None = None, provider: str = "") -> list[dict]:
+    """The model list alone (see ``_catalogue_meta`` for the source/staleness)."""
+    return _catalogue_meta(base_url, api_key, refresh_seconds=refresh_seconds, provider=provider)[0]
 
 
 def _fb(mid: str, name: str, ctx: int, *, vision: bool = False, tools: bool = True) -> dict:

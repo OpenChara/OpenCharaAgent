@@ -49,10 +49,11 @@ export function WakeSheet({ card, onClose }: { card: DeckCard; onClose: () => vo
   useEffect(() => {
     let alive = true;
     hub
-      .call<ModelInfo[]>("models.list", {}, 30000)
+      .call<{ models?: ModelInfo[] }>("models.list", {}, 30000)
+      .then((r) => (Array.isArray(r?.models) ? r.models : []))
       .catch(() => [] as ModelInfo[])
       .then((ml) => {
-        if (alive) setModels(Array.isArray(ml) ? ml : []);
+        if (alive) setModels(ml);
       });
     return () => {
       alive = false;

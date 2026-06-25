@@ -442,6 +442,7 @@ export const I18N = {
   "model-ctx-note": ["自定义模型必填；OpenRouter 忽略", "required for custom · ignored on OpenRouter"],
   "model-refresh-label": ["模型列表更新间隔", "Model list refresh"],
   "model-refresh-note": ["天 · 默认 1", "days · default 1"],
+  "model-list-stale": ["⚠ 连不上提供商，显示的是缓存/内置列表", "⚠ Provider unreachable — showing a cached/built-in list"],
   "aux-title": ["其他模态", "Other modalities"],
   "aux-sub": ["默认都用主模型；可为某个模态单独指定一个模型。", "Default to the main model; override a modality with its own model."],
   "aux-vision": ["图像理解", "Vision"],

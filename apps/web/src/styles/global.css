@@ -2040,6 +2040,7 @@ body.dark .bp-dots i.on{background:var(--accent)}
 .reason-hint{font-size:11px; color:var(--text-3)}
 .model-save-state{min-height:18px; margin-top:14px; font-size:12px}
 .model-nokey{border:none; background:none; cursor:pointer; text-align:left; padding:0}
+.model-stale-note{font-size:10.5px; color:var(--amber); margin-top:4px}
 body.dark .sel-trigger,body.dark .sel-pop{background:#1C2228}
 body.dark .sel-search{background:rgba(255,255,255,.06)}
 body.dark .sel-item:hover,body.dark .sel-item.active{background:rgba(91,159,212,.16)}

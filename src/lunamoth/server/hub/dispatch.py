@@ -694,13 +694,13 @@ class HubDispatcher:
         )
 
     def _models_list(self, p: dict[str, Any]) -> Any:
+        # Returns {models, stale}: stale=true means the provider's /models couldn't be
+        # reached, so this is a cached-but-old or curated FALLBACK list (the UI says so
+        # rather than presenting a guess as live). _catalogue_meta never raises.
         defaults = _config.load_defaults()
         base = str(p.get("base_url") or defaults.get("base_url", ""))
         key = str(p.get("api_key") or defaults.get("api_key", ""))
-        try:
-            models = _models._catalogue(base, key)
-        except Exception as exc:  # noqa: BLE001
-            raise RpcError(-32036, f"could not list models: {exc}") from exc
+        models, source = _models._catalogue_meta(base, key)
         out = []
         for m in models:
             params = m.get("supported_parameters") or []
@@ -712,7 +712,7 @@ class HubDispatcher:
                 "vision": "image" in (arch.get("input_modalities") or []),
                 "writing": any(s in str(m.get("id", "")).lower() for s in _models._WRITING_STAR),
             })
-        return out
+        return {"models": out, "stale": source != "fresh"}
 
     def _transcribe_card(self, p: dict[str, Any]) -> Any:
         text = str(p.get("text") or "").strip()

@@ -207,7 +207,7 @@ function ModelEffort({ stream, snap }: { stream: CharaStream; snap: Snapshot }) 
   const [keys, setKeys] = useState<KeyRow[]>([]);
   useEffect(() => {
     let on = true;
-    hub.call<ModelInfo[]>("models.list", {}, 30000).then((m) => on && setModels(Array.isArray(m) ? m : [])).catch(() => {});
+    hub.call<{ models?: ModelInfo[] }>("models.list", {}, 30000).then((r) => on && setModels(Array.isArray(r?.models) ? r.models : [])).catch(() => {});
     hub.call<KeyRow[]>("keys.list", {}, 15000).then((k) => on && setKeys(Array.isArray(k) ? k : [])).catch(() => {});
     return () => {
       on = false;

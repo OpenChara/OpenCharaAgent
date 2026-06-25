@@ -95,7 +95,7 @@ export function CreateFlow({ onClose }: { onClose: () => void }) {
               draftRef.current = normalizeDraft(raw as Record<string, unknown>);
               setStep("shape");
             }}
-            modelsList={() => hub.call<ModelInfo[]>("models.list", {}, 30000).catch(() => [] as ModelInfo[])}
+            modelsList={() => hub.call<{ models?: ModelInfo[] }>("models.list", {}, 30000).then((r) => r?.models ?? []).catch(() => [] as ModelInfo[])}
           />
         ) : (
           <ShapeStep

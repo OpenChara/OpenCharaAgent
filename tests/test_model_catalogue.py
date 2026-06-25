@@ -58,6 +58,21 @@ def test_offline_prefers_stale_disk_over_fallback(monkeypatch):
     assert [m["id"] for m in out] == ["cached-model"]
 
 
+def test_catalogue_meta_reports_source(monkeypatch):
+    # live pull → fresh
+    monkeypatch.setattr(H, "_http_json", lambda *a, **k: _payload("a"))
+    out, src = M._catalogue_meta("https://z.test/v1", "k", refresh_seconds=1000)
+    assert [m["id"] for m in out] == ["a"] and src == "fresh"
+    # offline + a stale disk copy → stale
+    M._models_cache.clear()
+    monkeypatch.setattr(H, "_http_json", lambda *a, **k: (_ for _ in ()).throw(OSError("down")))
+    out, src = M._catalogue_meta("https://z.test/v1", "k", refresh_seconds=0.0)
+    assert [m["id"] for m in out] == ["a"] and src == "stale"
+    # offline + nothing cached for a known provider → fallback
+    out, src = M._catalogue_meta("https://openrouter.ai/api/v1", "", refresh_seconds=1000)
+    assert out and src == "fallback"
+
+
 def test_refresh_interval_default_and_override():
     assert M.refresh_interval_seconds() == 86_400        # default: one day
     H.save_defaults({"model_refresh_interval": "3600"})

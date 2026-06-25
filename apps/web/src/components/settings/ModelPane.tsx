@@ -53,6 +53,7 @@ export function ModelPane() {
 
   const [keys, setKeys] = useState<KeyRow[]>([]);
   const [models, setModels] = useState<ModelInfo[]>([]);
+  const [modelsStale, setModelsStale] = useState(false);
   const [imageCatalog, setImageCatalog] = useState<ImageProvider[]>([]);
   const [busy, setBusy] = useState(false);
   const [savedTick, setSavedTick] = useState(false);
@@ -74,7 +75,9 @@ export function ModelPane() {
   }, [hub]);
   useEffect(() => {
     let on = true;
-    hub.call<ModelInfo[]>("models.list", {}, 30000).then((m) => on && setModels(Array.isArray(m) ? m : [])).catch(() => {});
+    hub.call<{ models?: ModelInfo[]; stale?: boolean }>("models.list", {}, 30000)
+      .then((r) => { if (!on) return; setModels(Array.isArray(r?.models) ? r.models : []); setModelsStale(!!r?.stale); })
+      .catch(() => {});
     return () => { on = false; };
   }, [hub, defaults.base_url]);
   // image-gen provider catalogue (providers + their models + key presence).
@@ -152,6 +155,7 @@ export function ModelPane() {
             <label className="model-box">
               <span className="mb-lbl">{t("model-label")}</span>
               <Select value={model} options={modelOptions} onChange={(v) => v.trim() && void persist({ model: v.trim() })} placeholder={t("model-other-ph")} search allowCustom />
+              {modelsStale && <span className="model-stale-note">{t("model-list-stale")}</span>}
             </label>
 
             {!isOpenRouter && (

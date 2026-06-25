@@ -83,8 +83,9 @@ describe("I18N strings map", () => {
   // upd-changelog, upd-installed, upd-no-notes, upd-behind, upd-nudge, upd-nudge-view) → 654.
   // World-book reorder moved from drag to up/down buttons (touch/keyboard-friendly):
   // dropped wb-reorder, added wb-move-up + wb-move-down → 655.
-  it("preserves the full key set from the source dict (655 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(655);
+  // The model picker's offline/cached-list notice (model-list-stale) → 656.
+  it("preserves the full key set from the source dict (656 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(656);
   });
 
   it("every value is a [zh, en] string tuple", () => {
