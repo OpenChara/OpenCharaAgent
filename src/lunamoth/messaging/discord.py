@@ -115,6 +115,9 @@ class DiscordAPI:
         route = f"POST /channels/{channel_id}/messages (file)"
         url = f"{self.api_base}/channels/{channel_id}/messages"
         boundary = "lunamoth" + uuid.uuid4().hex
+        # Sanitize the filename before the Content-Disposition header: strip quotes/CR/LF
+        # so a chara-authored workspace name can't malform the multipart body.
+        filename = filename.replace('"', "").replace("\r", "").replace("\n", "") or "file"
         payload = json.dumps({"content": content}, ensure_ascii=False)
         pre = (
             f"--{boundary}\r\n"
@@ -307,7 +310,9 @@ class DiscordAdapter(Adapter):
             except Exception as e:  # noqa: BLE001 - the gateway must keep reconnecting
                 if self._closed.is_set():
                     break
-                _log.warning("Discord gateway disconnected (%s: %s); reconnecting in 5s", type(e).__name__, e)
+                # Log only the exception TYPE — the message can embed the gateway URL
+                # (which carries a short-lived resume token); don't write that to disk.
+                _log.warning("Discord gateway disconnected (%s); reconnecting in 5s", type(e).__name__)
                 await asyncio.sleep(5.0)
             finally:
                 self._ws = None

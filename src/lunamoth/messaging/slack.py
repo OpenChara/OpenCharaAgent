@@ -239,7 +239,9 @@ class SlackAdapter(Adapter):
             except Exception as e:  # noqa: BLE001 - keep reconnecting
                 if self._closed.is_set():
                     break
-                _log.warning("Slack socket disconnected (%s: %s); reconnecting in 5s", type(e).__name__, e)
+                # Log only the exception TYPE — the message can embed the socket URL
+                # (which carries a single-use ticket); don't write that to disk.
+                _log.warning("Slack socket disconnected (%s); reconnecting in 5s", type(e).__name__)
                 await asyncio.sleep(5.0)
             finally:
                 self._ws = None
