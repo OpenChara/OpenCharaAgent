@@ -54,6 +54,30 @@ def test_from_wire_rejects_malformed(bad):
     assert RawAttachment.from_wire(bad) is None
 
 
+_PNG_SIG = b"\x89PNG\r\n\x1a\n" + b"0" * 16
+_HEIC_SIG = b"\x00\x00\x00\x18ftypheic" + b"0" * 8
+
+
+def test_from_wire_sniff_overrides_lying_client_mime():
+    # A client that mislabels a PNG as image/webp would 400 a strict provider; the
+    # magic bytes win over the declared mime (hermes _sniff_mime_from_bytes).
+    att = RawAttachment.from_wire(_wire("photo.bin", "image/webp", _PNG_SIG))
+    assert att is not None and att.mime == "image/png" and att.is_image
+
+
+def test_from_wire_sniff_recovers_image_with_no_mime_and_unknown_name():
+    # No declared mime and an extension not in the name table → previously fell to
+    # application/octet-stream and was shunted to disk; sniffing recovers it.
+    att = RawAttachment.from_wire(_wire("photo", "", _HEIC_SIG))
+    assert att is not None and att.mime == "image/heic" and att.is_image
+
+
+def test_from_wire_sniff_leaves_non_image_to_declared_mime():
+    # Sniffing only knows images; a real document keeps its declared mime.
+    att = RawAttachment.from_wire(_wire("d.pdf", "application/pdf", b"%PDF-1.4"))
+    assert att is not None and att.mime == "application/pdf" and not att.is_image
+
+
 # ---- ingest_attachments ------------------------------------------------------
 
 def test_small_image_inlines_for_vision_model():

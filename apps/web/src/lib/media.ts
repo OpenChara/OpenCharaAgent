@@ -27,9 +27,12 @@ export const MEDIA_DELIVERY_EXTS: ReadonlySet<string> = new Set([
   ".html", ".htm",
 ]);
 
-// Mirror protocol/media.py IMAGE_EXTS — embedded inline (vs offered as download).
+// Mirror protocol/media.py IMAGE_EXTS — the set every surface can embed inline
+// (== hermes _IMAGE_EXTS). svg/bmp/tiff are deliverable but NOT inline-able (svg is
+// an XSS vector the /asset route refuses; bmp/tiff aren't <img>-renderable), so they
+// render as a download here just like a pdf. Pinned equal by test_cross_lang_drift.
 export const IMAGE_EXTS: ReadonlySet<string> = new Set([
-  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".svg",
+  ".png", ".jpg", ".jpeg", ".gif", ".webp",
 ]);
 
 // A whole line that is just a MEDIA: marker (quote/backtick-tolerant). Like hermes

@@ -51,8 +51,14 @@ MEDIA_DELIVERY_EXTS: tuple[str, ...] = (
 )
 
 # Image extensions a rich surface embeds inline (vs offered as a download).
+# Verbatim from hermes ``gateway/run.py`` ``_IMAGE_EXTS`` — the set hermes sends as
+# native photos; everything else in MEDIA_DELIVERY_EXTS is a document/download.
+# NOT the full raster set: ``.svg`` is a stored-XSS vector served same-origin (the
+# /asset route refuses it), and ``.bmp``/``.tiff`` aren't web-renderable as <img>,
+# so all three are delivered as downloads — keeping this set == what every surface
+# can actually embed (the /asset image lane, the web <img>, hermes send_image).
 IMAGE_EXTS: frozenset[str] = frozenset(
-    {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".svg"}
+    {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 )
 
 # Don't push more than ~8MB of a single file to the foreground (mirrors the

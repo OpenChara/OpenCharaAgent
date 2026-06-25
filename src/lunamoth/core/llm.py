@@ -50,6 +50,9 @@ LIVE_PROVIDERS = {"openai_compatible", "openai", "ollama", "openrouter"}
 _IMAGE_TOO_LARGE_MARKERS = (
     "image_too_large", "image too large", "image is too large", "image exceeds",
     "exceeds 5 mb", "exceeds the maximum size", "maximum allowed size",
+    # Anthropic's per-side pixel-dimension cap (independent of byte size) — the
+    # rejection wording omits "too large"/"exceeds", so list it explicitly.
+    "dimensions exceed max allowed size", "max allowed size: 8000",
 )
 
 

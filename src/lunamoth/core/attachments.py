@@ -138,9 +138,14 @@ class RawAttachment:
         name = str(d.get("name") or "attachment").strip() or "attachment"
         # Strip any path components a client may have leaked into the name.
         name = name.replace("\\", "/").rsplit("/", 1)[-1] or "attachment"
-        mime = str(d.get("mime") or "").strip().lower()
-        if not mime:
-            mime = _guess_mime(name)
+        # Magic bytes win over the declared mime: clients lie about content-type
+        # (a PNG served as image/webp), and a provider 400s on a declared-vs-actual
+        # mismatch — so sniff the real bytes first, then fall back to the declared
+        # mime, then the name. Also recovers an image whose declared mime is empty
+        # and whose extension isn't in the table (would otherwise be shunted to disk).
+        sniffed = _sniff_mime_from_bytes(data)
+        declared = str(d.get("mime") or "").strip().lower()
+        mime = sniffed or declared or _guess_mime(name)
         return cls(name=name, mime=mime, data=data)
 
 
@@ -244,3 +249,29 @@ def _guess_mime(name: str) -> str:
         if lower.endswith(ext):
             return mime
     return "application/octet-stream"
+
+
+def _sniff_mime_from_bytes(raw: bytes) -> str | None:
+    """Detect an image mime from leading magic bytes, or None if not a known image.
+
+    Ported verbatim from hermes (agent/image_routing._sniff_mime_from_bytes): the
+    authority over a client-declared content-type, because clients mislabel images
+    and providers reject a declared-vs-actual mismatch. Only image formats are
+    sniffed (documents fall through to the declared mime / name)."""
+    if not raw:
+        return None
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if raw.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if raw[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "image/webp"
+    if raw.startswith(b"BM"):
+        return "image/bmp"
+    if len(raw) >= 12 and raw[4:8] == b"ftyp" and raw[8:12] in (
+        b"heic", b"heix", b"hevc", b"hevx", b"mif1", b"msf1", b"heim", b"heis",
+    ):
+        return "image/heic"
+    return None
