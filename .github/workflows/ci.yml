@@ -22,9 +22,9 @@ jobs:
     name: Python (ruff + pytest + architecture)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v6
       - name: Set up Python
         run: uv python install 3.11
       - name: Sync (dev + server extras)
@@ -42,9 +42,9 @@ jobs:
     # macOS so those paths are exercised on their native OS.
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v6
       - name: Set up Python
         run: uv python install 3.11
       - name: Sync (dev + server extras)
@@ -59,8 +59,8 @@ jobs:
       run:
         working-directory: apps/web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
