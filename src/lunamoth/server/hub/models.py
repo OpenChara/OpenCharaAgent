@@ -301,8 +301,17 @@ def _http_error_detail(exc: urllib.error.HTTPError) -> str:
         return ""
 
 
+# Output-token budget for the hub's auxiliary completions (card draft / world book /
+# field rewrite / transcribe / visual brief). High on purpose: a REASONING model spends
+# completion tokens on hidden reasoning BEFORE the visible answer, so a small cap (the old
+# 4096) truncates the structured JSON to empty/invalid — the "model returned empty / not
+# strict JSON" draft failures. It's a CEILING, not a demand (OpenRouter clamps it to the
+# model's real max output), and the model stops as soon as the answer is done.
+MAX_OUTPUT_TOKENS = 65536
+
+
 def _complete(defaults: dict[str, str], system: str, user: str, model: str = "",
-              max_tokens: int = 4096, temperature: float = 0.8,
+              max_tokens: int = MAX_OUTPUT_TOKENS, temperature: float = 0.8,
               response_format: dict[str, Any] | None = None) -> str:
     base = (defaults.get("base_url") or "").rstrip("/")
     if not base:

@@ -206,7 +206,6 @@ def draft_card_from_inspiration(defaults: dict[str, str], inspiration: str, mode
         _CARD_DRAFT_SYSTEM,
         text,
         model=model,
-        max_tokens=4096,
         temperature=0.75,
         response_format={"type": "json_object"},
     )
@@ -279,7 +278,7 @@ def generate_worldbook(defaults: dict[str, str], *, name: str = "", description:
         parts.append(f"\nWrite a world book of about {want} entries for this character.")
     raw = _pkg()._complete(
         defaults, _WORLDBOOK_SYSTEM, "\n\n".join(parts),
-        model=model, max_tokens=4096, temperature=0.8,
+        model=model, temperature=0.8,
         response_format={"type": "json_object"},
     )
     if not raw.strip():
@@ -339,7 +338,7 @@ def rewrite_card_field(defaults: dict[str, str], field: str, value: str = "",
     parts.append(f"\nCurrent text:\n{value.strip() or '(empty)'}")
     parts.append(f"\nInstruction: {directive}")
     raw = _pkg()._complete(defaults, _FIELD_REWRITE_SYSTEM, "\n".join(parts),
-                           model=model, max_tokens=2048, temperature=0.9)
+                           model=model, temperature=0.9)
     text = _strip_text_fence(raw).strip()
     if not text:
         raise HubRpcError(-32050, "the model returned an empty rewrite",

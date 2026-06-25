@@ -437,7 +437,7 @@ class HubDispatcher:
         defaults = _config.task_defaults(defaults, str(defaults.get("image_prompt_provider") or ""))
         try:
             brief = pipeline.build_brief(
-                card, lambda s, u: _pkg()._complete(defaults, s, u, model=_vp_model, temperature=0.7, max_tokens=3000))
+                card, lambda s, u: _pkg()._complete(defaults, s, u, model=_vp_model, temperature=0.7))
         except (RuntimeError, ValueError) as exc:
             raise HubRpcError(-32050, str(exc), {"kind": "visual_brief"}) from exc
         try:
@@ -484,7 +484,7 @@ class HubDispatcher:
         def _run() -> dict[str, Any]:
             out = pipeline.generate(
                 card, kind,
-                llm_call=lambda s, u: _pkg()._complete(defaults, s, u, temperature=0.7, max_tokens=3000),
+                llm_call=lambda s, u: _pkg()._complete(defaults, s, u, temperature=0.7),
                 brief=brief_in,
                 refs=refs_in,
                 extra=extra,
