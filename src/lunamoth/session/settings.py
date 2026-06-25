@@ -210,9 +210,9 @@ class Settings:
     provider: str = "mock"
     base_url: str = ""
     api_key: str = ""
-    # Matches the OpenRouter preset (the recommended first-run path); the wizard
-    # overwrites this with whatever preset/model the operator actually picks.
-    model: str = "deepseek/deepseek-v4-flash"
+    # No hardcoded default model — it's set at wake (the gate requires one) / in the
+    # session config. An empty model surfaces a real error rather than a silent fallback.
+    model: str = ""
     temperature: float = 0.85
     # Reply/tool-call token budget. Must be generous: tool-call arguments (e.g. a
     # whole file written via the `terminal` tool) stream inside this budget, and a

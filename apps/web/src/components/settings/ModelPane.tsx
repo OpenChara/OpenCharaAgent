@@ -38,11 +38,6 @@ interface Defaults {
 interface KeyRow { label: string; provider: string; base_url: string; model: string; has_key: boolean; active: boolean }
 interface TestResult { ok?: boolean; error?: { kind?: string }; capabilities?: { tools?: boolean; vision?: boolean } }
 
-/* The pair we OFFER as quick picks. */
-const RECOMMENDED = [
-  { id: "deepseek/deepseek-v4-flash", note: "model-note-flash" },
-  { id: "deepseek/deepseek-v4-pro", note: "model-note-pro" },
-];
 const REASONING = ["off", "low", "medium", "high"] as const;
 const providerOf = (id: string) => (id.includes("/") ? id.split("/")[0] : "other").replace(/^[~@]/, "");
 
@@ -93,19 +88,16 @@ export function ModelPane() {
 
   const activeProvider = keys.find((k) => k.active)?.label || defaults.provider || "";
   const model = defaults.model || "";
-  const isOpenRouter = (defaults.base_url || "").includes("openrouter.ai");
+  const isOpenRouter = (defaults.provider || "") === "openrouter";
 
   const providerOptions: SelectOption[] = keys.map((k) => ({ value: k.label, label: k.label, note: k.provider || undefined }));
 
   const modelOptions: SelectOption[] = useMemo(() => {
     const capNote = (m: ModelInfo) => `${t("cap-tools-short")}${m.tools ? "✓" : "✗"} · ${t("cap-vision-short")}${m.vision ? "✓" : "✗"}`;
-    const recIds = new Set(RECOMMENDED.map((r) => r.id));
-    const rec: SelectOption[] = RECOMMENDED.map((r) => ({ value: r.id, label: r.id, note: t(r.note as TKey), group: t("model-recommended") }));
-    const rest = models
-      .filter((m) => !recIds.has(m.id))
+    return models
+      .slice()
       .sort((a, b) => a.id.localeCompare(b.id))
       .map((m) => ({ value: m.id, label: m.id, note: capNote(m), group: providerOf(m.id) }));
-    return [...rec, ...rest];
   }, [models, t]);
 
   const persist = async (patch: Record<string, string>, useKey?: string) => {

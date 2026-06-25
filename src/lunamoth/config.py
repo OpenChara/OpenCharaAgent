@@ -124,7 +124,7 @@ class LLMConfig:
     provider: str = os.getenv("LLM_PROVIDER", "mock").strip().lower()
     base_url: str = os.getenv("OPENAI_BASE_URL", "").rstrip("/")
     api_key: str = os.getenv("OPENAI_API_KEY", "")
-    model: str = os.getenv("OPENAI_MODEL", "deepseek/deepseek-v4-flash")
+    model: str = os.getenv("OPENAI_MODEL", "")  # no hardcoded default — the chara's model is configured (no fallback model)
     temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.85"))
     # Max OUTPUT tokens. 0 = AUTO (the default): follow the model — providers.py
     # resolves the model's real max_completion_tokens (OpenRouter), falling back

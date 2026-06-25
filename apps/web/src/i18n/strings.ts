@@ -422,8 +422,6 @@ export const I18N = {
   "default-model": ["默认模型", "Default model"],
   "default-scope": ["默认应用于新唤醒的角色；活着的角色保持各自的配置。", "Applies to newly woken characters; living ones keep their own config."],
   "model-pane-sub": ["新角色默认用哪个模型思考与行动；key 在「Provider」里管理。", "Which model new characters think and act with; keys are managed under Providers."],
-  "model-note-flash": ["快 · 省", "fast · cheap"],
-  "model-note-pro": ["更强", "stronger"],
   "model-recommended": ["推荐", "Recommended"],
   "model-search-ph": ["搜索模型…", "Search models…"],
   "model-use-typed": ["使用 “{q}”", "Use “{q}”"],
