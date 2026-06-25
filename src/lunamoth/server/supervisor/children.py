@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ...content.knobs import DEFAULT_PATIENCE, DEFAULT_QUIET
 from ...session import sessions as S
 from ..ws import _close_ws
 from .lifestate import DriverSlot, FrameRing, IdleGate, LifeState, RestartBackoff, permanent_model_error
@@ -215,7 +216,7 @@ class CharaChild:
             self.restart.note_started()
             self._stdout_task = asyncio.create_task(self._read_stdout(), name=f"chara-{self.name}-stdout")
             self._idle_task = asyncio.create_task(self._idle_loop(), name=f"chara-{self.name}-idle")
-            self._emit_life(self.idle.life_state({"patience": 600.0, "quiet": 300}))
+            self._emit_life(self.idle.life_state({"patience": DEFAULT_PATIENCE, "quiet": DEFAULT_QUIET}))
             return self.status()
 
     async def stop(self) -> dict[str, Any]:

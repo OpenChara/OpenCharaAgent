@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import ROOT, LLMConfig
-from ..content.knobs import DEFAULT_PATIENCE, patience_is_explicit
+from ..content.knobs import DEFAULT_PATIENCE, DEFAULT_QUIET, patience_is_explicit
 
 
 # Runtime config lives in the project, NOT inside the sandbox (the sandbox is
@@ -275,7 +275,7 @@ class Settings:
     mode: str = "live"
     # Engagement quiet period, seconds: while you are actively talking the chara
     # sets its own work aside; after this much silence it picks its life back up.
-    quiet: int = 300
+    quiet: int = DEFAULT_QUIET
     # Max tool-call iterations in one turn. A chara doing real autonomous work
     # needs room (read → run → write → verify chains); the loop guardrails stop
     # genuinely-stuck repetition, so this can be generous. Operator-configurable.

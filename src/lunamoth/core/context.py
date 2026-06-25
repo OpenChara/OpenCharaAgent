@@ -58,10 +58,17 @@ def _msg_text(msg: dict) -> str:
     return "\n".join(p for p in parts if p)
 
 
+# Context-window defaults — the ONE source. agent.py uses these as the env-var fallbacks
+# too, so a ContextBuffer built without the env path (a direct construct / a test) computes
+# the SAME compaction threshold (target = max_tokens - trim_buffer_tokens) as the live agent.
+DEFAULT_CONTEXT_TOKENS = 65536
+DEFAULT_TRIM_BUFFER_TOKENS = 4096
+
+
 @dataclass
 class ContextBuffer:
-    max_tokens: int = 65536
-    trim_buffer_tokens: int = 4096
+    max_tokens: int = DEFAULT_CONTEXT_TOKENS
+    trim_buffer_tokens: int = DEFAULT_TRIM_BUFFER_TOKENS
     messages: list[dict] = field(default_factory=list)
     # Called for every NEW message (not for restored history); the transcript
     # store hooks in here. Trimming only narrows the in-memory window.

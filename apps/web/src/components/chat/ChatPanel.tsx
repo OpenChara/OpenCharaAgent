@@ -11,6 +11,7 @@ import { useHubApi, useHubState } from "../../state/hub";
 import type { BoardSession } from "../../state/hub";
 import { deckToast } from "../ui/deckToast";
 import { rpcErrText } from "../../lib/status";
+import { providerOf } from "../../lib/format";
 import { Select, type SelectOption } from "../settings/Select";
 import { Segmented } from "../ui/Segmented";
 import type { ModelInfo } from "../deck/types";
@@ -262,7 +263,7 @@ function ModelEffort({ stream, snap }: { stream: CharaStream; snap: Snapshot }) 
   const modelOptions: SelectOption[] = models
     .map((m) => m.id)
     .sort((a, b) => a.localeCompare(b))
-    .map((id) => ({ value: id, label: id, group: id.includes("/") ? id.split("/")[0] : undefined }));
+    .map((id) => ({ value: id, label: id, group: providerOf(id) }));
 
   const swapModel = (id: string) => {
     const v = id.trim();

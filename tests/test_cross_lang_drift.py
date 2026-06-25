@@ -105,6 +105,20 @@ def test_reasoning_efforts_in_sync_py_ts():
     assert ts_efforts == S.REASONING_EFFORTS, "ModelPane REASONING drifted from settings.REASONING_EFFORTS"
 
 
+def test_life_state_words_in_sync_py_ts():
+    # The life.state vocabulary: Python emits it (supervisor/lifestate.py LifeState("...")),
+    # and status.ts lifeText branches on each word as a string literal. A Python rename
+    # would make the SPA silently render no status word for that state.
+    py = (_REPO / "src/lunamoth/server/supervisor/lifestate.py").read_text(encoding="utf-8")
+    emitted = set(re.findall(r'LifeState\("([a-z_]+)"', py))
+    ts = (_REPO / "apps/web/src/lib/status.ts").read_text(encoding="utf-8")
+    handled = set(re.findall(r'life\.state === "([a-z_]+)"', ts))
+    missing = emitted - handled
+    assert emitted and not missing, (
+        f"status.ts lifeText doesn't handle life.state(s) {sorted(missing)} that Python emits"
+    )
+
+
 def test_browser_shares_the_one_exfil_regex():
     # The browser navigation guard must be the SAME compiled regex as the fetch/URL
     # guard (deduped), so the two can't drift apart.

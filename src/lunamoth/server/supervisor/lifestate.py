@@ -14,6 +14,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from ...content.knobs import DEFAULT_PATIENCE, DEFAULT_QUIET
+
 
 class FrameRing:
     """A fixed-size replay buffer with monotonic top-level seq injection."""
@@ -185,7 +187,7 @@ class IdleGate:
 
     @staticmethod
     def delay(snapshot: dict[str, Any]) -> float:
-        return max(0.0, float(snapshot.get("patience") or 600.0))
+        return max(0.0, float(snapshot.get("patience") or DEFAULT_PATIENCE))
 
     def note_user(self) -> None:
         self.last_user_mono = self.monotonic()
@@ -217,7 +219,7 @@ class IdleGate:
         now_e = self.epoch()
         if self.working:
             return LifeState("working", detail=self.detail)
-        quiet = max(0, int(snapshot.get("quiet") or 300))
+        quiet = max(0, int(snapshot.get("quiet") or DEFAULT_QUIET))
         engaged_until_m = self.last_user_mono + quiet if self.last_user_mono else 0.0
         if engaged_until_m and now_m < engaged_until_m:
             return LifeState("waiting", engaged_until=now_e + (engaged_until_m - now_m))

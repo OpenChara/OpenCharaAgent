@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterator
 
 from .events import Event
+from ..content.knobs import DEFAULT_QUIET
 
 # Re-exported for frontends (the UI shows token estimates without touching core).
 from ..core.context import estimate_tokens  # noqa: F401
@@ -282,7 +283,7 @@ class CharaHandle:
             isolation=a.state.permissions().isolation,  # the ONE authority (backend())
             net_on=bool(status.get("network_access")),
             rest_until=float(status.get("rest_until", 0.0) or 0.0),
-            quiet=int(getattr(a.settings, "quiet", 300)),
+            quiet=int(getattr(a.settings, "quiet", DEFAULT_QUIET)),
             patience=float(a.effective_patience()),
             embodiment=a.effective_embodiment(),
             website=a.website_active(),

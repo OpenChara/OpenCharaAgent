@@ -61,6 +61,11 @@ def _lang(lang: str) -> str:
 # settings.load both read these instead of hard-coding the literal / the abs() test.
 DEFAULT_PATIENCE = 600.0
 
+# Engagement window (seconds): while you're actively talking, the chara sets self-work
+# aside and resumes after this much silence. The ONE default — the dataclass field + the
+# supervisor/frontend snapshot fallbacks read this instead of re-hardcoding 300.
+DEFAULT_QUIET = 300
+
 
 def patience_is_explicit(value: float) -> bool:
     """True when a numeric patience differs from the bare DEFAULT_PATIENCE — i.e.

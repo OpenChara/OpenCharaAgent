@@ -15,6 +15,7 @@ import { useT } from "../../i18n";
 import { useHub } from "../../state/hub";
 import { useNavigate } from "../../hooks/useHashRoute";
 import { errText, rpcErrText } from "../../lib/status";
+import { providerOf } from "../../lib/format";
 import { deckToast } from "../ui/deckToast";
 import { Select, type SelectOption } from "./Select";
 import { Segmented } from "../ui/Segmented";
@@ -39,7 +40,6 @@ interface KeyRow { label: string; provider: string; base_url: string; model: str
 interface TestResult { ok?: boolean; error?: { kind?: string }; capabilities?: { tools?: boolean; vision?: boolean } }
 
 const REASONING = ["off", "low", "medium", "high"] as const;
-const providerOf = (id: string) => (id.includes("/") ? id.split("/")[0] : "other").replace(/^[~@]/, "");
 
 export function ModelPane() {
   const t = useT();

@@ -18,7 +18,13 @@ from ..obs.audit import AuditLog
 from ..content.cards import CharacterCard
 from ..obs import get_logger, setup_logging
 from ..config import SANDBOX_ROOT, ThoughtConfig
-from .context import ContextBuffer, _msg_text, estimate_tokens
+from .context import (
+    DEFAULT_CONTEXT_TOKENS,
+    DEFAULT_TRIM_BUFFER_TOKENS,
+    ContextBuffer,
+    _msg_text,
+    estimate_tokens,
+)
 from ..tools.polaris import PolarisStore
 from .llm import LLMClient
 from .request_log import _append_request_log
@@ -75,8 +81,8 @@ def _abbrev(text: str, limit: int) -> str:
 @dataclass
 class Session:
     context: ContextBuffer = field(default_factory=lambda: ContextBuffer(
-        max_tokens=int(os.getenv("LUNAMOTH_CONTEXT_TOKENS", os.getenv("LUNAMOSS_CONTEXT_TOKENS", "65536"))),
-        trim_buffer_tokens=int(os.getenv("LUNAMOTH_CONTEXT_BUFFER_TOKENS", os.getenv("LUNAMOSS_CONTEXT_BUFFER_TOKENS", "4096"))),
+        max_tokens=int(os.getenv("LUNAMOTH_CONTEXT_TOKENS", os.getenv("LUNAMOSS_CONTEXT_TOKENS", str(DEFAULT_CONTEXT_TOKENS)))),
+        trim_buffer_tokens=int(os.getenv("LUNAMOTH_CONTEXT_BUFFER_TOKENS", os.getenv("LUNAMOSS_CONTEXT_BUFFER_TOKENS", str(DEFAULT_TRIM_BUFFER_TOKENS)))),
     ))
     ticks: int = 0
     wi_sticky: dict[str, int] = field(default_factory=dict)

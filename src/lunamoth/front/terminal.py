@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass
 
 from ..obs import get_logger
+from ..content.knobs import DEFAULT_PATIENCE, DEFAULT_QUIET
 from ..content.themes import LUNAMOTH_BANNER
 from ..presence import normalize_mode
 from ..protocol import Notice, TextDelta, ToolEnd
@@ -156,7 +157,7 @@ def _idle_ready(state: TerminalState, handle: CharaHandle, last_user_at: float) 
     """Gate spontaneous cycles: live/chat state, quiet engagement, rest, backoff."""
     if not state.eternal or state.idle_delay_remaining() > 0:
         return False
-    quiet = max(0, int(getattr(handle.settings, "quiet", 300)))  # live: /quiet re-reads
+    quiet = max(0, int(getattr(handle.settings, "quiet", DEFAULT_QUIET)))  # live: /quiet re-reads
     engaged = last_user_at and time.monotonic() < last_user_at + quiet
     resting = handle.snapshot().rest_until > time.time()
     return bool(not engaged and not resting)
@@ -227,7 +228,7 @@ def main(argv: list[str] | None = None) -> int:
         handle.set_clarify_hook(_stdin_clarify_hook)
     info = handle.attach()
     if base_patience is None:
-        base_patience = float(getattr(handle.snapshot(fresh=True), "patience", 600.0) or 600.0)
+        base_patience = float(getattr(handle.snapshot(fresh=True), "patience", DEFAULT_PATIENCE) or DEFAULT_PATIENCE)
     name = info.char_name
     reply_pfx, think_pfx = f"{name}> ", f"{name}~ "
 

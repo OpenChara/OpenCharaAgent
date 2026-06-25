@@ -68,3 +68,11 @@ export function paletteClass(name: string): string {
 export function glyphOf(name: string | null | undefined): string {
   return (name || "?").trim().slice(0, 1).toUpperCase();
 }
+
+/** The provider segment of a `provider/model` id (e.g. "openai/gpt-4o" → "openai"),
+ *  with the ~/@ prefix of a self-registered Local/Custom endpoint stripped; "other"
+ *  when there's no provider segment. Shared by the model pickers so their grouping of
+ *  the same id agrees (ModelPane + the chat panel). */
+export function providerOf(id: string): string {
+  return (id.includes("/") ? id.split("/")[0] : "other").replace(/^[~@]/, "");
+}
