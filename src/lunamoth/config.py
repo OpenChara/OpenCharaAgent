@@ -29,6 +29,53 @@ def openrouter_attribution_headers(base_url: str | None) -> dict[str, str]:
     return {}
 
 
+# ---- credential prefixes -----------------------------------------------------
+# The ONE list of known API-key prefixes. THREE redactors build their own regex
+# from it — the wire/URL exfil guard (tools/builtin/_url_safety, shared by browser),
+# the at-rest redactor (core/redact, for transcripts + request logs), and the disk
+# log scrubber (obs/log). They live in three layers that can't import each other,
+# but ALL may import config (the leaf root) — so a new prefix added HERE propagates
+# to every redactor instead of leaking through whichever copy was missed.
+SECRET_PREFIX_PATTERNS: tuple[str, ...] = (
+    r"sk-[A-Za-z0-9_-]{10,}",           # OpenAI / OpenRouter / Anthropic (sk-ant-*)
+    r"ghp_[A-Za-z0-9]{10,}",            # GitHub PAT (classic)
+    r"github_pat_[A-Za-z0-9_]{10,}",    # GitHub PAT (fine-grained)
+    r"gho_[A-Za-z0-9]{10,}",            # GitHub OAuth access token
+    r"ghu_[A-Za-z0-9]{10,}",            # GitHub user-to-server token
+    r"ghs_[A-Za-z0-9]{10,}",            # GitHub server-to-server token
+    r"ghr_[A-Za-z0-9]{10,}",            # GitHub refresh token
+    r"xox[baprs]-[A-Za-z0-9-]{10,}",    # Slack tokens
+    r"AIza[A-Za-z0-9_-]{30,}",          # Google API keys
+    r"pplx-[A-Za-z0-9]{10,}",           # Perplexity
+    r"fal_[A-Za-z0-9_-]{10,}",          # Fal.ai
+    r"fc-[A-Za-z0-9]{10,}",             # Firecrawl
+    r"bb_live_[A-Za-z0-9_-]{10,}",      # BrowserBase
+    r"gAAAA[A-Za-z0-9_=-]{20,}",        # Codex encrypted tokens
+    r"AKIA[A-Z0-9]{16}",                # AWS Access Key ID
+    r"sk_live_[A-Za-z0-9]{10,}",        # Stripe secret key (live)
+    r"sk_test_[A-Za-z0-9]{10,}",        # Stripe secret key (test)
+    r"rk_live_[A-Za-z0-9]{10,}",        # Stripe restricted key
+    r"SG\.[A-Za-z0-9_-]{10,}",          # SendGrid API key
+    r"hf_[A-Za-z0-9]{10,}",             # HuggingFace token
+    r"r8_[A-Za-z0-9]{10,}",             # Replicate API token
+    r"npm_[A-Za-z0-9]{10,}",            # npm access token
+    r"pypi-[A-Za-z0-9_-]{10,}",         # PyPI API token
+    r"dop_v1_[A-Za-z0-9]{10,}",         # DigitalOcean PAT
+    r"doo_v1_[A-Za-z0-9]{10,}",         # DigitalOcean OAuth
+    r"am_[A-Za-z0-9_-]{10,}",           # AgentMail API key
+    r"sk_[A-Za-z0-9_]{10,}",            # ElevenLabs TTS key (sk_ underscore)
+    r"tvly-[A-Za-z0-9]{10,}",           # Tavily search API key
+    r"exa_[A-Za-z0-9]{10,}",            # Exa search API key
+    r"gsk_[A-Za-z0-9]{10,}",            # Groq Cloud API key
+    r"syt_[A-Za-z0-9]{10,}",            # Matrix access token
+    r"retaindb_[A-Za-z0-9]{10,}",       # RetainDB API key
+    r"hsk-[A-Za-z0-9]{10,}",            # Hindsight API key
+    r"mem0_[A-Za-z0-9]{10,}",           # Mem0 Platform API key
+    r"brv_[A-Za-z0-9]{10,}",            # ByteRover API key
+    r"xai-[A-Za-z0-9]{30,}",            # xAI (Grok) API key
+)
+
+
 def atomic_write_text(path: Path, text: str, *, private: bool = False) -> None:
     """Write *text* to *path* atomically (temp file in the same dir + ``os.replace``)
     so a crash mid-write can never truncate a config/state file, and a concurrent

@@ -23,36 +23,10 @@ import re
 # Snapshot at import time so a runtime env change can't disable redaction mid-run.
 _REDACT_ENABLED = os.getenv("LUNAMOTH_REDACT_SECRETS", "true").strip().lower() in {"1", "true", "yes", "on"}
 
-# Known API-key prefixes — match the prefix + contiguous token chars.
-_PREFIX_PATTERNS = [
-    r"sk-[A-Za-z0-9_-]{10,}",           # OpenAI / OpenRouter / Anthropic (sk-ant-*)
-    r"ghp_[A-Za-z0-9]{10,}",            # GitHub PAT (classic)
-    r"github_pat_[A-Za-z0-9_]{10,}",    # GitHub PAT (fine-grained)
-    r"gho_[A-Za-z0-9]{10,}",            # GitHub OAuth
-    r"ghu_[A-Za-z0-9]{10,}",            # GitHub user-to-server
-    r"ghs_[A-Za-z0-9]{10,}",            # GitHub server-to-server
-    r"ghr_[A-Za-z0-9]{10,}",            # GitHub refresh
-    r"xox[baprs]-[A-Za-z0-9-]{10,}",    # Slack
-    r"AIza[A-Za-z0-9_-]{30,}",          # Google API keys
-    r"pplx-[A-Za-z0-9]{10,}",           # Perplexity
-    r"fal_[A-Za-z0-9_-]{10,}",          # Fal.ai
-    r"fc-[A-Za-z0-9]{10,}",             # Firecrawl
-    r"gAAAA[A-Za-z0-9_=-]{20,}",        # encrypted tokens
-    r"AKIA[A-Z0-9]{16}",                # AWS Access Key ID
-    r"sk_live_[A-Za-z0-9]{10,}",        # Stripe live
-    r"sk_test_[A-Za-z0-9]{10,}",        # Stripe test
-    r"rk_live_[A-Za-z0-9]{10,}",        # Stripe restricted
-    r"SG\.[A-Za-z0-9_-]{10,}",          # SendGrid
-    r"hf_[A-Za-z0-9]{10,}",             # HuggingFace
-    r"r8_[A-Za-z0-9]{10,}",             # Replicate
-    r"npm_[A-Za-z0-9]{10,}",            # npm
-    r"pypi-[A-Za-z0-9_-]{10,}",         # PyPI
-    r"dop_v1_[A-Za-z0-9]{10,}",         # DigitalOcean PAT
-    r"gsk_[A-Za-z0-9]{10,}",            # Groq
-    r"tvly-[A-Za-z0-9]{10,}",           # Tavily
-    r"exa_[A-Za-z0-9]{10,}",            # Exa
-    r"xai-[A-Za-z0-9]{30,}",            # xAI (Grok)
-]
+# Known API-key prefixes — single-sourced in config so this at-rest redactor can't
+# drift from the wire/URL exfil guard (a prefix masked in one but not the other would
+# leak). Match = the prefix + contiguous token chars.
+from ..config import SECRET_PREFIX_PATTERNS as _PREFIX_PATTERNS
 
 _SECRET_ENV_NAMES = r"(?:API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH)"
 _ENV_ASSIGN_RE = re.compile(

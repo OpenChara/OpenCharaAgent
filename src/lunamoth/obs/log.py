@@ -17,30 +17,23 @@ import os
 import re
 from pathlib import Path
 
-from ..config import SANDBOX_ROOT
+from ..config import SANDBOX_ROOT, SECRET_PREFIX_PATTERNS
 from .broker import broker
 
 _FORMAT = "%(asctime)s %(levelname)-7s [%(session)s] %(name)s: %(message)s"
-# Credential shapes scrubbed before any log line hits disk. obs/ may import only
-# config (enforced boundary), so this can't call core/redact — it mirrors that
-# module's high-value prefixes/shapes directly. Keep the two in rough sync.
-_REDACT = re.compile(
-    r"(sk-[A-Za-z0-9_\-]{8,}"               # OpenAI / OpenRouter / Anthropic
-    r"|Bearer\s+\S+"
-    r"|gh[pousr]_[A-Za-z0-9]{8,}"           # GitHub PATs / OAuth (ghp_/gho_/ghu_/ghs_/ghr_)
-    r"|github_pat_[A-Za-z0-9_]{8,}"         # GitHub fine-grained PAT
-    r"|xox[baprs]-[A-Za-z0-9-]{8,}"         # Slack
-    r"|AKIA[A-Z0-9]{16}"                    # AWS access key id
-    r"|AIza[A-Za-z0-9_\-]{20,}"             # Google API key
-    r"|hf_[A-Za-z0-9]{8,}"                  # HuggingFace
-    r"|xai-[A-Za-z0-9]{20,}"                # xAI
-    r"|eyJ[A-Za-z0-9_\-]{10,}(?:\.[A-Za-z0-9_=\-]{4,}){1,2}"  # JWT (header.payload[.sig])
-    r"|\d{8,}:[A-Za-z0-9_\-]{30,}"          # Telegram bot token
-    r"|api[_-]?key[\"':=\s]+\S+"
+# Credential shapes scrubbed before any log line hits disk. obs/ may import only config
+# (enforced boundary), so it can't call core/redact — but the key-prefix LIST is shared
+# from config (single-sourced with the at-rest redactor + the exfil guard, so a new
+# prefix can't leak through here), and this adds the log-specific SHAPES on top.
+_REDACT_SHAPES = [
+    r"Bearer\s+\S+",
+    r"eyJ[A-Za-z0-9_\-]{10,}(?:\.[A-Za-z0-9_=\-]{4,}){1,2}",  # JWT (header.payload[.sig])
+    r"\d{8,}:[A-Za-z0-9_\-]{30,}",          # Telegram bot token
+    r"api[_-]?key[\"':=\s]+\S+",
     # query-param credential forms (e.g. WeChatPadPro's ?key=<authKey>, ?token=…)
-    r"|[?&](?:access[_-]?token|auth[_-]?key|authkey|token|secret|password|key)=[^&\s)\"']+)",
-    re.I,
-)
+    r"[?&](?:access[_-]?token|auth[_-]?key|authkey|token|secret|password|key)=[^&\s)\"']+",
+]
+_REDACT = re.compile("(" + "|".join([*SECRET_PREFIX_PATTERNS, *_REDACT_SHAPES]) + ")", re.I)
 
 _configured = False
 
