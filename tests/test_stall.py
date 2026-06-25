@@ -89,10 +89,12 @@ def test_stall_timeout_scales_with_prompt_size():
 
 
 def test_stream_turn_stall_surfaces_notice_then_error(monkeypatch):
-    import lunamoth.core.llm as llm_mod
+    # The stall budgets live in _stream_util (where _StallGuard / _stall_timeout_for
+    # read them); patch them there, not on the llm module that re-imports the helpers.
+    import lunamoth.core._stream_util as su
 
-    monkeypatch.setattr(llm_mod, "_FIRST_BYTE_TIMEOUT", 0.5)
-    monkeypatch.setattr(llm_mod, "_STALL_TIMEOUT", 0.05)
+    monkeypatch.setattr(su, "_FIRST_BYTE_TIMEOUT", 0.5)
+    monkeypatch.setattr(su, "_STALL_TIMEOUT", 0.05)
     resp = HangingResp([b'data: {"choices":[{"delta":{"content":"partial"}}]}\n'])
     monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout: resp)
 

@@ -95,7 +95,7 @@ def test_explain_http_error_classifies_not_dumps():
 
 
 def test_retry_delay_is_jittered_exponential():
-    from lunamoth.core.llm import _RETRY_MAX_DELAY, _retry_delay
+    from lunamoth.core._stream_util import _RETRY_MAX_DELAY, _retry_delay
 
     for attempt in range(1, 8):
         base = min(5.0 * 2 ** (attempt - 1), _RETRY_MAX_DELAY)
