@@ -45,9 +45,9 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
       {pane === "welcome" ? (
         <div id="fr-welcome" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
           <div className="fr-word">LunaMoth</div>
-          <div className="seg fr-langseg" id="fr-langseg">
-            <span className={lang === "zh" ? "on" : ""} onClick={() => setLang("zh")}>中文</span>
-            <span className={lang === "en" ? "on" : ""} onClick={() => setLang("en")}>English</span>
+          <div className="seg fr-langseg" id="fr-langseg" role="group" aria-label="Language / 语言">
+            <button type="button" aria-pressed={lang === "zh"} className={lang === "zh" ? "on" : ""} onClick={() => setLang("zh")}>中文</button>
+            <button type="button" aria-pressed={lang === "en"} className={lang === "en" ? "on" : ""} onClick={() => setLang("en")}>English</button>
           </div>
           {/* tagline carries a <br> in the dict — render it as HTML (trusted copy). */}
           <div className="fr-tagline" dangerouslySetInnerHTML={{ __html: t("tagline") }} />

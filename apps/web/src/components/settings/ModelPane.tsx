@@ -195,12 +195,12 @@ export function ModelPane() {
 
             {isOpenRouter && (
               <div className="model-reasoning">
-                <span className="mb-lbl">{t("reasoning-label")}</span>
-                <div className="seg">
+                <span className="mb-lbl" id="reasoning-lbl">{t("reasoning-label")}</span>
+                <div className="seg" role="group" aria-labelledby="reasoning-lbl">
                   {REASONING.map((r) => (
-                    <span key={r} className={(defaults.reasoning || "medium") === r ? "on" : ""} onClick={() => void persist({ reasoning: r })}>
+                    <button type="button" aria-pressed={(defaults.reasoning || "medium") === r} key={r} className={(defaults.reasoning || "medium") === r ? "on" : ""} onClick={() => void persist({ reasoning: r })}>
                       {t(("reason-" + r) as TKey)}
-                    </span>
+                    </button>
                   ))}
                 </div>
                 <span className="reason-hint">{t("reasoning-or-only")}</span>

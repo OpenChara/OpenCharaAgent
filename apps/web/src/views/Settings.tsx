@@ -145,11 +145,11 @@ export function Settings() {
                 <div className="lbl">
                   <span>{t("set-appearance")}</span>
                 </div>
-                <div className="seg">
+                <div className="seg" role="group" aria-label={t("set-appearance")}>
                   {(["system", "light", "dark"] as ThemePref[]).map((p) => (
-                    <span key={p} className={theme === p ? "on" : ""} onClick={() => pickTheme(p)}>
+                    <button type="button" aria-pressed={theme === p} key={p} className={theme === p ? "on" : ""} onClick={() => pickTheme(p)}>
                       {t(p === "system" ? "th-system" : p === "light" ? "th-light" : "th-dark")}
-                    </span>
+                    </button>
                   ))}
                 </div>
               </div>
@@ -158,9 +158,9 @@ export function Settings() {
                   <span>{t("set-uilang")}</span>
                   <small>{t("set-uilang-sub")}</small>
                 </div>
-                <div className="seg">
-                  <span className={lang === "zh" ? "on" : ""} onClick={() => pickLang("zh")}>中文</span>
-                  <span className={lang === "en" ? "on" : ""} onClick={() => pickLang("en")}>English</span>
+                <div className="seg" role="group" aria-label={t("set-uilang")}>
+                  <button type="button" aria-pressed={lang === "zh"} className={lang === "zh" ? "on" : ""} onClick={() => pickLang("zh")}>中文</button>
+                  <button type="button" aria-pressed={lang === "en"} className={lang === "en" ? "on" : ""} onClick={() => pickLang("en")}>English</button>
                 </div>
               </div>
               <div className="set-row">
@@ -168,11 +168,11 @@ export function Settings() {
                   <span>{t("set-display")}</span>
                   <small>{t("disp-sub")}</small>
                 </div>
-                <div className="seg">
+                <div className="seg" role="group" aria-label={t("set-display")}>
                   {(["product", "technical"] as Display[]).map((d) => (
-                    <span key={d} className={display === d ? "on" : ""} onClick={() => pickDisplay(d)}>
+                    <button type="button" aria-pressed={display === d} key={d} className={display === d ? "on" : ""} onClick={() => pickDisplay(d)}>
                       {t(d === "product" ? "disp-product" : "disp-technical")}
-                    </span>
+                    </button>
                   ))}
                 </div>
               </div>

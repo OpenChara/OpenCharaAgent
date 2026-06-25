@@ -177,8 +177,11 @@ if [ -n "$TMP_WHEEL" ]; then
       ACTUAL_SHA=""
     fi
     if [ -n "$ACTUAL_SHA" ]; then
-      EXPECTED_SHA="$(curl -fsSL ${AUTH_HEADER[@]+"${AUTH_HEADER[@]}"} -H "Accept: application/octet-stream" "$SUM_URL" \
-        | grep -oiE '[0-9a-f]{64}' | head -n1)"
+      # Pull the hash for THIS wheel by name (a SHA256SUMS may list more than one
+      # file); fall back to the sole hash if the manifest has no path column.
+      SUMS="$(curl -fsSL ${AUTH_HEADER[@]+"${AUTH_HEADER[@]}"} -H "Accept: application/octet-stream" "$SUM_URL")"
+      EXPECTED_SHA="$(printf '%s\n' "$SUMS" | grep -F "$WHEEL_BASENAME" | grep -oiE '[0-9a-f]{64}' | head -n1)"
+      [ -n "$EXPECTED_SHA" ] || EXPECTED_SHA="$(printf '%s\n' "$SUMS" | grep -oiE '[0-9a-f]{64}' | head -n1)"
       if [ -n "$EXPECTED_SHA" ] && [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
         rm -f "$TMP_WHEEL"
         fail "wheel checksum MISMATCH (expected $EXPECTED_SHA, got $ACTUAL_SHA) — refusing to install"

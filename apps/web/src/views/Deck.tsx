@@ -92,11 +92,11 @@ export function Deck() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <div className="seg deck-filterseg">
+        <div className="seg deck-filterseg" role="group" aria-label={t("deck-unwoken") + " / " + t("deck-woken")}>
           {(["unwoken", "woken"] as Filter[]).map((m) => (
-            <span key={m} className={filter === m ? "on" : ""} onClick={() => setFilter(m)}>
+            <button type="button" aria-pressed={filter === m} key={m} className={filter === m ? "on" : ""} onClick={() => setFilter(m)}>
               {t(m === "unwoken" ? "deck-unwoken" : "deck-woken")}
-            </span>
+            </button>
           ))}
         </div>
         {/* ✨默认 builtin carousel + ＋新角色卡 create-flow (§6 overlays). Both route

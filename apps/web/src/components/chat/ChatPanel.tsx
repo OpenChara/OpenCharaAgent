@@ -46,11 +46,18 @@ export function ChatPanel({
         </button>
         <b>{name}</b>
       </div>
-      <div className="panel-tabs">
+      <div className="panel-tabs" role="tablist">
         {TABS.map((tb) => (
-          <span key={tb.key} className={tab === tb.key ? "on" : ""} onClick={() => setTab(tb.key)}>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === tb.key}
+            key={tb.key}
+            className={tab === tb.key ? "on" : ""}
+            onClick={() => setTab(tb.key)}
+          >
             {t(tb.label)}
-          </span>
+          </button>
         ))}
       </div>
       <div className="panel-panes">
@@ -296,12 +303,12 @@ function ModelEffort({ stream, snap }: { stream: CharaStream; snap: Snapshot }) 
         <Select value={model} options={modelOptions} onChange={swapModel} placeholder={t("p-model")} search allowCustom />
       </label>
       <div className="model-box">
-        <span className="mb-lbl">{t("p-effort")}</span>
-        <div className="seg">
+        <span className="mb-lbl" id="p-effort-lbl">{t("p-effort")}</span>
+        <div className="seg" role="group" aria-labelledby="p-effort-lbl">
           {REASONING.map((r) => (
-            <span key={r} className={reason === r ? "on" : ""} onClick={() => setReason(r)}>
+            <button type="button" aria-pressed={reason === r} key={r} className={reason === r ? "on" : ""} onClick={() => setReason(r)}>
               {t(("eff-" + r) as TKey)}
-            </span>
+            </button>
           ))}
         </div>
         {!reasonSupported && <span className="reason-hint">{t("p-effort-ignored")}</span>}
