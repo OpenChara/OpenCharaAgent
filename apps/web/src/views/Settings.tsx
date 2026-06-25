@@ -13,6 +13,7 @@ import { navTo } from "../hooks/useHashRoute";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useT, useLang } from "../i18n";
 import { useHub } from "../state/hub";
+import { Segmented } from "../components/ui/Segmented";
 import { applyTheme, currentThemePref, type ThemePref } from "../theme";
 import { ModelPane } from "../components/settings/ModelPane";
 import { KeysPane } from "../components/settings/KeysPane";
@@ -145,36 +146,40 @@ export function Settings() {
                 <div className="lbl">
                   <span>{t("set-appearance")}</span>
                 </div>
-                <div className="seg" role="group" aria-label={t("set-appearance")}>
-                  {(["system", "light", "dark"] as ThemePref[]).map((p) => (
-                    <button type="button" aria-pressed={theme === p} key={p} className={theme === p ? "on" : ""} onClick={() => pickTheme(p)}>
-                      {t(p === "system" ? "th-system" : p === "light" ? "th-light" : "th-dark")}
-                    </button>
-                  ))}
-                </div>
+                <Segmented
+                  ariaLabel={t("set-appearance")}
+                  value={theme}
+                  options={(["system", "light", "dark"] as ThemePref[]).map((p) => ({
+                    value: p, label: t(p === "system" ? "th-system" : p === "light" ? "th-light" : "th-dark"),
+                  }))}
+                  onChange={pickTheme}
+                />
               </div>
               <div className="set-row">
                 <div className="lbl">
                   <span>{t("set-uilang")}</span>
                   <small>{t("set-uilang-sub")}</small>
                 </div>
-                <div className="seg" role="group" aria-label={t("set-uilang")}>
-                  <button type="button" aria-pressed={lang === "zh"} className={lang === "zh" ? "on" : ""} onClick={() => pickLang("zh")}>中文</button>
-                  <button type="button" aria-pressed={lang === "en"} className={lang === "en" ? "on" : ""} onClick={() => pickLang("en")}>English</button>
-                </div>
+                <Segmented
+                  ariaLabel={t("set-uilang")}
+                  value={lang}
+                  options={[{ value: "zh", label: "中文" }, { value: "en", label: "English" }]}
+                  onChange={pickLang}
+                />
               </div>
               <div className="set-row">
                 <div className="lbl">
                   <span>{t("set-display")}</span>
                   <small>{t("disp-sub")}</small>
                 </div>
-                <div className="seg" role="group" aria-label={t("set-display")}>
-                  {(["product", "technical"] as Display[]).map((d) => (
-                    <button type="button" aria-pressed={display === d} key={d} className={display === d ? "on" : ""} onClick={() => pickDisplay(d)}>
-                      {t(d === "product" ? "disp-product" : "disp-technical")}
-                    </button>
-                  ))}
-                </div>
+                <Segmented
+                  ariaLabel={t("set-display")}
+                  value={display}
+                  options={(["product", "technical"] as Display[]).map((d) => ({
+                    value: d, label: t(d === "product" ? "disp-product" : "disp-technical"),
+                  }))}
+                  onChange={pickDisplay}
+                />
               </div>
             </div>
           )}

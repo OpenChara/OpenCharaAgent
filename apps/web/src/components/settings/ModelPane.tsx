@@ -17,6 +17,7 @@ import { useNavigate } from "../../hooks/useHashRoute";
 import { errText, rpcErrText } from "../../lib/status";
 import { deckToast } from "../ui/deckToast";
 import { Select, type SelectOption } from "./Select";
+import { Segmented } from "../ui/Segmented";
 import { TaskModels, type ImageProvider } from "./TaskModels";
 import { MatteSection } from "./MattePane";
 import type { TKey } from "../../i18n";
@@ -199,13 +200,12 @@ export function ModelPane() {
             {isOpenRouter && (
               <div className="model-reasoning">
                 <span className="mb-lbl" id="reasoning-lbl">{t("reasoning-label")}</span>
-                <div className="seg" role="group" aria-labelledby="reasoning-lbl">
-                  {REASONING.map((r) => (
-                    <button type="button" aria-pressed={(defaults.reasoning || "medium") === r} key={r} className={(defaults.reasoning || "medium") === r ? "on" : ""} onClick={() => void persist({ reasoning: r })}>
-                      {t(("reason-" + r) as TKey)}
-                    </button>
-                  ))}
-                </div>
+                <Segmented
+                  ariaLabelledby="reasoning-lbl"
+                  value={defaults.reasoning || "medium"}
+                  options={REASONING.map((r) => ({ value: r, label: t(("reason-" + r) as TKey) }))}
+                  onChange={(r) => void persist({ reasoning: r })}
+                />
                 <span className="reason-hint">{t("reasoning-or-only")}</span>
               </div>
             )}

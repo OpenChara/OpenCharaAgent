@@ -18,6 +18,7 @@ import { useOverlay } from "../state/overlay";
 import { paletteClass } from "../lib/format";
 import { rpcErrText } from "../lib/status";
 import { CardFace } from "../components/deck/visual";
+import { Segmented } from "../components/ui/Segmented";
 import { BrandLoader } from "../components/ui/BrandLoader";
 import { CardEditor } from "../components/deck/CardEditor";
 import { WakeSheet } from "../components/deck/WakeSheet";
@@ -92,13 +93,15 @@ export function Deck() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <div className="seg deck-filterseg" role="group" aria-label={t("deck-unwoken") + " / " + t("deck-woken")}>
-          {(["unwoken", "woken"] as Filter[]).map((m) => (
-            <button type="button" aria-pressed={filter === m} key={m} className={filter === m ? "on" : ""} onClick={() => setFilter(m)}>
-              {t(m === "unwoken" ? "deck-unwoken" : "deck-woken")}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          className="deck-filterseg"
+          ariaLabel={t("deck-unwoken") + " / " + t("deck-woken")}
+          value={filter}
+          options={(["unwoken", "woken"] as Filter[]).map((m) => ({
+            value: m, label: t(m === "unwoken" ? "deck-unwoken" : "deck-woken"),
+          }))}
+          onChange={setFilter}
+        />
         {/* ✨默认 builtin carousel + ＋新角色卡 create-flow (§6 overlays). Both route
             through ensureModel like wake does. Card import is deferred — to start from
             a card you have elsewhere (e.g. SillyTavern), paste its JSON into the create box. */}

@@ -14,6 +14,7 @@ import { useT, useLang } from "../../i18n";
 import { useOverlay } from "../../state/overlay";
 import { useEnsureModel } from "./useEnsureModel";
 import { BuiltinPickerBody } from "./BuiltinPicker";
+import { Segmented } from "../ui/Segmented";
 import type { DeckCard } from "../deck/types";
 
 type Pane = "welcome" | "picker";
@@ -45,10 +46,13 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
       {pane === "welcome" ? (
         <div id="fr-welcome" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
           <div className="fr-word">LunaMoth</div>
-          <div className="seg fr-langseg" id="fr-langseg" role="group" aria-label="Language / 语言">
-            <button type="button" aria-pressed={lang === "zh"} className={lang === "zh" ? "on" : ""} onClick={() => setLang("zh")}>中文</button>
-            <button type="button" aria-pressed={lang === "en"} className={lang === "en" ? "on" : ""} onClick={() => setLang("en")}>English</button>
-          </div>
+          <Segmented
+            className="fr-langseg"
+            ariaLabel="Language / 语言"
+            value={lang}
+            options={[{ value: "zh", label: "中文" }, { value: "en", label: "English" }]}
+            onChange={setLang}
+          />
           {/* tagline carries a <br> in the dict — render it as HTML (trusted copy). */}
           <div className="fr-tagline" dangerouslySetInnerHTML={{ __html: t("tagline") }} />
           <button

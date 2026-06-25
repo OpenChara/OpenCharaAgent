@@ -12,6 +12,7 @@ import type { BoardSession } from "../../state/hub";
 import { deckToast } from "../ui/deckToast";
 import { rpcErrText } from "../../lib/status";
 import { Select, type SelectOption } from "../settings/Select";
+import { Segmented } from "../ui/Segmented";
 import type { ModelInfo } from "../deck/types";
 import type { CharaStream, Snapshot } from "../../hooks/useCharaStream";
 
@@ -304,13 +305,12 @@ function ModelEffort({ stream, snap }: { stream: CharaStream; snap: Snapshot }) 
       </label>
       <div className="model-box">
         <span className="mb-lbl" id="p-effort-lbl">{t("p-effort")}</span>
-        <div className="seg" role="group" aria-labelledby="p-effort-lbl">
-          {REASONING.map((r) => (
-            <button type="button" aria-pressed={reason === r} key={r} className={reason === r ? "on" : ""} onClick={() => setReason(r)}>
-              {t(("eff-" + r) as TKey)}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          ariaLabelledby="p-effort-lbl"
+          value={reason}
+          options={REASONING.map((r) => ({ value: r, label: t(("eff-" + r) as TKey) }))}
+          onChange={(r) => setReason(r)}
+        />
         {!reasonSupported && <span className="reason-hint">{t("p-effort-ignored")}</span>}
       </div>
       <div className="av-note">{t("p-model-scope-note")}</div>
