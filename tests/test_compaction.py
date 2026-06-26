@@ -478,6 +478,26 @@ def test_compact_marks_usage_stale():
     assert llm.usage_fresh is False
 
 
+def test_thrash_guard_holds_when_real_usage_exceeds_heuristic(clock):
+    # CJK-class scenario: the provider's real prompt_tokens runs far above the
+    # char-heuristic window size. The anti-thrash guard records resume_above on
+    # the SAME (real) scale that allows() reads — else real > heuristic*1.10
+    # clears the backoff every turn and the guard is silently defeated (the
+    # burned-a-real-key class of incident). Each _cp/_sc re-freshens usage to
+    # mimic the per-turn stream that refreshes the provider count.
+    ctx = ContextBuffer(max_tokens=10_000_000)
+    _fill(ctx, 40, 500)
+    llm = FakeUsageLLM(prompt_tokens=50_000, summary="y" * 12000)  # fat summary → ineffective
+    assert _cp(ctx, 4000, llm) is True    # ineffective #1
+    llm.usage_fresh = True
+    assert _cp(ctx, 4000, llm) is False   # nothing foldable left → ineffective #2
+    llm.usage_fresh = True
+    # Two ineffective passes: the guard MUST disengage despite real >> heuristic.
+    assert _sc(ctx, 4000, llm) is False
+    assert _cp(ctx, 4000, llm) is False
+    assert llm.calls == 1                 # no further wasted summary calls
+
+
 def test_effective_compaction_resets_the_guard(clock):
     ctx = ContextBuffer(max_tokens=10_000_000)
     _fill(ctx, 40, 500)

@@ -630,6 +630,14 @@ def compact(ctx: ContextBuffer, llm, *, force: bool = False) -> bool:
         return False
     threshold = _threshold_tokens(ctx)
     tokens_before = ctx.token_count()
+    # The guard's resume_above and allows() MUST share a scale. allows() is fed
+    # _window_tokens (real provider usage when fresh), so the "wait until the
+    # window regrows past here" level recorded by record_ineffective has to be
+    # that same real measure — NOT the heuristic token_count. For CJK-heavy
+    # windows the heuristic runs far below the real count, so a heuristic
+    # resume_above is cleared on the very next turn (real > heuristic*1.10) and
+    # the anti-thrash backoff is silently defeated.
+    real_tokens = _window_tokens(ctx, llm)
     guard = _guard(ctx)
     if force:
         guard.cooldown_until = 0.0
@@ -637,10 +645,9 @@ def compact(ctx: ContextBuffer, llm, *, force: bool = False) -> bool:
         # Trigger on real usage when fresh (audit #8); the shrink measurement
         # below stays on the heuristic — it is the only measure available for
         # the just-rewritten window, and before/after must share a scale.
-        trigger_tokens = _window_tokens(ctx, llm)
-        if trigger_tokens < threshold:
+        if real_tokens < threshold:
             return False
-        if not guard.allows(trigger_tokens):
+        if not guard.allows(real_tokens):
             return False
 
     msgs = ctx.messages
@@ -661,7 +668,9 @@ def compact(ctx: ContextBuffer, llm, *, force: bool = False) -> bool:
             if tokens_before > 0 and (tokens_before - tokens_after) / tokens_before >= _MIN_SHRINK:
                 guard.record_success()
             else:
-                guard.record_ineffective(tokens_after)
+                # Decision on the heuristic shrink ratio; the recorded resume level
+                # on the real scale allows() reads (see real_tokens above).
+                guard.record_ineffective(real_tokens)
             return True
 
     # Walk back from the end, protecting a verbatim tail of ~tail_budget tokens
@@ -682,7 +691,7 @@ def compact(ctx: ContextBuffer, llm, *, force: bool = False) -> bool:
         # Over threshold but nothing compactable: without counting this the
         # guard never fires and every turn re-walks a no-op (#40803).
         if not force:
-            guard.record_ineffective(tokens_before)
+            guard.record_ineffective(real_tokens)
         return False
 
     summary = _summarize(msgs[:cut], budget, llm)
@@ -698,7 +707,7 @@ def compact(ctx: ContextBuffer, llm, *, force: bool = False) -> bool:
         stale()  # the captured usage described the pre-compaction window
     tokens_after = ctx.token_count()
     if tokens_before > 0 and (tokens_before - tokens_after) / tokens_before < _MIN_SHRINK:
-        guard.record_ineffective(tokens_after)
+        guard.record_ineffective(real_tokens)
     else:
         guard.record_success()
     if ctx.persist is not None:
