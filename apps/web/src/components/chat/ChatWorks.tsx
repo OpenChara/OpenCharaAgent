@@ -6,6 +6,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useT } from "../../i18n";
 import { useHubApi } from "../../state/hub";
 import { fmtSize } from "../../lib/format";
+import { mediaKind, type MediaKind } from "../../lib/preview";
+import { assetUrlForPath, isDesktopShell } from "../../rpc";
 import { deckToast } from "../ui/deckToast";
 
 interface Work {
@@ -63,6 +65,15 @@ export function ChatWorks({ name, sandboxRoot }: { name: string; sandboxRoot?: s
   const filtered = filter === "all" ? works : works.filter((w) => group(w.kind) === filter);
 
   const openPreview = async (w: Work) => {
+    // Browser-native media (image/audio/video/pdf): preview straight from the same-origin
+    // /asset URL — the server serves these inline, so <img>/<audio>/<video>/<iframe> play
+    // in place (no data-uri size cap, no server-side "open with system").
+    const k = mediaKind(w.name);
+    if (k !== "other") {
+      setPreview({ work: w, body: { type: k, url: assetUrlForPath(w.path) } });
+      return;
+    }
+    // Text/binary: read inline text via works.read (a binary falls to a note + download).
     try {
       const r = await hub.call<PreviewRead>("works.read", { name, rel: w.rel }, 30000);
       setPreview({ work: w, body: toBody(r, t) });
@@ -97,14 +108,16 @@ export function ChatWorks({ name, sandboxRoot }: { name: string; sandboxRoot?: s
         ) : (
           <WorksList works={filtered} t={t} hub={hub} onOpen={openPreview} />
         )}
-        <button
-          className="drawer-foot-link"
-          onClick={() => {
-            if (sandboxRoot) hub.call("open.path", { path: sandboxRoot }).catch(() => deckToast(t("open-failed"), true));
-          }}
-        >
-          {t("open-sandbox")}
-        </button>
+        {isDesktopShell() && (
+          <button
+            className="drawer-foot-link"
+            onClick={() => {
+              if (sandboxRoot) hub.call("open.path", { path: sandboxRoot }).catch(() => deckToast(t("open-failed"), true));
+            }}
+          >
+            {t("open-sandbox")}
+          </button>
+        )}
       </div>
       {preview && <WorkPreview preview={preview} hub={hub} onClose={() => setPreview(null)} />}
     </div>
@@ -147,16 +160,28 @@ function WorksList({
           <span>{fmtSize(w.size)}</span>
           <span>{new Date(w.mtime * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
         </div>
-        <button
-          className="reveal"
-          title="Finder"
-          onClick={(e) => {
-            e.stopPropagation();
-            hub.call("works.open", { path: w.path, reveal: true }).catch(() => deckToast(t("open-failed"), true));
-          }}
-        >
-          ⌖
-        </button>
+        {isDesktopShell() ? (
+          <button
+            className="reveal"
+            title="Finder"
+            onClick={(e) => {
+              e.stopPropagation();
+              hub.call("works.open", { path: w.path, reveal: true }).catch(() => deckToast(t("open-failed"), true));
+            }}
+          >
+            ⌖
+          </button>
+        ) : (
+          <a
+            className="reveal"
+            title={t("wp-download")}
+            href={assetUrlForPath(w.path)}
+            download={w.name}
+            onClick={(e) => e.stopPropagation()}
+          >
+            ↓
+          </a>
+        )}
       </div>,
     );
   }
@@ -171,14 +196,13 @@ interface PreviewRead {
   size?: number;
 }
 type PreviewBody =
-  | { type: "image"; src: string }
+  | { type: Exclude<MediaKind, "other">; url: string }   // image/audio/video/pdf → native preview
   | { type: "text"; content: string; truncated: boolean }
   | { type: "note"; text: string };
 
 function toBody(r: PreviewRead, t: ReturnType<typeof useT>): PreviewBody {
-  if (r.kind === "image" && r.data_uri) return { type: "image", src: r.data_uri };
   if (r.kind === "text") return { type: "text", content: r.content || "", truncated: !!r.truncated };
-  return { type: "note", text: r.kind === "image" && r.truncated ? t("wp-too-big") : t("wp-binary") };
+  return { type: "note", text: t("wp-binary") };
 }
 
 function WorkPreview({
@@ -192,9 +216,10 @@ function WorkPreview({
 }) {
   const t = useT();
   const { work, body } = preview;
+  const dlUrl = assetUrlForPath(work.path);
   return (
     <div className="overlay open" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal wp-modal" onClick={(e) => e.stopPropagation()}>
         <div className="wp-head">
           <b>{work.name}</b>
           <span className="wp-meta">
@@ -203,9 +228,16 @@ function WorkPreview({
         </div>
         {body.type === "image" && (
           <div className="wp-img">
-            <img src={body.src} alt={work.name} loading="lazy" decoding="async" />
+            <img src={body.url} alt={work.name} loading="lazy" decoding="async" />
           </div>
         )}
+        {body.type === "audio" && <audio className="wp-audio" controls src={body.url} />}
+        {body.type === "video" && (
+          <div className="wp-video">
+            <video controls src={body.url} />
+          </div>
+        )}
+        {body.type === "pdf" && <iframe className="wp-pdf" title={work.name} src={body.url} />}
         {body.type === "text" && (
           <div>
             <pre className="wp-pre">{body.content}</pre>
@@ -218,9 +250,16 @@ function WorkPreview({
             {t("cancel")}
           </button>
           <div className="grow" />
-          <button className="btn soft" onClick={() => hub.call("works.open", { path: work.path }).catch(() => deckToast(t("open-failed"), true))}>
-            {t("wp-open-system")}
-          </button>
+          {/* Open-in-system is a desktop-local action (it runs on the SERVER) — only in
+              the Electron shell. The browser downloads instead. */}
+          {isDesktopShell() && (
+            <button className="btn soft" onClick={() => hub.call("works.open", { path: work.path }).catch(() => deckToast(t("open-failed"), true))}>
+              {t("wp-open-system")}
+            </button>
+          )}
+          <a className="btn primary" href={dlUrl} download={work.name}>
+            {t("wp-download")}
+          </a>
         </div>
       </div>
     </div>

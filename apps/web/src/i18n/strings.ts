@@ -177,6 +177,7 @@ export const I18N = {
   "wp-too-big": ["文件太大，无法在应用内预览。", "Too large to preview in-app."],
   "wp-binary": ["这种文件没有应用内预览。", "No in-app preview for this kind of file."],
   "wp-open-system": ["用系统打开", "Open with system"],
+  "wp-download": ["下载", "Download"],
   "term-closed": ["终端已断开", "Terminal disconnected"],
   "term-reconnect": ["重新连接", "Reconnect"],
   "copy": ["复制", "Copy"],

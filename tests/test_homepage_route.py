@@ -74,3 +74,47 @@ def test_home_route_requires_auth(home_server):
     # No token / cookie → 401 (the route sits behind the same gate as /asset).
     status, _h, _b = _get(home_server, "/chara/webby/home/index.html")
     assert status == 401
+
+
+@pytest.fixture()
+def asset_server(tmp_path, monkeypatch):
+    """A session with workspace files, served behind the /asset route."""
+    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
+    meta = S.create_session("worky", isolation="sandbox")
+    ws = meta.sandbox_dir / "workspace"
+    ws.mkdir(parents=True, exist_ok=True)
+    (ws / "song.wav").write_bytes(b"RIFF\x00\x00\x00\x00WAVEfmt ")
+    (ws / "data.zip").write_bytes(b"PK\x03\x04zipbytes")
+    port = SV.free_port()
+    srv = SV.start_http("127.0.0.1", port, token="sekret", supervisor=None)
+    try:
+        yield port, ws
+    finally:
+        srv.shutdown()
+
+
+def _ci(headers):
+    return {k.lower(): v for k, v in headers.items()}
+
+
+def test_asset_serves_audio_inline_for_webui_preview(asset_server):
+    import urllib.parse
+    port, ws = asset_server
+    p = urllib.parse.quote(str((ws / "song.wav").resolve()))
+    status, headers, _b = _get(port, f"/asset?p={p}&token=sekret")
+    assert status == 200
+    h = _ci(headers)
+    assert h.get("content-type") == "audio/wav"
+    # INLINE (not forced download) so <audio> plays in place in the browser
+    assert "attachment" not in (h.get("content-disposition") or "")
+
+
+def test_asset_forces_download_for_non_media(asset_server):
+    import urllib.parse
+    port, ws = asset_server
+    p = urllib.parse.quote(str((ws / "data.zip").resolve()))
+    status, headers, _b = _get(port, f"/asset?p={p}&token=sekret")
+    assert status == 200
+    h = _ci(headers)
+    # a non-media file stays on the forced-download lane (no inline same-origin XSS surface)
+    assert "attachment" in (h.get("content-disposition") or "")

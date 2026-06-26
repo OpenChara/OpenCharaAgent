@@ -106,6 +106,18 @@ class WebHandler(http.server.SimpleHTTPRequestHandler):
     # SVG via a separate sanitized data-URI path, never this route.
     _ASSET_MIME = {".png": "image/png", ".webp": "image/webp", ".jpg": "image/jpeg",
                    ".jpeg": "image/jpeg", ".gif": "image/gif"}
+    # Browser-NATIVE media the webui can preview inline (audio/video/pdf): served
+    # INLINE (no forced download) so <audio>/<video>/<iframe> play in place, from a
+    # session's workspace/assets only. These types render but CANNOT run script in
+    # the page's origin (unlike html/svg/js, which stay on the forced-download lane —
+    # serving those inline same-origin would be a stored-XSS vector). A `download`
+    # attribute on the client still downloads the same URL when the user wants the file.
+    _ASSET_INLINE_MIME = {
+        ".wav": "audio/wav", ".ogg": "audio/ogg", ".oga": "audio/ogg", ".opus": "audio/ogg",
+        ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".aac": "audio/aac", ".flac": "audio/flac",
+        ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
+        ".ogv": "video/ogg", ".pdf": "application/pdf",
+    }
 
     def end_headers(self) -> None:
         if not getattr(self, "_skip_no_store", False):
@@ -237,7 +249,9 @@ class WebHandler(http.server.SimpleHTTPRequestHandler):
         def under(roots: list[Path]) -> bool:
             return any(target == r or r in target.parents for r in roots)
 
-        mime = self._ASSET_MIME.get(target.suffix.lower())
+        suffix = target.suffix.lower()
+        mime = self._ASSET_MIME.get(suffix)
+        inline_mime = self._ASSET_INLINE_MIME.get(suffix)
         if mime is not None:
             # Raster image lane: card decks (cacheable) or session art/images (no-store).
             session_roots = self._session_roots()
@@ -246,8 +260,14 @@ class WebHandler(http.server.SimpleHTTPRequestHandler):
             in_session = under(session_roots)
             disposition = None
             cache = "no-store" if in_session else "public, max-age=86400"
+        elif inline_mime is not None and under(self._readable_session_roots()):
+            # Inline browser-native media lane (audio/video/pdf): ONLY a session's
+            # workspace/assets, served inline so the webui can play/preview it in place.
+            mime = inline_mime
+            disposition = None
+            cache = "no-store"
         else:
-            # Non-image lane: ONLY a session's workspace/assets, forced download.
+            # Everything else: ONLY a session's workspace/assets, forced download.
             if not under(self._readable_session_roots()):
                 self.send_error(404); return
             mime = "application/octet-stream"

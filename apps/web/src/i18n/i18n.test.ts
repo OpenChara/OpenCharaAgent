@@ -91,8 +91,8 @@ describe("I18N strings map", () => {
   // gw-discord-note, gw-f-discord-token, gw-h-discord-token, gw-slack-label,
   // gw-slack-blurb, gw-slack-note, gw-f-slack-bot-token, gw-h-slack-bot-token,
   // gw-f-slack-app-token, gw-h-slack-app-token) → 671.
-  it("preserves the full key set from the source dict (678 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(678);
+  it("preserves the full key set from the source dict (679 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(679);
   });
 
   it("every value is a [zh, en] string tuple", () => {
