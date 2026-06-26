@@ -1,7 +1,7 @@
 {
   "name": "lunamoth-web",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.1.5",
   "type": "module",
   "description": "LunaMoth desktop renderer — a React SPA, built to src/lunamoth/front/webui and served by the Python supervisor (Electron points at it locally; a browser reaches it remotely).",
   "scripts": {
