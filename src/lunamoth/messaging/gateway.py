@@ -297,7 +297,7 @@ class MessagingGateway:
 
             now = time.monotonic()
             self._last_user_at = now
-            self._next_idle_at = now + self._cycle_pause()
+            self._next_idle_at = now + self.patience  # already clamped >= 0 in __init__
 
             text = msg.text.strip()
             if not text:
@@ -318,9 +318,6 @@ class MessagingGateway:
     def _quiet_seconds(self) -> int:
         return max(0, int(self.handle.snapshot().quiet))
 
-    def _cycle_pause(self) -> float:
-        return max(0.0, float(self.patience))
-
     def _resting(self) -> bool:
         return self.handle.snapshot().rest_until > time.time()
 
@@ -337,7 +334,7 @@ class MessagingGateway:
             for adapter in self.adapters:
                 self._send(adapter, cleaned)
         self._deliver_files(list(self.adapters), files, image_urls, missing)
-        self._next_idle_at = time.monotonic() + self._cycle_pause()
+        self._next_idle_at = time.monotonic() + self.patience  # clamped >= 0 in __init__
         return True
 
     def _stream_to_adapter(self, adapter: Adapter, events) -> None:

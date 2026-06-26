@@ -11,6 +11,8 @@ describe("gwPlatLabel", () => {
     expect(gwPlatLabel(t, "weixin")).toBe("gw-weixin-label");
     expect(gwPlatLabel(t, "qq")).toBe("gw-qq-label");
     expect(gwPlatLabel(t, "telegram")).toBe("gw-telegram-label");
+    expect(gwPlatLabel(t, "discord")).toBe("gw-discord-label");
+    expect(gwPlatLabel(t, "slack")).toBe("gw-slack-label");
   });
   it("falls back to gw-none when no platform", () => {
     expect(gwPlatLabel(t, "")).toBe("gw-none");
@@ -18,7 +20,7 @@ describe("gwPlatLabel", () => {
     expect(gwPlatLabel(t, undefined)).toBe("gw-none");
   });
   it("returns the raw id for an unknown platform", () => {
-    expect(gwPlatLabel(t, "slack")).toBe("slack");
+    expect(gwPlatLabel(t, "myspace")).toBe("myspace");
   });
 });
 

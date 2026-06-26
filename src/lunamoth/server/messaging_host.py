@@ -103,8 +103,7 @@ class MessagingHost:
     def _busy_text(self) -> str:
         """Honest note when an inbound turn couldn't get the shared agent within
         the wait window (a long desktop turn held it) — never silent."""
-        zh = self._ack is not None and "收到" in self._ack
-        return "（还在忙，稍后回复你）" if zh else "(still busy — I'll get back to you shortly)"
+        return "（还在忙，稍后回复你）" if self._zh() else "(still busy — I'll get back to you shortly)"
 
     # ---- control ------------------------------------------------------------
 

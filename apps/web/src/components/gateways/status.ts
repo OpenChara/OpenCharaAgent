@@ -3,20 +3,16 @@
  * (weixin) today; unknown platforms fall back to their raw id, matching the
  * vanilla GW_PLATFORMS lookup. */
 
-import type { TFn, TKey } from "../../i18n";
-
-/** Platform id → i18n label key (chat.js GW_PLATFORMS). Only weixin is surfaced
- *  in the deck today; the rest exist in messaging/ but aren't wired here yet. */
-const PLATFORM_LABEL: Record<string, TKey> = {
-  weixin: "gw-weixin-label",
-  qq: "gw-qq-label",
-  telegram: "gw-telegram-label",
-};
+import type { TFn } from "../../i18n";
+import { GW_PLATFORMS } from "./gatewayModel";
 
 export function gwPlatLabel(t: TFn, platform: string | null | undefined): string {
   if (!platform) return t("gw-none");
-  const key = PLATFORM_LABEL[platform];
-  return key ? t(key) : platform;
+  // One source of truth for platform → label: the GW_PLATFORMS registry (which
+  // carries every surfaced platform incl. discord/slack). A platform missing
+  // from it falls back to its raw id.
+  const spec = GW_PLATFORMS[platform];
+  return spec ? t(spec.label) : platform;
 }
 
 export interface GwBits {
