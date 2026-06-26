@@ -165,8 +165,10 @@ export async function togglePlatform(args: {
     { name: args.name, config },
     20000,
   );
-  // Top-level enabled (what we just saved) decides the reconcile RPC.
-  const topOn = !!config.enabled;
+  // The BACKEND re-derives the authoritative top-level enabled (= any platform
+  // effectively on) and returns it; steer the reconcile off THAT, not our own
+  // recompute, so the start/stop decision can't drift from what was persisted.
+  const topOn = !!(saved?.config?.enabled ?? config.enabled);
   const status = await args.hub.call<GatewayStatus>(
     topOn ? "gateway.start" : "gateway.stop",
     { name: args.name },

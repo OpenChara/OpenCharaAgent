@@ -156,6 +156,7 @@ function StatusPane({ stream, name, onTab }: { stream: CharaStream; name: string
   const pctMem = memMax ? Math.round((100 * memCh) / memMax) : 0;
   const liveOn = livePending ?? rosterLive;
   const toggleLive = () => {
+    if (livePending !== null) return; // a flip is already in flight (matches Board's guard)
     const next = !liveOn;
     setLivePending(next); // optimistic flip
     hub

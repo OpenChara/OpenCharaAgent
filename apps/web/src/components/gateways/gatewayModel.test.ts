@@ -6,6 +6,7 @@ import {
   allowedToString,
   platformEnabled,
   anyEnabled,
+  togglePlatform,
   type MessagingConfig,
 } from "./gatewayModel";
 
@@ -194,5 +195,37 @@ describe("buildSaveConfig (field merge + per-platform enabled + derived top-leve
   it("without cfg, top-level reflects just this platform's new value", () => {
     expect(buildSaveConfig({ ...base, enabled: true, current: {}, initial: {} }).enabled).toBe(true);
     expect(buildSaveConfig({ ...base, enabled: false, current: {}, initial: {} }).enabled).toBe(false);
+  });
+});
+
+describe("togglePlatform reconcile", () => {
+  // The backend re-derives the authoritative top-level `enabled`; the start/stop
+  // reconcile must follow THAT, not the frontend's own recompute, so they can't drift.
+  function fakeHub(savedEnabled: boolean) {
+    const calls: string[] = [];
+    const hub = {
+      call: async <T,>(method: string): Promise<T> => {
+        calls.push(method);
+        return (method === "messaging.save"
+          ? { config: { enabled: savedEnabled } }
+          : {}) as T;
+      },
+    };
+    return { hub, calls };
+  }
+
+  it("follows the backend's returned enabled (stop) even when the local recompute says on", async () => {
+    const { hub, calls } = fakeHub(false); // backend persisted OFF...
+    await togglePlatform({ hub, name: "x", plat: "qq", next: true, // ...while local would say ON
+                           cfg: { adapters: { qq: {} } } });
+    expect(calls).toContain("gateway.stop");
+    expect(calls).not.toContain("gateway.start");
+  });
+
+  it("follows the backend's returned enabled (start) when it says on", async () => {
+    const { hub, calls } = fakeHub(true);
+    await togglePlatform({ hub, name: "x", plat: "qq", next: true, cfg: { adapters: { qq: {} } } });
+    expect(calls).toContain("gateway.start");
+    expect(calls).not.toContain("gateway.stop");
   });
 });
