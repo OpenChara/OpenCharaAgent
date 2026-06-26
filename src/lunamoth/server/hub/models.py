@@ -346,6 +346,14 @@ def _complete(defaults: dict[str, str], system: str, user: str, model: str = "",
         err = data["error"] if isinstance(data["error"], dict) else {"message": str(data["error"])}
         raise HubRpcError(-32037, str(err.get("message", "")), {"kind": "provider", "detail": str(err.get("message", ""))})
     try:
-        return (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+        content = (data.get("choices") or [{}])[0].get("message", {}).get("content")
     except (AttributeError, IndexError, TypeError):
-        return ""
+        content = None
+    if not content:
+        # A 200 with no usable content is a FAILURE, not an empty answer — surface it
+        # rather than returning "" (every caller treats empty as a failure anyway, so
+        # this hands them the real reason instead of a silent blank that a future
+        # caller could mistake for a valid empty result).
+        raise HubRpcError(-32037, "the model returned an empty response",
+                          {"kind": "provider", "detail": "no content in the completion"})
+    return content
