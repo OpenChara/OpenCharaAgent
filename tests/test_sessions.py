@@ -82,6 +82,36 @@ def test_env_carries_py_backend_so_callers_never_rederive_the_jail():
     assert S.create_session("trusted", isolation="admin").env()["LUNAMOTH_PY_BACKEND"] == "admin"
 
 
+def test_set_isolation_writes_both_stores_in_lockstep():
+    """SessionMeta.set_isolation is the ONE writer of both stores — session.json (the
+    jail authority via env()) AND the config.json mirror (isolation + py_backend) — so
+    they can never drift. A config-only write once left the toggle a no-op on the jail."""
+    meta = S.create_session("iso", isolation="admin")
+    meta.config_path.write_text(
+        json.dumps({"model": "m", "isolation": "admin", "py_backend": "admin"}), encoding="utf-8")
+    assert meta.set_isolation("sandbox") == "sandbox"
+    # session.json (authority): reloads as sandbox, env() jails the next child
+    reloaded = S.load_session("iso")
+    assert reloaded.isolation == "sandbox"
+    assert reloaded.env()["LUNAMOTH_PY_BACKEND"] == "sandbox"
+    # config.json mirror: isolation + py_backend updated in lockstep, model preserved
+    cfg = json.loads(meta.config_path.read_text(encoding="utf-8"))
+    assert cfg["isolation"] == "sandbox" and cfg["py_backend"] == "sandbox" and cfg["model"] == "m"
+    with pytest.raises(ValueError):
+        meta.set_isolation("vmware")
+
+
+def test_set_isolation_leaves_missing_config_untouched():
+    """The config mirror is best-effort: a missing config.json is NOT rewritten from
+    scratch (that would wipe the chara's model/etc) — the authority still updates."""
+    meta = S.create_session("nocfg", isolation="admin")
+    if meta.config_path.exists():
+        meta.config_path.unlink()
+    meta.set_isolation("sandbox")
+    assert S.load_session("nocfg").isolation == "sandbox"  # authority updated
+    assert not meta.config_path.exists()  # no fresh config written
+
+
 def test_cli_new_ls_rm(temp_home):
     def run(*argv):
         return subprocess.run(

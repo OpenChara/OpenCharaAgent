@@ -528,15 +528,10 @@ def set_isolation(meta: S.SessionMeta, isolation: str) -> dict[str, Any]:
     if force_sandbox() and iso != "sandbox":
         # Distribution lock: this server pins every chara to the sandbox; admin is refused.
         raise RpcError(-32602, "sandbox is enforced on this server (admin isolation is disabled)")
-    try:
-        cfg = json.loads(meta.config_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        # A corrupt/unreadable config must NOT be silently reset (that would wipe the
-        # chara's model/etc) — surface it, exactly as set_modules does.
-        raise RpcError(-32031, f"cannot read session config for {meta.name!r}: {e}") from e
-    cfg["isolation"] = iso
-    _atomic_write_json(meta.config_path, cfg, private=True)
-    meta.isolation = iso
+    # SessionMeta.set_isolation is the ONE writer of both stores (session.json authority +
+    # config.json mirror) — it can't leave the jail authority stale the way a config-only
+    # write did, and downgrade_admin_sessions routes through the same helper.
+    meta.set_isolation(iso)
     return {"ok": True, "isolation": iso, "applies": "next_start"}
 
 

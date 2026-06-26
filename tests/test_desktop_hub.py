@@ -255,10 +255,18 @@ def test_set_isolation_switches_config_for_next_start():
     assert r["isolation"] == "admin" and r["applies"] == "next_start"
     cfg = json.loads(S.load_session(name).config_path.read_text(encoding="utf-8"))
     assert cfg["isolation"] == "admin"
+    # session.json is the JAIL AUTHORITY (meta.env() → LUNAMOTH_PY_BACKEND). Writing
+    # only config.json left the toggle a no-op on the next child start.
+    meta = S.load_session(name)
+    assert meta.isolation == "admin"
+    assert meta.env()["LUNAMOTH_PY_BACKEND"] == "admin"  # admin = unconfined backend
     # switch back — tightening, same path
     result("chara.set_isolation", {"name": name, "isolation": "sandbox"})
     cfg2 = json.loads(S.load_session(name).config_path.read_text(encoding="utf-8"))
     assert cfg2["isolation"] == "sandbox"
+    meta2 = S.load_session(name)
+    assert meta2.isolation == "sandbox"
+    assert meta2.env()["LUNAMOTH_PY_BACKEND"] == "sandbox"  # sandbox = the jail backend
 
 
 def test_set_isolation_rejects_unknown_value():

@@ -137,6 +137,36 @@ class SessionMeta:
             "LUNAMOTH_PY_BACKEND": isolation_to_backend(self.isolation),
         }
 
+    def set_isolation(self, isolation: str) -> str:
+        """Switch this chara's OS isolation in BOTH stores so they can NEVER drift —
+        the ONE writer every caller routes through. session.json (``isolation``) is the
+        jail AUTHORITY: env() derives LUNAMOTH_PY_BACKEND from self.isolation, read back
+        by the next child's load_session. config.json (``isolation``/``py_backend``) is
+        the UI/snapshot mirror. Writing only one store left the post-wake sandbox toggle
+        a no-op on the authority (the chara relaunched with the OLD jail). Takes effect
+        on the NEXT process start — the backend is pinned at launch, never hot-swapped.
+
+        The config mirror is best-effort: a missing/corrupt config.json is left untouched
+        (never rewritten from scratch — that would wipe the chara's model/etc), since it
+        is only a snapshot and session.json is the source of truth. Returns the normalized
+        isolation; raises ValueError on an unknown value."""
+        from ..config import atomic_write_text
+        iso = normalize_isolation(isolation)
+        if iso not in ISOLATION_LEVELS:
+            raise ValueError(f"isolation must be one of {sorted(ISOLATION_LEVELS)}")
+        self.isolation = iso
+        self.save()  # session.json — the authority (meta.env())
+        try:
+            cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return iso  # no/corrupt mirror — leave it; never wipe an existing config
+        if isinstance(cfg, dict):
+            cfg["isolation"] = iso
+            if "py_backend" in cfg:
+                cfg["py_backend"] = isolation_to_backend(iso)
+            atomic_write_text(self.config_path, json.dumps(cfg, ensure_ascii=False, indent=2), private=True)
+        return iso
+
     def running_pid(self) -> int | None:
         try:
             pid = int(self.pid_path.read_text().strip())
@@ -235,8 +265,6 @@ def downgrade_admin_sessions() -> list[str]:
     Called at startup when force_sandbox() is on. (backend() also clamps at runtime, so
     the jail is safe regardless; this is what makes the downgrade survive removing the
     lock instead of springing back to admin.)"""
-    from ..config import atomic_write_text
-
     downgraded: list[str] = []
     for meta in list_sessions():
         try:
@@ -246,13 +274,7 @@ def downgrade_admin_sessions() -> list[str]:
         cfg_admin = isinstance(cfg, dict) and normalize_isolation(str(cfg.get("isolation") or "")) == "admin"
         if meta.isolation != "admin" and not cfg_admin:
             continue
-        meta.isolation = "sandbox"
-        meta.save()  # session.json — the jail authority (meta.env())
-        if isinstance(cfg, dict):
-            cfg["isolation"] = "sandbox"
-            if "py_backend" in cfg:
-                cfg["py_backend"] = "sandbox"
-            atomic_write_text(meta.config_path, json.dumps(cfg, ensure_ascii=False, indent=2), private=True)
+        meta.set_isolation("sandbox")  # both stores, the ONE isolation writer
         downgraded.append(meta.name)
     return downgraded
 
