@@ -70,8 +70,19 @@ def test_load_strips_legacy_embedded_session_key(session_env):
     assert "api_key" not in raw              # and the stale copy is stripped from disk
 
 
-def test_is_session_config_true_under_sessions(session_env):
-    assert S._is_session_config() is True
+def test_load_folds_orphan_session_key_instead_of_destroying_it(session_env):
+    """A session config carrying a legacy api_key with an EMPTY keyring must NOT have its
+    only copy destroyed: it's folded into the keyring (preserved), then the disk copy is
+    stripped. Regression — the strip used to run unconditionally for session configs,
+    orphaning the sole key."""
+    home, sess = session_env
+    # no global key written → the keyring is empty; the session config is the only copy
+    _write_session(sess, {"provider": "openrouter", "api_key": "sk-ONLYCOPY"})
+    st = S.load_settings()
+    assert st.api_key == "sk-ONLYCOPY"                            # resolved (folded into keyring)
+    assert S.global_api_key("openrouter", "") == "sk-ONLYCOPY"   # preserved in the keyring
+    raw = json.loads((sess / "config.json").read_text(encoding="utf-8"))
+    assert "api_key" not in raw                                  # stripped from disk (now safe)
 
 
 def test_bulk_key_update_is_noop_after_sec2():

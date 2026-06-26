@@ -247,16 +247,6 @@ def resolve_named_key(label: str) -> dict[str, str]:
     return {k: str(item.get(k) or "") for k in ("provider", "base_url", "api_key", "model")}
 
 
-def _is_session_config() -> bool:
-    """True when CONFIG_PATH points at a per-session config (…/sessions/<name>/),
-    not the global config — used to keep the secret out of session files."""
-    try:
-        sessions = (_global_home() / "sessions").resolve()
-        return CONFIG_DIR == sessions or sessions in CONFIG_DIR.parents
-    except Exception:  # noqa: BLE001
-        return False
-
-
 # Real LLM providers that go through the OpenAI-compatible HTTP path.
 LIVE_PROVIDERS = {"openai_compatible", "openai", "ollama", "openrouter"}
 
@@ -563,16 +553,26 @@ def load_settings() -> Settings:
     legacy_key = str(data.get("api_key") or "")  # a secret still embedded in config.json (pre-keyring)
     provider = str(data.get("provider") or "")
     base_url = str(data.get("base_url") or "")
-    # One-time fold: a legacy GLOBAL-config key (the old terminal store) is moved into
-    # the keyring so it isn't orphaned when we stop reading config.json — then it's
-    # stripped from disk below. (A session-config key is never folded: the keyring
-    # already owns it; it's only stripped.)
-    if legacy_key and not _is_session_config() and not global_api_key(provider, base_url):
-        save_global_key(provider, base_url, legacy_key, model=str(data.get("model") or ""))
+    # One-time fold: a legacy config.json key (GLOBAL or SESSION) is moved into the
+    # keyring so it isn't orphaned when we stop reading config.json — then stripped from
+    # disk below. We fold a SESSION key too (not just a global one): the keyring usually
+    # already owns it, but if it doesn't (a hand-edited / pre-keyring session dir),
+    # skipping the fold AND stripping would destroy the only copy. Best-effort: if the
+    # keyring write fails (read-only home), don't fold — and the strip below is gated on
+    # a surviving copy, so the key is never lost.
+    folded = False
+    if legacy_key and not global_api_key(provider, base_url):
+        try:
+            save_global_key(provider, base_url, legacy_key, model=str(data.get("model") or ""))
+            folded = True
+        except OSError:
+            pass  # keyring not writable — leave the key in config.json rather than orphan it
     global_key = global_api_key(provider, base_url)
     data["api_key"] = env_key or global_key  # the loaded config.json value is NEVER used
-    # config.json must never hold the secret (session OR global) — strip it on read.
-    if legacy_key and CONFIG_PATH.exists():
+    # config.json must never hold the secret (session OR global) — strip it on read, but
+    # ONLY once the key is preserved elsewhere (keyring has it, or the env provides it).
+    # Stripping with nothing to fall back to would destroy the only copy.
+    if legacy_key and (global_key or env_key or folded) and CONFIG_PATH.exists():
         try:
             raw = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
             if isinstance(raw, dict) and raw.get("api_key"):
