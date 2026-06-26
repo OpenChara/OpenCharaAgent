@@ -113,6 +113,17 @@ _TOOL_USE = (
     "reach them; on a messaging channel the file is sent when that channel can carry it."
 )
 
+# Optional environment-capability note: extra binaries present in this runtime.
+# Stated only when actually installed (agent.py probes), gated on tools like the
+# rest — a fact about the environment, not a directive to do video work.
+_FFMPEG = (
+    "ffmpeg is installed in your environment — reach it through your terminal. Use it "
+    "for video and audio: stitch images and a soundtrack into a video (for instance, an "
+    "MV for a track you wrote), render motion or video for your homepage, or trim, "
+    "transcode, and splice media. It's a real tool here — run it to make the file, don't "
+    "just describe the result."
+)
+
 # The last, strongest line before generation (SillyTavern post-history style).
 # Two equally-weighted reminders: stay in character, AND make real things — the
 # in-character voice and the no-fabrication standard both matter at the final slot.
@@ -148,7 +159,13 @@ _WEBSITE = (
     "many linked pages — plain HTML, or pages that run their own code.\n"
     "Open your own pages with your browser tool to see how they actually render and to "
     "catch anything broken, then fix and refine — don't assume a page works because you "
-    "wrote the file."
+    "wrote the file.\n"
+    "Your user can usually open home/index.html directly, so keep it working as plain "
+    "files opened from disk: link between your pages with relative paths (./about.html, "
+    "not an absolute /path or a server URL) and keep each page's assets beside it. If "
+    "your user wants to put the site on the public web, or add a real backend — a server, "
+    "a database, anything beyond static pages that run in the browser — talk it through "
+    "with them first; how and where to host it is their call."
 )
 
 # personal_website — CLOSER fragment, appended to the single post-history slot.
@@ -217,6 +234,17 @@ def tool_use(card_override: str | None = None) -> str:
     if card_override and card_override.strip():
         return card_override.strip()
     return _TOOL_USE
+
+
+def environment_tools(*, ffmpeg: bool = False) -> str:
+    """Notes about extra binaries that happen to be present in the environment —
+    stated ONLY when actually installed (the caller probes; honesty over a claim
+    the chara would reach for and not find). Empty when nothing extra is present.
+    """
+    parts: list[str] = []
+    if ffmpeg:
+        parts.append(_FFMPEG)
+    return "\n".join(parts)
 
 
 def closer(card_override: str | None = None, *, website: bool = False) -> str:

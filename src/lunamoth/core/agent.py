@@ -602,6 +602,12 @@ class LunaMothAgent:
             # dynamic env facts ride the volatile tail.
             msgs.append(apply_macros(rules_layer.capabilities(card_practice), char, user))
             msgs.append(apply_macros(rules_layer.tool_use(card_tooluse), char, user))
+            # Extra-binary capability notes, stated only when actually on PATH (honesty:
+            # never claim a tool the chara would reach for and not find). ffmpeg is a
+            # stable fact, so it rides the cached prefix, not the per-turn tail.
+            env_note = rules_layer.environment_tools(ffmpeg=shutil.which("ffmpeg") is not None)
+            if env_note:
+                msgs.append(env_note)
             # Optional personal_website module: a neutral SYSTEM block (the matching
             # closer fragment rides the post-history slot). Gated on tools + the knob.
             if self.website_active():

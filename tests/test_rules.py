@@ -29,10 +29,29 @@ def test_rules_carry_finish_the_job_discipline():
 def test_engine_prompt_text_is_brand_free():
     """No upstream brand leaks into any model-facing rules string."""
     for txt in (rules.rules(), rules.capabilities(), rules.tool_use(),
-                rules.closer(), rules.embodiment_bridge()):
+                rules.closer(), rules.embodiment_bridge(),
+                rules.website(), rules.environment_tools(ffmpeg=True)):
         low = txt.lower()
         for banned in ("hermes", "nous", "the vm", "linux environment"):
             assert banned not in low, f"{banned!r} leaked into model-facing rules text"
+
+
+def test_environment_tools_ffmpeg_note_is_honesty_gated():
+    """The ffmpeg note is stated ONLY when ffmpeg is actually present — never a
+    claim the chara would reach for and not find."""
+    assert rules.environment_tools(ffmpeg=False) == ""
+    note = rules.environment_tools(ffmpeg=True)
+    assert "ffmpeg" in note.lower()
+    assert "video" in note.lower() and "terminal" in note.lower()
+
+
+def test_website_block_teaches_relative_links_and_discussing_publish():
+    """The personal_website module tells the chara the user opens index.html
+    directly (use relative links), and to discuss publishing / a backend first."""
+    w = rules.website().lower()
+    assert "index.html" in w
+    assert "relative" in w
+    assert "backend" in w  # discuss a real backend / hosting with the user first
 
 
 def test_global_override_file(tmp_path, monkeypatch):

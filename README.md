@@ -126,7 +126,7 @@ How that command is contained is the **isolation level**, set per chara:
 | `sandbox` (default) | OS jail — `sandbox-exec` on macOS, `bubblewrap` → `Landlock` on Linux. Writes confined to the workspace; the rest of your `$HOME` (`~/.ssh`, `~/.aws`, `~/.lunamoth`) is unreadable. If no jail is available it refuses to run — it never silently degrades. |
 | `admin` | No jail: runs as you, cwd in the workspace. Opt-in, for a directory you trust. |
 
-Permissions flex at runtime: network is on by default (`/net off` to cut it), and `/allow-dir <path>` grants a writable path outside the workspace. Browser tools (`browser_*`, a real Chromium) are optional — `lunamoth setup browser` installs the driver; they run jailed on all platforms.
+Permissions flex at runtime: network is on by default (`/net off` to cut it), and `/allow-dir <path>` grants a writable path outside the workspace. Browser tools (`browser_*`, a real Chromium) are optional — `lunamoth setup browser` installs the driver; they run jailed on all platforms. The installer also best-effort installs `ffmpeg` so a chara can do video/audio work (e.g. an MV for music it made) from its terminal; if ffmpeg isn't present the prompt simply never mentions it.
 
 ## Run it on a server
 

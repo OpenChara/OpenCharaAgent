@@ -65,6 +65,39 @@ browser_setup() {
   fi
 }
 
+# ffmpeg backs the chara's video/audio work through its terminal (e.g. an MV for
+# music it generated, or motion on its homepage). Best-effort + non-fatal: a
+# missing or failed ffmpeg never blocks the core install — the agent prompt only
+# claims ffmpeg when it's actually on PATH.
+ffmpeg_setup() {
+  if command -v ffmpeg >/dev/null 2>&1; then
+    say "ffmpeg: already present ($(command -v ffmpeg))"
+    return
+  fi
+  say "installing ffmpeg ..."
+  local SUDO=""
+  [ "$(id -u)" != "0" ] && command -v sudo >/dev/null 2>&1 && SUDO="sudo"
+  if [ "$(uname -s)" = "Darwin" ]; then
+    if command -v brew >/dev/null 2>&1; then
+      brew install ffmpeg >/dev/null 2>&1 && say "  ffmpeg ready" \
+        || say "  NOTE: ffmpeg install failed — install manually: brew install ffmpeg"
+    else
+      say "  NOTE: Homebrew not found — install ffmpeg manually: brew install ffmpeg"
+    fi
+  elif command -v apt-get >/dev/null 2>&1; then
+    { $SUDO apt-get update -y >/dev/null 2>&1; $SUDO apt-get install -y ffmpeg >/dev/null 2>&1; } \
+      && say "  ffmpeg ready" || say "  NOTE: ffmpeg install failed — install manually: apt-get install ffmpeg"
+  elif command -v dnf >/dev/null 2>&1; then
+    $SUDO dnf install -y ffmpeg >/dev/null 2>&1 && say "  ffmpeg ready" \
+      || say "  NOTE: ffmpeg install failed — install manually: dnf install ffmpeg"
+  elif command -v pacman >/dev/null 2>&1; then
+    $SUDO pacman -S --noconfirm ffmpeg >/dev/null 2>&1 && say "  ffmpeg ready" \
+      || say "  NOTE: ffmpeg install failed — install manually: pacman -S ffmpeg"
+  else
+    say "  NOTE: no known package manager — install ffmpeg manually for video/audio tools."
+  fi
+}
+
 case "$(uname -s)" in
   Darwin|Linux) ;;
   *) fail "unsupported platform $(uname -s) (macOS and Linux only for now)" ;;
@@ -120,6 +153,7 @@ EOF
        say "  export PATH=\"$LINK_DIR:\$PATH\"" ;;
   esac
   browser_setup
+  ffmpeg_setup
   say "done (dev channel). run: lunamoth"
   exit 0
 fi
@@ -213,4 +247,5 @@ if [ -n "$UV_BIN" ]; then
 fi
 
 browser_setup
+ffmpeg_setup
 say "done. run: lunamoth"
