@@ -488,7 +488,8 @@ class ProcessRegistry:
     def drain_notifications(self) -> list[dict]:
         """Pop all pending completion/watch events (skipping already-consumed
         completions). Returns the raw event dicts — the agent layer formats +
-        re-targets them onto the protocol stream."""
+        re-targets them onto the protocol stream. This is the SOLE consumer of
+        completion/image_gen events (the chara's 'job finished' awareness)."""
         results: list[dict] = []
         while not self.completion_queue.empty():
             try:
@@ -500,6 +501,27 @@ class ProcessRegistry:
                 continue
             results.append(evt)
         return results
+
+    def drain_watch_notes(self) -> list[dict]:
+        """Pop ONLY ``watch_*`` events (the terminal tool's inline-in-result surface),
+        re-queuing every other event (completion / image_gen) untouched for
+        drain_notifications(). The terminal tool used the destructive
+        drain_notifications() here and DROPPED the completion/image-ready notices it
+        couldn't format into inline notes — a silent loss of 'background job finished'
+        whenever the chara started another bg command before the agent's turn-boundary
+        drain. Partitioning by type keeps both surfaces whole: watch notes inline,
+        completions for the agent layer."""
+        watch: list[dict] = []
+        keep: list[dict] = []
+        while not self.completion_queue.empty():
+            try:
+                evt = self.completion_queue.get_nowait()
+            except Exception:
+                break
+            (watch if str(evt.get("type") or "").startswith("watch") else keep).append(evt)
+        for evt in keep:
+            self.completion_queue.put(evt)
+        return watch
 
     def poll(self, session_id: str) -> dict:
         session = self.get(session_id)

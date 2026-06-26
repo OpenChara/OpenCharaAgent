@@ -35,6 +35,36 @@ def test_format_completion_and_unknown():
     assert format_background_notification({"type": "nope"}) == ""
 
 
+# ---- terminal inline watch notes must NOT steal completion/image_gen -----------
+
+def test_collect_watch_notes_leaves_completions_for_agent_layer():
+    """The terminal tool surfaces watch_* matches inline in its JSON result, but it
+    must not consume the completion/image_gen notices the agent's turn-boundary drain
+    owns. Draining them destructively here silently dropped 'job finished' notices."""
+    from lunamoth.tools.builtin._process_registry import ProcessRegistry
+    from lunamoth.tools.builtin.terminal import _collect_watch_notes
+    reg = ProcessRegistry()
+    reg.completion_queue.put({"type": "completion", "session_id": "p1", "command": "build", "exit_code": 0})
+    reg.completion_queue.put({"type": "watch_match", "session_id": "p2", "pattern": "ready", "output": "up"})
+    reg.completion_queue.put({"type": "image_gen", "status": "ready", "path": "works/x.png"})
+    # inline surface: only the watch match comes back as a note
+    notes = _collect_watch_notes(reg)
+    assert notes == ["[watch:ready] up"]
+    # the completion + image_gen survive for the agent layer's sole drain
+    left = {e.get("type") for e in reg.drain_notifications()}
+    assert left == {"completion", "image_gen"}
+
+
+def test_drain_watch_notes_partitions_by_type():
+    from lunamoth.tools.builtin._process_registry import ProcessRegistry
+    reg = ProcessRegistry()
+    reg.completion_queue.put({"type": "watch_disabled", "message": "watch off"})
+    reg.completion_queue.put({"type": "completion", "session_id": "p1", "exit_code": 1})
+    watch = reg.drain_watch_notes()
+    assert [e["type"] for e in watch] == ["watch_disabled"]
+    assert [e["type"] for e in reg.drain_notifications()] == ["completion"]
+
+
 # ---- the drain (gateway accessor + agent injection) ----------------------------
 
 @pytest.fixture

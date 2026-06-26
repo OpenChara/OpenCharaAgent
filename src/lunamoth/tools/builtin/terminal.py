@@ -303,11 +303,13 @@ def _run_background(command, ctx, *, workdir, notify_on_complete, watch_patterns
 
 
 def _collect_watch_notes(reg) -> list[str]:
-    """Drain pending watch/completion events into plain-text notes for the JSON
-    result (the spec's "re-emit watch_patterns as notes" requirement). This is a
-    best-effort surface; the agent layer also drains the queue onto the stream."""
+    """Drain pending WATCH events into plain-text notes for the JSON result (the
+    spec's "re-emit watch_patterns as notes" requirement). Uses drain_watch_notes
+    so it consumes ONLY watch_* events — completion/image_gen notices stay queued
+    for the agent layer's drain_notifications(), which is their sole consumer.
+    (Draining them destructively here silently dropped 'job finished' notices.)"""
     notes: list[str] = []
-    for evt in reg.drain_notifications():
+    for evt in reg.drain_watch_notes():
         etype = evt.get("type")
         if etype == "watch_match":
             notes.append(f"[watch:{evt.get('pattern')}] {evt.get('output', '')}")
