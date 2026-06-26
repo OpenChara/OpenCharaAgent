@@ -111,6 +111,19 @@ def messaging_save(meta: S.SessionMeta, config: Any) -> dict[str, Any]:
         raise RpcError(-32602, "messaging.save expects config: {...}")
     old = _read_messaging(meta)
     merged = _merge_messaging(old, _unmask_secrets(config, old))
+    # The top-level `enabled` (= is the gateway host on at all) is DERIVED, never
+    # an independent flag: it must equal "any platform effectively on". Recompute
+    # it here from the per-platform flags so the two layers can't drift — the
+    # invariant used to be maintained only in the web client (buildSaveConfig),
+    # so any other writer left top-level and per-platform disagreeing.
+    from ...messaging.gateway import adapter_enabled
+    adapters = merged.get("adapters")
+    if isinstance(adapters, dict) and adapters:
+        legacy = bool(merged.get("enabled"))
+        merged["enabled"] = any(
+            adapter_enabled(a, legacy=legacy)
+            for a in adapters.values() if isinstance(a, dict)
+        )
     path = _messaging_path(meta)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -216,13 +229,14 @@ def _gateway_status_from_disk(meta: S.SessionMeta) -> dict[str, Any]:
         if isinstance(adapters, dict):
             platform = ",".join(sorted(str(k) for k in adapters))
             # Per-platform rows (all stopped on disk): each platform's own
-            # `enabled` flag, inheriting the legacy top-level `enabled` when absent.
+            # `enabled` flag, inheriting the legacy top-level `enabled` when absent
+            # — via the one canonical helper so this can't drift from make_adapters.
+            from ...messaging.gateway import adapter_enabled
             legacy = bool(data.get("enabled")) if isinstance(data, dict) else False
             for name in sorted(str(k) for k in adapters):
                 ac = adapters.get(name)
                 ac = ac if isinstance(ac, dict) else {}
-                own = ac.get("enabled")
-                on = bool(legacy) if own is None else bool(own)
+                on = adapter_enabled(ac, legacy=legacy)
                 platforms.append({"platform": name, "enabled": on, "state": "stopped"})
     except (OSError, json.JSONDecodeError):
         pass

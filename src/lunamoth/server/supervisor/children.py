@@ -629,6 +629,7 @@ class GatewayChild:
         adapters = cfg.get("adapters")
         if not isinstance(adapters, dict):
             return []
+        from ...messaging.gateway import adapter_enabled  # one canonical "own ?? legacy"
         legacy = bool(cfg.get("enabled"))
         live_by: dict[str, dict[str, Any]] = {}
         if isinstance(live, list):
@@ -639,8 +640,7 @@ class GatewayChild:
         for name in sorted(str(k) for k in adapters):
             ac = adapters.get(name)
             ac = ac if isinstance(ac, dict) else {}
-            own = ac.get("enabled")
-            on = bool(legacy) if own is None else bool(own)
+            on = adapter_enabled(ac, legacy=legacy)
             lv = live_by.get(name)
             rows.append({"platform": name, "enabled": on,
                          "state": str(lv.get("state")) if lv else "stopped"})

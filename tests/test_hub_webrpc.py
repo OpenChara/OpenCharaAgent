@@ -129,6 +129,22 @@ def test_messaging_save_preserves_enabled_when_omitted():
     assert on_disk["enabled"] is True
 
 
+def test_messaging_save_derives_top_level_enabled_from_platforms():
+    # The top-level `enabled` (= is the host on at all) is DERIVED, not an
+    # independent flag: a save claiming enabled:true while turning its only
+    # platform OFF must land enabled:false — and vice-versa — so the kill-switch
+    # the supervisor reads can't drift from what make_adapters actually runs.
+    meta = wake_session()
+    result("messaging.save", {"name": meta.name, "config": {
+        "enabled": True, "adapters": {"qq": {"url": "ws://x", "enabled": False}}}})
+    on_disk = json.loads((meta.root / "messaging.json").read_text(encoding="utf-8"))
+    assert on_disk["enabled"] is False  # no platform effectively on → host off
+    result("messaging.save", {"name": meta.name, "config": {
+        "enabled": False, "adapters": {"qq": {"enabled": True}}}})
+    on_disk = json.loads((meta.root / "messaging.json").read_text(encoding="utf-8"))
+    assert on_disk["enabled"] is True   # a platform on → host on, despite enabled:false
+
+
 def test_messaging_save_merges_per_the_web_form_contract():
     """The deck form sends only the platform on screen and omits unchanged
     secrets — the backend must merge, never replace (webui-needs #7)."""

@@ -163,7 +163,14 @@ class QQAdapter(Adapter):
     def send(self, text: str) -> None:
         target = self._reply_target or self.peer_id
         if not target:
-            raise RuntimeError("QQ send needs config.peer_id for unattended speak or a prior inbound sender")
+            # A permanent "nowhere to send" condition, not a transient fault:
+            # raise DeliveryDeferred (logged-non-delivery) like every other
+            # adapter, so the relay drops it once instead of treating a bare
+            # RuntimeError as transient and burning a pointless retry + wait.
+            raise DeliveryDeferred(
+                "QQ has no target yet (no config.peer_id and no prior inbound sender); "
+                "this message was dropped, not queued"
+            )
         user_id: int | str = int(target) if target.isdigit() else target
         self._send_frame(
             {
