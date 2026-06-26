@@ -13,7 +13,7 @@
  * Binding UI rule: the generate action shows a working spinner; reorder/add/remove
  * are optimistic (they flip the parent state immediately). */
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import type { WorldEntryFull } from "../../lib/cards";
 
@@ -123,6 +123,13 @@ function EntryRow({
   const [kin, setKin] = useState("");
   const taRef = useRef<HTMLTextAreaElement>(null);
   const keys = entry.keys || [];
+
+  // Rows are keyed by index, so reordering/removing reuses this instance for a
+  // DIFFERENT logical entry — which would leak the in-progress keyword input
+  // (kin) onto it. Clear kin whenever a different entry lands in this slot (its
+  // content or key-count shifts); typing a keyword changes neither, so kin is
+  // preserved while you type.
+  useEffect(() => { setKin(""); }, [entry.content, keys.length]);
 
   // Auto-grow the content box to fit its text, so a multi-paragraph entry is
   // fully visible without an internal scrollbar or a manual drag-resize. Runs on

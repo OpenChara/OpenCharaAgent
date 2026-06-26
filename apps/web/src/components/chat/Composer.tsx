@@ -96,6 +96,11 @@ export function Composer({
     }
   }, [text, charName]);
   const [stopping, setStopping] = useState(false);
+  // The optimistic "stopping" state must clear when the turn ends (whether the
+  // interrupt landed or its request failed and was swallowed) — otherwise the
+  // NEXT turn's stop button starts pre-disabled and stuck. Binding rule: an
+  // optimistic state always reverts when the action resolves.
+  useEffect(() => { if (!streaming) setStopping(false); }, [streaming]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [sel, setSel] = useState(0); // highlighted slash-command index
   const [slashOff, setSlashOff] = useState(false); // Esc dismissed the palette
