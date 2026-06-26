@@ -67,8 +67,8 @@ def test_wake_clamps_isolation_to_sandbox_when_forced(hub_env):
     entry = _dispatch(hub_env, "session.wake", {"card": card, "isolation": "admin"})["result"]
     meta = S.load_session(entry["name"])
     cfg = json.loads(meta.config_path.read_text(encoding="utf-8"))
-    assert meta.isolation == "sandbox"     # admin request clamped at wake
-    assert cfg["py_backend"] == "sandbox"  # child launches jailed
+    assert meta.isolation == "sandbox"    # admin request clamped at wake
+    assert cfg["isolation"] == "sandbox"  # config.json mirrors the clamped authority
 
 
 def test_downgrade_admin_sessions_rewrites_both_stores(tmp_path, monkeypatch):
@@ -83,7 +83,8 @@ def test_downgrade_admin_sessions_rewrites_both_stores(tmp_path, monkeypatch):
     assert S.downgrade_admin_sessions() == ["adm"]  # only the admin chara
     assert S.load_session("adm").isolation == "sandbox"  # session.json (the jail authority)
     cfg = json.loads(adm.config_path.read_text(encoding="utf-8"))
-    assert cfg["isolation"] == "sandbox" and cfg["py_backend"] == "sandbox"  # config.json mirror
+    assert cfg["isolation"] == "sandbox"  # config.json mirror
+    assert "py_backend" not in cfg        # the redundant derived copy is gone
     assert cfg["model"] == "m"  # unrelated config preserved
     # Idempotent (so a restart that's already locked is a no-op), and it STAYS sandbox
     # after the lock is removed — no spring-back to admin.

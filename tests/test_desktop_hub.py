@@ -149,7 +149,8 @@ def test_wake_freezes_card_and_writes_config():
     assert cfg["character_path"] == str(frozen)
     assert not cfg.get("api_key")  # SEC-2: the secret is NOT copied into the session config
     assert cfg["toolpack"] == "sandbox"  # from the card's extensions.lunamoth
-    assert cfg["py_backend"] == "sandbox"
+    assert cfg["isolation"] == "sandbox"  # the one isolation field (the jail is derived from it)
+    assert "py_backend" not in cfg  # no derived mirror copy in config — isolation is the source
 
 
 def test_wake_with_card_data_freezes_the_edited_card_not_the_source():

@@ -141,10 +141,11 @@ class SessionMeta:
         """Switch this chara's OS isolation in BOTH stores so they can NEVER drift —
         the ONE writer every caller routes through. session.json (``isolation``) is the
         jail AUTHORITY: env() derives LUNAMOTH_PY_BACKEND from self.isolation, read back
-        by the next child's load_session. config.json (``isolation``/``py_backend``) is
-        the UI/snapshot mirror. Writing only one store left the post-wake sandbox toggle
-        a no-op on the authority (the chara relaunched with the OLD jail). Takes effect
-        on the NEXT process start — the backend is pinned at launch, never hot-swapped.
+        by the next child's load_session. config.json ``isolation`` is the UI/snapshot
+        mirror (the same field name as the authority — there is no derived py_backend
+        copy any more). Writing only one store left the post-wake sandbox toggle a no-op
+        on the authority (the chara relaunched with the OLD jail). Takes effect on the
+        NEXT process start — the backend is pinned at launch, never hot-swapped.
 
         The config mirror is best-effort: a missing/corrupt config.json is left untouched
         (never rewritten from scratch — that would wipe the chara's model/etc), since it
@@ -162,8 +163,7 @@ class SessionMeta:
             return iso  # no/corrupt mirror — leave it; never wipe an existing config
         if isinstance(cfg, dict):
             cfg["isolation"] = iso
-            if "py_backend" in cfg:
-                cfg["py_backend"] = isolation_to_backend(iso)
+            cfg.pop("py_backend", None)  # drop a legacy mirror copy — isolation is the one field
             atomic_write_text(self.config_path, json.dumps(cfg, ensure_ascii=False, indent=2), private=True)
         return iso
 
@@ -258,7 +258,7 @@ def list_sessions() -> list[SessionMeta]:
 def downgrade_admin_sessions() -> list[str]:
     """Distribution-lock startup step: persistently rewrite every ``admin`` chara to
     ``sandbox`` — in BOTH stores (session.json ``isolation`` = the jail authority via
-    env(), and config.json ``isolation``/``py_backend`` = the UI/snapshot mirror) — so
+    env(), and config.json ``isolation`` = the UI/snapshot mirror) — so
     the downgrade STICKS: after the lock is later removed the chara stays sandbox (the
     toggle just re-enables). Idempotent; returns the names that were downgraded.
 

@@ -1,10 +1,34 @@
 import json
+import re
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 from lunamoth.session import sessions as S
+
+
+def test_config_isolation_has_a_single_mutating_writer():
+    """Guard the one-authority invariant (the isolation/py_backend two-store drift that
+    once silently sandboxed an admin chara): config.json's `isolation` mirror may be
+    MUTATED only by SessionMeta.set_isolation. The wake builder CREATES it as a dict
+    literal (the legitimate initial write); the derived `py_backend` copy is fully
+    retired — no config write may reintroduce it. If this fails, a new site is editing
+    the mirror behind the single writer's back — route it through set_isolation."""
+    src = Path(__file__).resolve().parent.parent / "src" / "lunamoth"
+    mutation = re.compile(r'\["isolation"\]\s*=')
+    py_backend_write = re.compile(r'\["py_backend"\]\s*=|"py_backend"\s*:')
+    iso, pyb = [], []
+    for p in sorted(src.rglob("*.py")):
+        text = p.read_text(encoding="utf-8")
+        rel = str(p.relative_to(src))
+        if mutation.search(text):
+            iso.append(rel)
+        if py_backend_write.search(text):
+            pyb.append(rel)
+    assert iso == ["session/sessions.py"], f"config.json `isolation` mutated outside set_isolation: {iso}"
+    assert pyb == [], f"a config write reintroduced the retired py_backend field: {pyb}"
 
 
 @pytest.fixture(autouse=True)
@@ -84,8 +108,8 @@ def test_env_carries_py_backend_so_callers_never_rederive_the_jail():
 
 def test_set_isolation_writes_both_stores_in_lockstep():
     """SessionMeta.set_isolation is the ONE writer of both stores — session.json (the
-    jail authority via env()) AND the config.json mirror (isolation + py_backend) — so
-    they can never drift. A config-only write once left the toggle a no-op on the jail."""
+    jail authority via env()) AND the config.json mirror (``isolation``) — so they can
+    never drift. A config-only write once left the toggle a no-op on the jail."""
     meta = S.create_session("iso", isolation="admin")
     meta.config_path.write_text(
         json.dumps({"model": "m", "isolation": "admin", "py_backend": "admin"}), encoding="utf-8")
@@ -94,9 +118,9 @@ def test_set_isolation_writes_both_stores_in_lockstep():
     reloaded = S.load_session("iso")
     assert reloaded.isolation == "sandbox"
     assert reloaded.env()["LUNAMOTH_PY_BACKEND"] == "sandbox"
-    # config.json mirror: isolation + py_backend updated in lockstep, model preserved
+    # config.json mirror: isolation updated, the legacy py_backend copy dropped, model kept
     cfg = json.loads(meta.config_path.read_text(encoding="utf-8"))
-    assert cfg["isolation"] == "sandbox" and cfg["py_backend"] == "sandbox" and cfg["model"] == "m"
+    assert cfg["isolation"] == "sandbox" and "py_backend" not in cfg and cfg["model"] == "m"
     with pytest.raises(ValueError):
         meta.set_isolation("vmware")
 
