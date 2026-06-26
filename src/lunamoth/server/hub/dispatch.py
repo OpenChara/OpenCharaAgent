@@ -205,9 +205,21 @@ class HubDispatcher:
             "open.path": lambda p: _sessions.open_path(str(p.get("path") or ""), reveal=bool(p.get("reveal"))),
             "update.status": lambda p: _updates.status(force=bool(p.get("force"))),
             "update.apply": lambda p: _updates.apply(),
+            "update.restart": self._update_restart,
         }
 
     # -- handlers ---------------------------------------------------------------
+
+    def _update_restart(self, p: dict[str, Any]) -> Any:
+        """Relaunch the resident instance into the just-installed code (os.execv). The
+        client's WS drops and auto-reconnects to the new process. Scheduled after a short
+        delay so this response flushes first. No supervisor (e.g. a foreground tui) → the
+        client falls back to the manual command it already has from update.status."""
+        if self.supervisor is None:
+            return {"ok": False, "error": "no resident instance to restart — restart manually"}
+        delay = p.get("delay")
+        ok = self.supervisor.schedule_restart(float(delay) if isinstance(delay, (int, float)) else 1.0)
+        return {"ok": bool(ok), "restarting": bool(ok)}
 
     def _hub_state(self, p: dict[str, Any]) -> Any:
         defaults = _config.load_defaults()

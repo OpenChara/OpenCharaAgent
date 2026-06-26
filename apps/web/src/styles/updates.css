@@ -20,6 +20,9 @@
 
 .upd-note { margin: 8px 0; font-size: 12px; color: var(--accent, #3a7); }
 
+.upd-restart-bar { margin: 8px 0; }
+.upd-restart-acts { display: flex; gap: 8px; align-items: center; }
+
 /* The always-available manual-update fallback (shown when an update is available). */
 .upd-manual {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;

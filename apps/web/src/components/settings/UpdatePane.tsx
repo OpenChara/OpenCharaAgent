@@ -78,6 +78,30 @@ export function UpdatePane() {
   const [checking, setChecking] = useState(false);
   const [applying, setApplying] = useState(false);
   const [done, setDone] = useState(false);
+  // After a successful update: an auto-restart countdown the user can cancel, then a
+  // "restarting…" state while the instance relaunches into the new code and the WS
+  // (auto-)reconnects. null = no countdown running.
+  const [restartIn, setRestartIn] = useState<number | null>(null);
+  const [restarting, setRestarting] = useState(false);
+
+  const triggerRestart = useCallback(() => {
+    setRestartIn(null);
+    setRestarting(true);
+    // Fire-and-forget: the instance re-execs ~1s later, dropping this WS — the board
+    // client auto-reconnects to the new process. A reject just means it already went.
+    hub.call("update.restart", { delay: 1.0 }, 8000).catch(() => {});
+  }, [hub]);
+
+  // Tick the countdown; at 0, restart. Cancel = setRestartIn(null) stops it.
+  useEffect(() => {
+    if (restartIn === null) return;
+    if (restartIn <= 0) {
+      triggerRestart();
+      return;
+    }
+    const id = window.setTimeout(() => setRestartIn((n) => (n === null ? null : n - 1)), 1000);
+    return () => window.clearTimeout(id);
+  }, [restartIn, triggerRestart]);
 
   const load = useCallback(
     (force: boolean) => {
@@ -112,6 +136,7 @@ export function UpdatePane() {
       .then((r) => {
         if (r.ok) {
           setDone(true);
+          setRestartIn(10); // auto-restart into the new code, cancelable
           deckToast(t("upd-done"));
         } else {
           // Auto-update failed — point the user at the by-hand command (always shown below too).
@@ -171,7 +196,21 @@ export function UpdatePane() {
         </div>
       )}
 
-      {done && <div className="upd-note">{t("upd-restart")}</div>}
+      {restarting ? (
+        <div className="upd-note">{t("upd-restarting")}</div>
+      ) : restartIn !== null ? (
+        <div className="upd-banner on upd-restart-bar">
+          <div className="upd-banner-text">
+            <strong>{t("upd-restart-in", { n: restartIn })}</strong>
+          </div>
+          <div className="upd-restart-acts">
+            <button className="btn soft" onClick={() => setRestartIn(null)}>{t("upd-restart-cancel")}</button>
+            <button className="btn primary" onClick={triggerRestart}>{t("upd-restart-now")}</button>
+          </div>
+        </div>
+      ) : (
+        done && <div className="upd-note">{t("upd-restart")}</div>
+      )}
 
       <h3 className="upd-cl-title">{t("upd-changelog")}</h3>
       {status && status.releases.length ? (

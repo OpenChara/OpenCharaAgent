@@ -615,3 +615,41 @@ class Supervisor:
             with contextlib.suppress(Exception):
                 self._shutdown_ctx = snapshot_shutdown_context(signal_num)
         self._shutdown.set()
+
+    # ── self-restart (run the freshly-installed code) ──────────────────────────
+    @staticmethod
+    def _relaunch_argv() -> list[str]:
+        """The command to re-exec this same supervisor. ``sys.executable``'s venv now
+        holds the new code after ``uv tool install --force``; ``-m lunamoth.front.cli``
+        + the original args (``desktop --host … --port … --token …``) relaunch it
+        identically on the same ports."""
+        return [sys.executable, "-m", "lunamoth.front.cli", *sys.argv[1:]]
+
+    async def restart_self(self) -> None:
+        """Relaunch this supervisor IN PLACE (os.execv — same PID, so daemon.json stays
+        valid; same ports, which free up because the listening sockets are close-on-exec)
+        so it runs the just-installed code. Children are stopped first so none orphan; the
+        web clients auto-reconnect to the new instance. Best-effort: a failed exec exits
+        cleanly (the update is on disk) rather than lingering half-torn-down."""
+        _log.info("[RESTART] relaunching supervisor into updated code")
+        with contextlib.suppress(Exception):
+            await self.shutdown()  # children/gateways/pty stopped + httpd closed
+        argv = self._relaunch_argv()
+        try:
+            os.execv(sys.executable, argv)  # never returns on success
+        except OSError as exc:
+            _log.error("[RESTART] execv failed (%s) — the update is installed; "
+                       "restart manually to apply it", exc)
+            os._exit(1)
+
+    def schedule_restart(self, delay: float = 1.0) -> bool:
+        """Schedule restart_self() on the event loop after ``delay`` seconds — gives the
+        triggering RPC response time to flush before the process re-execs. Threadsafe (the
+        HTTP RPC path runs off the loop). Returns False if there's no loop to schedule on."""
+        loop = getattr(self, "loop", None)
+        if loop is None:
+            return False
+        loop.call_soon_threadsafe(
+            lambda: loop.call_later(delay, lambda: asyncio.ensure_future(self.restart_self()))
+        )
+        return True

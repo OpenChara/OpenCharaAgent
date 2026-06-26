@@ -14,6 +14,39 @@ def test_norm_orders_versions():
     assert U._norm("") == (0,)
 
 
+# ---- update.restart RPC: relaunch the resident instance into the new code -------
+
+class _StubSupervisor:
+    def __init__(self):
+        self.scheduled = None
+
+    def schedule_restart(self, delay=1.0):
+        self.scheduled = delay
+        return True
+
+
+def test_update_restart_schedules_on_the_supervisor():
+    from lunamoth.server import hub as H
+    sv = _StubSupervisor()
+    d = H.HubDispatcher(lambda f: True, supervisor=sv)
+    out = d._update_restart({"delay": 0.5})
+    assert out == {"ok": True, "restarting": True}
+    assert sv.scheduled == 0.5  # forwarded to the supervisor's scheduler
+
+
+def test_update_restart_without_supervisor_tells_client_to_do_it_by_hand():
+    from lunamoth.server import hub as H
+    d = H.HubDispatcher(lambda f: True)  # no resident supervisor (e.g. a foreground tui)
+    out = d._update_restart({})
+    assert out["ok"] is False and "manual" in out["error"].lower()
+
+
+def test_relaunch_argv_reruns_the_cli_module():
+    from lunamoth.server.supervisor.core import Supervisor
+    argv = Supervisor._relaunch_argv()
+    assert argv[1:3] == ["-m", "lunamoth.front.cli"]  # re-run the new code on the same args
+
+
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     monkeypatch.setattr(U.S, "lunamoth_home", lambda: tmp_path)

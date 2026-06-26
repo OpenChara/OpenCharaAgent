@@ -693,6 +693,10 @@ export const I18N = {
   "upd-manual": ["或手动更新", "Or update manually"],
   "upd-copy": ["复制", "Copy"],
   "upd-copied": ["已复制", "Copied"],
+  "upd-restart-in": ["更新完成 · {n} 秒后自动重启", "Updated · restarting in {n}s"],
+  "upd-restart-now": ["立即重启", "Restart now"],
+  "upd-restart-cancel": ["稍后", "Later"],
+  "upd-restarting": ["正在重启，重新连接…", "Restarting — reconnecting…"],
 } as const satisfies Record<string, LangPair>;
 
 export type I18nKey = keyof typeof I18N;
