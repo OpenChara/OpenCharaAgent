@@ -18,6 +18,13 @@ const ICONS: Record<Exclude<ViewName, "chat">, ReactNode> = {
       <rect x="5" y="2" width="9" height="12" rx="1.5" />
     </svg>
   ),
+  market: (
+    <svg viewBox="0 0 16 16" fill="currentColor">
+      <path d="M2.5 3h11l-.7 3.2a1.4 1.4 0 0 1-1.37 1.1H4.57A1.4 1.4 0 0 1 3.2 6.2L2.5 3z" opacity=".55" />
+      <path d="M3.4 7.5h9.2V13a1 1 0 0 1-1 1H4.4a1 1 0 0 1-1-1V7.5z" />
+      <circle cx="8" cy="10.5" r="1.1" fill="var(--panel, #fff)" />
+    </svg>
+  ),
   gateways: (
     <svg viewBox="0 0 16 16" fill="currentColor">
       <path d="M4 4h8v3H4z" opacity=".55" />
@@ -42,6 +49,7 @@ const ICONS: Record<Exclude<ViewName, "chat">, ReactNode> = {
 const ITEMS: Array<{ view: Exclude<ViewName, "chat">; key: string; hash: string }> = [
   { view: "board", key: "nav-charas", hash: "#/" },
   { view: "deck", key: "nav-deck", hash: "#/deck" },
+  { view: "market", key: "nav-market", hash: "#/market" },
   { view: "gateways", key: "nav-gateways", hash: "#/gateways" },
   { view: "settings", key: "nav-settings", hash: "#/settings" },
 ];

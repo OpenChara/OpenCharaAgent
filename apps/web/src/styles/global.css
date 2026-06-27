@@ -2264,3 +2264,63 @@ body.dark .gw-qr-box{border-color:var(--hairline)}
 body.dark .chan-badge{background:rgba(255,255,255,.08)}
 body.dark #statusbar{background:var(--bg)}
 body.dark .no-fallback-row{border-color:var(--hairline)}
+
+/* ---- Market section (角色卡市场) ------------------------------------------------ */
+.market-tabs{display:flex; gap:6px}
+.market-tab{
+  padding:6px 14px; font-size:13px; font-weight:550; border-radius:8px;
+  border:1px solid transparent; background:transparent; color:var(--text-2); cursor:pointer;
+}
+.market-tab:hover:not(:disabled){background:var(--accent-soft); color:var(--accent-deep)}
+.market-tab.active{background:var(--accent-soft); color:var(--accent-deep); border-color:var(--accent)}
+.market-tab:disabled{opacity:.5; cursor:default}
+body.dark .market-tab.active{background:rgba(91,159,212,.18)}
+
+.market-body{flex:1; min-height:0; display:flex; flex-direction:column}
+.market-controls{display:flex; align-items:center; gap:10px; padding:4px 28px 6px}
+.market-controls .searchfield{flex:1; max-width:520px}
+.market-nsfw{display:flex; align-items:center; gap:6px; font-size:13px; color:var(--text-2); cursor:pointer; user-select:none}
+.market-nsfw input{accent-color:var(--accent)}
+.market-source-note{padding:0 28px 8px; font-size:11.5px; color:var(--text-3)}
+
+.market-scroll{flex:1; min-height:0; overflow:auto; padding:4px 28px 28px; display:flex; flex-direction:column}
+.market-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:16px}
+.market-card{
+  display:flex; flex-direction:column; border-radius:12px; overflow:hidden;
+  background:var(--panel); border:1px solid var(--hairline);
+}
+.market-card:hover{border-color:var(--accent); box-shadow:0 4px 16px rgba(20,40,60,.08)}
+.market-thumb{position:relative; aspect-ratio:3/4; background:var(--bg); overflow:hidden}
+.market-thumb img{width:100%; height:100%; object-fit:cover; display:block}
+.market-badge{
+  position:absolute; top:6px; font-size:10px; font-weight:650; padding:2px 6px; border-radius:6px;
+  color:#fff; letter-spacing:.3px;
+}
+.market-badge.nsfw{right:6px; background:rgba(200,60,70,.92)}
+.market-badge.lore{left:6px; background:rgba(40,60,80,.78)}
+.market-meta{display:flex; flex-direction:column; gap:4px; padding:10px 12px 12px}
+.market-name{font-weight:650; font-size:14px; line-height:1.25; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.market-author{font-size:11px; color:var(--text-3)}
+.market-tagline{
+  font-size:12px; color:var(--text-2); line-height:1.35; overflow:hidden;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+}
+.market-tags{display:flex; flex-wrap:wrap; gap:4px; margin-top:2px}
+.market-tag{font-size:10.5px; color:var(--text-3); background:var(--bg); border-radius:5px; padding:1px 6px}
+.market-acts{display:flex; align-items:center; gap:8px; margin-top:6px}
+.market-acts .btn{flex:1}
+.market-link{
+  flex:none; width:26px; height:26px; display:flex; align-items:center; justify-content:center;
+  border-radius:7px; color:var(--text-3); text-decoration:none; border:1px solid var(--hairline); font-size:13px;
+}
+.market-link:hover{color:var(--accent-deep); border-color:var(--accent)}
+.market-empty{padding:40px 16px; text-align:center}
+body.dark .market-card{background:#1C2228; border-color:rgba(255,255,255,.10)}
+body.dark .market-tag{background:rgba(255,255,255,.06)}
+body.dark .market-link{border-color:rgba(255,255,255,.12)}
+@media (max-width:760px){
+  .market-controls{padding:8px 14px 6px; flex-wrap:wrap}
+  .market-source-note{padding:0 14px 8px}
+  .market-scroll{padding:4px 14px 22px}
+  .market-grid{grid-template-columns:repeat(2,1fr); gap:12px}
+}

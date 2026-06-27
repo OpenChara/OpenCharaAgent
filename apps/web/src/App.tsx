@@ -9,6 +9,7 @@ import { Login } from "./components/overlays/Login";
 import { BOOT, authInfo } from "./rpc";
 import { Board } from "./views/Board";
 import { Deck } from "./views/Deck";
+import { Market } from "./views/Market";
 import { Gateways } from "./views/Gateways";
 import { Settings } from "./views/Settings";
 import { Chat } from "./views/Chat";
@@ -41,6 +42,7 @@ function Shell() {
         <div className="main">
           {route.view === "board" && <Board />}
           {route.view === "deck" && <Deck />}
+          {route.view === "market" && <Market />}
           {route.view === "gateways" && <Gateways />}
           {route.view === "settings" && <Settings />}
           {route.view === "chat" && route.name && <Chat name={route.name} sub={route.sub} />}

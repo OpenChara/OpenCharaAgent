@@ -4,7 +4,7 @@ import { useSyncExternalStore, useCallback } from "react";
    #/settings, #/chara/<name>(/works|/term)?). Hash routing keeps the server
    free of any SPA-fallback list and survives any mount path. */
 
-export type ViewName = "board" | "deck" | "gateways" | "settings" | "chat";
+export type ViewName = "board" | "deck" | "market" | "gateways" | "settings" | "chat";
 export type ChatSub = "chat" | "works" | "term" | "home";
 
 export interface Route {
@@ -22,7 +22,7 @@ export function parseHash(hash: string): Route {
   }
   const seg = hash.replace(/^#\//, "").split("/")[0];
   const view: ViewName =
-    seg === "deck" || seg === "gateways" || seg === "settings" ? seg : "board";
+    seg === "deck" || seg === "market" || seg === "gateways" || seg === "settings" ? seg : "board";
   return { view, name: null, sub: "chat" };
 }
 

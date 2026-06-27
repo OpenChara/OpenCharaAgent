@@ -23,6 +23,7 @@ from ...session.settings import PRESETS
 from ..dispatch import RpcError, error_response, ok_response, _normalize_request
 from . import avatars as _avatars
 from . import card_draft as _card_draft
+from . import card_market as _card_market
 from . import cards as _cards
 from . import config as _config
 from . import models as _models
@@ -183,6 +184,14 @@ class HubDispatcher:
                 str(p.get("path") or ""), str(p.get("rel") or p.get("name") or "")),
             "card.asset_delete": lambda p: _avatars.asset_delete(str(p.get("path") or ""), str(p.get("kind") or "")),
             "card.avatar_read": lambda p: _avatars.avatar_read(str(p.get("path") or "")),
+            "market.search": lambda p: _card_market.search(
+                str(p.get("query") or ""),
+                limit=int(p.get("limit") or 24),
+                nsfw=bool(p.get("nsfw")),
+            ),
+            "market.import": lambda p: _card_market.import_card(
+                str(p.get("path") or ""), nsfw=bool(p.get("nsfw")),
+            ),
             "cards.list": lambda p: _cards.list_cards(),
             "card.read": self._card_read,
             "card.save": lambda p: _cards.save_card(p.get("data"), path=str(p.get("path") or "")),
