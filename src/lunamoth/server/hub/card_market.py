@@ -100,11 +100,19 @@ def _truncate(text: str, n: int) -> str:
 
 
 def _norm_path(value: Any) -> str:
-    """A card path is `<author>/<slug>`; tolerate a full page URL or stray slashes."""
+    """A card path is `<author>/<slug>`; tolerate a full page URL or stray slashes.
+    Kept RAW (may contain spaces / unicode) — the API path identity. Encode for URLs."""
     p = _s(value)
     if p.startswith("http"):
         p = p.split("/character/", 1)[-1]
     return p.strip("/")
+
+
+def _encode_path(path: str) -> str:
+    """Percent-encode each path segment for a valid URL — card paths can carry spaces
+    or unicode (e.g. `bmboster/Yae Miko`), which would otherwise break the detail fetch
+    (urllib) and the <img> URL. The `/` separators are preserved."""
+    return "/".join(urllib.parse.quote(seg) for seg in path.split("/"))
 
 
 # ---- search --------------------------------------------------------------------
@@ -124,8 +132,8 @@ def _normalize_hit(raw: Any) -> dict[str, Any] | None:
         "tags": _arr(raw.get("tags"))[:12],
         "nsfw": raw.get("isNSFW") is True,
         "hasLorebook": raw.get("hasLorebook") is True,
-        "imageUrl": f"{_IMAGE_BASE}/{path}.png",
-        "pageUrl": f"{_PAGE_BASE}/{path}",
+        "imageUrl": f"{_IMAGE_BASE}/{_encode_path(path)}.png",
+        "pageUrl": f"{_PAGE_BASE}/{_encode_path(path)}",
         "excerpt": _truncate(_s(raw.get("characterFirstMessage")) or _s(raw.get("pageDescription")), 240),
     }
 
@@ -192,10 +200,10 @@ def _map_to_card(detail: dict[str, Any]) -> dict[str, Any]:
         # provenance — we proxy/link, never claim authorship.
         "source": "character_tavern",
         "source_path": path,
-        "source_url": f"{_PAGE_BASE}/{path}" if path else "",
+        "source_url": f"{_PAGE_BASE}/{_encode_path(path)}" if path else "",
         # the cover URL, preserved so the UI can show it browser-side even if the
         # server can't download the bytes (the CDN hotlink-protects server fetches).
-        "source_image": f"{_IMAGE_BASE}/{path}.png" if path else "",
+        "source_image": f"{_IMAGE_BASE}/{_encode_path(path)}.png" if path else "",
     }
     if tagline:
         ext["tagline"] = tagline
@@ -280,7 +288,7 @@ def import_card(path: str, *, nsfw: bool = False) -> dict[str, Any]:
     p = _norm_path(path)
     if not p:
         raise HubRpcError(-32602, "a card path is required", {"kind": "market"})
-    payload = _get_json(f"{_DETAIL_ENDPOINT}/{p}")
+    payload = _get_json(f"{_DETAIL_ENDPOINT}/{_encode_path(p)}")
     detail = payload.get("card") if isinstance(payload.get("card"), dict) else payload
     has_identity = isinstance(detail, dict) and (
         _s(detail.get("name")) or _s(detail.get("inChatName")) or _s(detail.get("definition_character_description"))
@@ -292,5 +300,5 @@ def import_card(path: str, *, nsfw: bool = False) -> dict[str, Any]:
     card = _map_to_card(detail)
     saved = _cards.save_card(card)  # writes into the user deck, returns {"path": ...}
     card_path = str(saved.get("path") or "")
-    cover = _attach_cover(card_path, f"{_IMAGE_BASE}/{p}.png") if card_path else False
+    cover = _attach_cover(card_path, f"{_IMAGE_BASE}/{_encode_path(p)}.png") if card_path else False
     return {"path": card_path, "name": card["name"], "cover": cover, "source_path": p}

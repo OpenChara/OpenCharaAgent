@@ -49,6 +49,25 @@ def test_search_blank_query_errors():
         M.search("   ")
 
 
+def test_paths_with_spaces_are_url_encoded(monkeypatch):
+    # card paths can carry spaces/unicode (e.g. "bmboster/Yae Miko") — the <img> and
+    # detail URLs must be encoded, but the stored source_path stays raw (the identity).
+    monkeypatch.setattr(M, "_get_json", lambda url: {"hits": [
+        {"path": "bmboster/Yae Miko", "name": "Yae"}]})
+    hit = M.search("yae")["candidates"][0]
+    assert hit["imageUrl"] == "https://cards.character-tavern.com/bmboster/Yae%20Miko.png"
+    assert hit["pageUrl"].endswith("/character/bmboster/Yae%20Miko")
+    assert hit["path"] == "bmboster/Yae Miko"  # raw identity preserved
+
+    seen = {}
+    monkeypatch.setattr(M, "_get_json", lambda url: seen.update(url=url) or {
+        "card": {"path": "bmboster/Yae Miko", "name": "Yae", "definition_character_description": "x"}})
+    monkeypatch.setattr(M._cards, "save_card", lambda card: {"path": "/deck/yae.json"})
+    monkeypatch.setattr(M, "_request", lambda url, headers=None: b"")
+    M.import_card("bmboster/Yae Miko")
+    assert seen["url"].endswith("/api/character/bmboster/Yae%20Miko")  # detail fetch encoded
+
+
 # ---- import mapping (the compatibility core) -----------------------------------
 
 # The REAL /api/character shape: persona rides flat `definition_*` fields at the TOP
