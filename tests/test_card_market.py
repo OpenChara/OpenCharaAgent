@@ -63,7 +63,6 @@ def test_paths_with_spaces_are_url_encoded(monkeypatch):
     monkeypatch.setattr(M, "_get_json", lambda url: seen.update(url=url) or {
         "card": {"path": "bmboster/Yae Miko", "name": "Yae", "definition_character_description": "x"}})
     monkeypatch.setattr(M._cards, "save_card", lambda card: {"path": "/deck/yae.json"})
-    monkeypatch.setattr(M, "_request", lambda url, headers=None: b"")
     M.import_card("bmboster/Yae Miko")
     assert seen["url"].endswith("/api/character/bmboster/Yae%20Miko")  # detail fetch encoded
 
@@ -91,21 +90,20 @@ _DETAIL = {
 }
 
 
-def _import(monkeypatch, detail=_DETAIL, cover=b"\x89PNG\r\n\x1a\nrest"):
+def _import(monkeypatch, detail=_DETAIL):
     saved = {}
     monkeypatch.setattr(M, "_get_json", lambda url: detail)
-    monkeypatch.setattr(M, "_request", lambda url, headers=None: cover)
     monkeypatch.setattr(M._cards, "save_card", lambda card: saved.update(card=card) or {"path": "/deck/witch.json"})
-    calls = []
-    monkeypatch.setattr(M._avatars, "asset_save", lambda *a, **k: calls.append(("asset_save", a)))
-    monkeypatch.setattr(M._avatars, "avatar_upload", lambda *a, **k: calls.append(("avatar_upload", a)))
     res = M.import_card("amy/witch")
-    return res, saved.get("card"), calls
+    return res, saved.get("card")
 
 
 def test_import_maps_fields_and_keeps_macros(monkeypatch):
-    res, card, _ = _import(monkeypatch)
+    res, card = _import(monkeypatch)
     assert res["path"] == "/deck/witch.json" and res["name"] == "Elspeth"
+    # the cover URL is surfaced so the CLIENT can bring the image over (the server
+    # can't — the CDN hotlink-protects non-browser fetches).
+    assert res["image_url"] == "https://cards.character-tavern.com/amy/witch.png"
     d = card["data"]
     assert d["name"] == "Elspeth"  # inChatName wins
     assert d["description"].count("{{char}}") == 1 and d["first_mes"].count("{{user}}") == 1  # macros intact
@@ -114,27 +112,14 @@ def test_import_maps_fields_and_keeps_macros(monkeypatch):
     assert d["alternate_greetings"] == ["A second door creaks open."]
 
 
-def test_import_omits_polaris_and_always_sets_theme(monkeypatch):
-    _, card, _ = _import(monkeypatch)
+def test_import_omits_polaris_sets_theme_and_keeps_cover_url(monkeypatch):
+    _, card = _import(monkeypatch)
     ext = card["data"]["extensions"]["lunamoth"]
     assert "polaris" not in ext  # 理想 is the user's — never imported, and absent is safe
     assert ext["theme"]["primary"].startswith("#") and len(ext["theme"]["primary"]) == 7  # always present
     assert ext["source"] == "character_tavern" and ext["source_path"] == "amy/witch"
-
-
-def test_import_attaches_cover_as_keyvisual_and_avatar(monkeypatch):
-    res, _, calls = _import(monkeypatch)
-    kinds = [c[0] for c in calls]
-    assert "asset_save" in kinds and "avatar_upload" in kinds and res["cover"] is True
-    # keyvisual kind passed through
-    assert any(c[0] == "asset_save" and c[1][1] == "keyvisual" for c in calls)
-
-
-def test_import_survives_a_missing_cover(monkeypatch):
-    # a non-PNG / failed image must NOT abort the import — the card still lands
-    res, card, calls = _import(monkeypatch, cover=b"<html>not an image</html>")
-    assert res["path"] == "/deck/witch.json" and res["cover"] is False
-    assert calls == []  # nothing attached, but no raise
+    # the cover URL is preserved on the card too (client display / future fallback)
+    assert ext["source_image"] == "https://cards.character-tavern.com/amy/witch.png"
 
 
 def test_import_nsfw_gate(monkeypatch):
@@ -144,7 +129,6 @@ def test_import_nsfw_gate(monkeypatch):
         M.import_card("amy/witch")  # default nsfw=False → refused
     # explicit opt-in imports it
     monkeypatch.setattr(M._cards, "save_card", lambda card: {"path": "/deck/x.json"})
-    monkeypatch.setattr(M, "_request", lambda url, headers=None: b"")
     assert M.import_card("amy/witch", nsfw=True)["path"] == "/deck/x.json"
 
 

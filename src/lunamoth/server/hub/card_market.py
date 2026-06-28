@@ -20,7 +20,6 @@ The card's cover art is attached as the keyvisual anchor + avatar, best-effort.
 """
 from __future__ import annotations
 
-import base64
 import colorsys
 import hashlib
 import json
@@ -30,7 +29,6 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from . import avatars as _avatars
 from . import cards as _cards
 from ._common import HubRpcError
 
@@ -48,17 +46,13 @@ _MAX_LIMIT = 40
 _TIMEOUT_S = 15.0
 _NSFW_EXCLUDES = ("nsfw", "explicit", "smut", "porn")
 _UA = "lunamoth-card-market/1.0 (+https://lunamoth.ai)"
-# The image CDN hotlink-protects (403) against non-browser requests; the cover fetch
-# sends a browser-like UA + Referer (see _attach_cover).
-_BROWSER_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-               "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 _DEFAULT_THEME_PRIMARY = "#5B9FD4"  # deck signature blue — the ultimate fallback
 
 
 # ---- HTTP (stdlib; the hub already does outbound HTTP for model calls) ----------
 
-def _request(url: str, headers: dict[str, str] | None = None) -> bytes:
-    req = urllib.request.Request(url, headers=headers or {"User-Agent": _UA, "Accept": "*/*"})
+def _request(url: str) -> bytes:
+    req = urllib.request.Request(url, headers={"User-Agent": _UA, "Accept": "*/*"})
     try:
         with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
             return resp.read()
@@ -232,59 +226,16 @@ def _map_to_card(detail: dict[str, Any]) -> dict[str, Any]:
     return {"version": "1.0", "name": name, "data": data}
 
 
-def _detect_image_ext(raw: bytes) -> str | None:
-    """The real image format from magic bytes (the URL ext lies — a CDN may serve webp).
-    Returns an ext our asset writers accept, or None (skip rather than store garbage)."""
-    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "png"
-    if raw.startswith(b"\xff\xd8\xff"):
-        return "jpg"
-    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
-        return "webp"
-    return None
-
-
-def _attach_cover(card_path: str, image_url: str) -> bool:
-    """Best-effort: download the card cover and set it as the keyvisual anchor + avatar.
-    The card is the deliverable; a missing/failed image never fails the import — the user
-    can upload or generate visuals afterward (the keyvisual pipeline ref-chains from it).
-
-    Browser-like headers (UA + Referer) are required: character-tavern's image CDN
-    hotlink-protects with a 403 against a bare/non-browser request."""
-    headers = {
-        "User-Agent": _BROWSER_UA,
-        "Accept": "image/avif,image/webp,image/png,image/*,*/*;q=0.8",
-        "Referer": "https://character-tavern.com/",
-    }
-    try:
-        raw = _request(image_url, headers=headers)
-    except HubRpcError as e:
-        _log.warning("market import: cover fetch failed for %s — %s", image_url, e)
-        return False
-    ext = _detect_image_ext(raw or b"")
-    if ext is None:
-        _log.warning("market import: cover for %s is not a usable image (%d bytes, head=%r)",
-                     image_url, len(raw or b""), (raw or b"")[:16])
-        return False
-    b64 = base64.b64encode(raw).decode("ascii")
-    ok = False
-    # keyvisual (the identity anchor) accepts png/jpg/webp; avatar accepts png/jpg only.
-    targets = [("keyvisual", lambda: _avatars.asset_save(card_path, "keyvisual", b64, ext))]
-    if ext in ("png", "jpg"):
-        targets.append(("avatar", lambda: _avatars.avatar_upload(card_path, b64, ext)))
-    for what, fn in targets:
-        try:
-            fn()
-            ok = True
-        except Exception:  # noqa: BLE001 - one asset failing must not abort the other / the import
-            _log.warning("market import: attaching cover (%s) to %s failed", what, card_path, exc_info=True)
-    return ok
-
-
 def import_card(path: str, *, nsfw: bool = False) -> dict[str, Any]:
-    """Fetch a card's full definition, write it into the user deck, and best-effort attach
-    its cover as the keyvisual + avatar. Returns the new deck card path. The imported card
-    lands UNLOCKED (a template) — the user reviews/edits it and wakes it like any deck card."""
+    """Fetch a card's full definition and write it into the user deck. Returns the new deck
+    card path + the cover URL. The imported card lands UNLOCKED (a template) — the user
+    reviews/edits it and wakes it like any deck card.
+
+    The COVER is brought over CLIENT-SIDE, not here: character-tavern's image CDN
+    hotlink-protects against non-browser fetches (a datacenter-hosted hub gets 403), so
+    the only reliable "real client" is the user's browser. The web client fetches the
+    cover and uploads it via card.asset_save/card.avatar_upload after this returns. We
+    surface `image_url` so it can; the card also stores it (extensions.source_image)."""
     p = _norm_path(path)
     if not p:
         raise HubRpcError(-32602, "a card path is required", {"kind": "market"})
@@ -300,5 +251,5 @@ def import_card(path: str, *, nsfw: bool = False) -> dict[str, Any]:
     card = _map_to_card(detail)
     saved = _cards.save_card(card)  # writes into the user deck, returns {"path": ...}
     card_path = str(saved.get("path") or "")
-    cover = _attach_cover(card_path, f"{_IMAGE_BASE}/{_encode_path(p)}.png") if card_path else False
-    return {"path": card_path, "name": card["name"], "cover": cover, "source_path": p}
+    image_url = f"{_IMAGE_BASE}/{_encode_path(p)}.png"
+    return {"path": card_path, "name": card["name"], "image_url": image_url, "source_path": p}

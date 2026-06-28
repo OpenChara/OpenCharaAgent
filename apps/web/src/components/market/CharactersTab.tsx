@@ -10,8 +10,37 @@ import { useCallback, useRef, useState } from "react";
 import { useT } from "../../i18n";
 import { useHub } from "../../state/hub";
 import { rpcErrText } from "../../lib/status";
+import { fileToB64 } from "../../lib/file";
 import { deckToast } from "../ui/deckToast";
 import { BrandLoader } from "../ui/BrandLoader";
+
+type HubCaller = { call<T = unknown>(m: string, p?: Record<string, unknown>, t?: number): Promise<T> };
+const MIME_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
+
+/** Bring a card's cover over CLIENT-SIDE: the browser fetches the CDN image (it's the
+ *  reliable real client — the hub gets 403'd by hotlink protection) and uploads the
+ *  bytes to the deck card as the keyvisual anchor + avatar. Best-effort: a CORS block /
+ *  offline just leaves the monogram (the card still stores the cover URL). */
+async function bringCoverOver(hub: HubCaller, cardPath: string, imageUrl: string): Promise<void> {
+  let blob: Blob;
+  try {
+    const r = await fetch(imageUrl, { credentials: "omit" });
+    if (!r.ok) return;
+    blob = await r.blob();
+  } catch {
+    return; // CORS / network — graceful
+  }
+  const ext = MIME_EXT[blob.type];
+  if (!ext) return;
+  const b64 = await fileToB64(new File([blob], "cover", { type: blob.type }));
+  if (!b64) return;
+  try {
+    await hub.call("card.asset_save", { path: cardPath, kind: "keyvisual", data_b64: b64, ext }, 30000);
+    if (ext !== "webp") await hub.call("card.avatar_upload", { path: cardPath, data_b64: b64, ext }, 30000);
+  } catch {
+    /* best-effort — the keyvisual may have landed even if the avatar didn't */
+  }
+}
 
 interface MarketCard {
   path: string;
@@ -75,7 +104,12 @@ export function CharactersTab() {
     async (c: MarketCard) => {
       mark(setImporting, c.path, true);
       try {
-        const res = await hub.call<{ name?: string }>("market.import", { path: c.path, nsfw }, 40000);
+        const res = await hub.call<{ path?: string; name?: string; image_url?: string }>(
+          "market.import", { path: c.path, nsfw }, 40000);
+        // Bring the cover over HERE, in the browser — the only reliable "real client"
+        // for the CDN (the hub gets 403'd by hotlink protection). Best-effort: if it
+        // can't (CORS / offline), the card keeps its monogram + stored cover URL.
+        if (res?.path) await bringCoverOver(hub, res.path, res.image_url || c.imageUrl);
         mark(setImported, c.path, true);
         deckToast(t("market-added", { name: res?.name || c.name }));
         await refresh(); // so the deck shows it immediately when the user switches over

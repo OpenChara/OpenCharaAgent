@@ -154,6 +154,12 @@ def _card_entry(path: Path, builtin: bool, refs: dict[str, list[str]]) -> dict[s
         theme_color = theme.get("primary", "")
         avatar_svg = _sanitize_avatar_svg(ext.get("avatar_svg"))[0]
         tagline = str(ext.get("tagline") or "")
+        # A market-imported card whose cover bytes weren't copied locally (e.g. the
+        # client-side fetch was CORS-blocked) still shows its cover: fall the small
+        # avatar back to the stored remote URL, which the card face <img> loads
+        # browser-side. A real local avatar (if the copy succeeded) always wins.
+        if not avatar_uri and str(ext.get("source_image") or ""):
+            avatar_uri = str(ext["source_image"])
         # The card FIELD is a boolean; bridge a legacy `embodiment: "actor"` too.
         force_roleplay = normalize_force_roleplay(ext.get("force_roleplay"))
         if force_roleplay is None and str(ext.get("embodiment") or "").lower() == "actor":
