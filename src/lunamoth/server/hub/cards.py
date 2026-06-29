@@ -7,6 +7,8 @@ in ``card_draft.py``; avatar/art-asset I/O lives in ``avatars.py``.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 import os
@@ -16,11 +18,19 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ...content.cards import CharacterCard, detect_language, looks_like_world_book, merge_world_into_card
+from ...content.cards import (
+    CharacterCard,
+    card_json_from_png_bytes,
+    detect_language,
+    looks_like_world_book,
+    merge_world_into_card,
+    normalize_character_book,
+)
 from ...content.knobs import normalize_force_roleplay
 from ...session import sessions as S
 from ..dispatch import RpcError
 from ._common import (
+    HubRpcError,
     _asset_url,
     _atomic_write_json,
     _clean_theme,
@@ -29,8 +39,9 @@ from ._common import (
     _writable_card_path,
     is_managed_sidecar_name,
     locked_card_write,
+    seeded_theme,
 )
-from .avatars import _avatar_thumb_uri
+from .avatars import _avatar_thumb_uri, asset_save
 from .config import bundled_cards_dir, user_cards_dir, user_worlds_dir
 
 _log = logging.getLogger("lunamoth.server.hub")
@@ -150,20 +161,22 @@ def _card_entry(path: Path, builtin: bool, refs: dict[str, list[str]]) -> dict[s
     force_roleplay: bool | None = None
     theme = card.theme_colors()
     avatar_uri = _avatar_thumb_uri(path, card)
+    source_image = ""
     if isinstance(ext, dict):
         theme_color = theme.get("primary", "")
         avatar_svg = _sanitize_avatar_svg(ext.get("avatar_svg"))[0]
         tagline = str(ext.get("tagline") or "")
-        # A market-imported card whose cover bytes weren't copied locally (e.g. the
-        # client-side fetch was CORS-blocked) still shows its cover: fall the small
-        # avatar back to the stored remote URL, which the card face <img> loads
-        # browser-side. A real local avatar (if the copy succeeded) always wins.
-        if not avatar_uri and str(ext.get("source_image") or ""):
-            avatar_uri = str(ext["source_image"])
+        # An imported card's source art is the character's 立绘/参考图 (sprite/keyvisual),
+        # NEVER its avatar. When the bytes were copied locally (PNG drop, or a CORS-OK
+        # market fetch) the real sprite/keyvisual win; only when no local sprite exists
+        # (e.g. a CORS-blocked market fetch left just the remote cover URL) does this URL
+        # fall back into sprite_url so the card face still shows the art browser-side.
+        source_image = str(ext.get("source_image") or "")
         # The card FIELD is a boolean; bridge a legacy `embodiment: "actor"` too.
         force_roleplay = normalize_force_roleplay(ext.get("force_roleplay"))
         if force_roleplay is None and str(ext.get("embodiment") or "").lower() == "actor":
             force_roleplay = True
+    sprite_url = _asset_url(card.asset_path("sprite")) or (source_image or None)
     used_by = refs.get(str(path), [])
     full_tags = [str(t) for t in (card.tags or [])]
     # The default-card marker must survive display truncation: the deck/welcome
@@ -188,7 +201,7 @@ def _card_entry(path: Path, builtin: bool, refs: dict[str, list[str]]) -> dict[s
         "theme": {"primary": theme.get("primary", ""), "secondary": theme.get("secondary", "")},
         "avatar_svg": avatar_svg,
         "avatar_uri": avatar_uri,
-        "sprite_url": _asset_url(card.asset_path("sprite")),
+        "sprite_url": sprite_url,
         "bg_url": _asset_url(card.asset_path("background")),
         "keyvisual_url": _asset_url(card.asset_path("keyvisual")),
         "stickers_urls": [u for u in (_asset_url(p) for p in card.sticker_paths()) if u],
@@ -279,6 +292,135 @@ def save_card(data: dict[str, Any], path: str = "") -> dict[str, Any]:
     _sanitize_card_extensions(data)
     _atomic_write_json(target, data)
     return {"path": str(target)}
+
+
+# ---- faithful import of a pasted foreign card (no model call) ------------------
+# A pasted SillyTavern card carries its persona under `data` (V2/V3) or flat (V1);
+# character-tavern's API card carries it under flat `definition_*` fields. One getter
+# reads all three so the import preserves the real text verbatim ({{char}}/{{user}}
+# macros intact), instead of routing through the AI draft (which rewrites everything).
+_FOREIGN_DEF_MAP = {
+    "description": "definition_character_description",
+    "personality": "definition_personality",
+    "scenario": "definition_scenario",
+    "first_mes": "definition_first_message",
+    "mes_example": "definition_example_messages",
+    "system_prompt": "definition_system_prompt",
+    "post_history_instructions": "definition_post_history_prompt",
+}
+
+
+def _foreign_to_card(obj: dict[str, Any]) -> dict[str, Any]:
+    """Map a parsed foreign card onto our V3 card object. Handles the ST V2/V3 `data`
+    block, a V1 flat card, and character-tavern's flat `definition_*` API shape. Our own
+    extensions are filled tolerantly: an absent 理想/aspiration stays absent (never
+    imported — it's the user's), a missing theme color is derived deterministically, and
+    asset POINTERS (avatar_file / assets — sidecar files a pasted JSON can't carry) are
+    dropped so they don't dangle. An inline avatar SVG, if present, is kept."""
+    src = obj.get("data") if isinstance(obj.get("data"), dict) else obj
+
+    def field(key: str) -> str:
+        v = src.get(key)
+        if (not isinstance(v, str) or not v.strip()) and key in _FOREIGN_DEF_MAP:
+            v = src.get(_FOREIGN_DEF_MAP[key])
+        return v.strip() if isinstance(v, str) else ""
+
+    def arr(value: Any, cap: int) -> list[str]:
+        return [x.strip() for x in value if isinstance(x, str) and x.strip()][:cap] if isinstance(value, list) else []
+
+    # inChatName wins (character-tavern's in-chat display name), then name — matching
+    # the market mapper so the same card imports under the same name by either path.
+    name = str(src.get("inChatName") or src.get("name") or obj.get("name") or "").strip()
+    description, personality, first_mes = field("description"), field("personality"), field("first_mes")
+    if not name:
+        raise RpcError(-32602, "this doesn't look like a character card (it has no name)")
+    if not (description or personality or first_mes or field("scenario")):
+        raise RpcError(-32602, "this doesn't look like a character card (no persona, greeting, or scenario)")
+
+    # Start from the card's own lunamoth extensions (so re-importing a LunaMoth card keeps
+    # its portable behavior config — force_roleplay, website, user_persona, prompt hooks),
+    # then strip the keys that can't or shouldn't travel with a pasted JSON.
+    se = src.get("extensions")
+    ext_in = se.get("lunamoth") if isinstance(se, dict) and isinstance(se.get("lunamoth"), dict) else {}
+    lm: dict[str, Any] = dict(ext_in)
+    for k in ("avatar_file", "assets", "polaris", "draft", "visual_brief",
+              "source_image", "source_path", "source_url"):
+        lm.pop(k, None)
+    theme = _clean_theme(lm.get("theme"), lm.get("theme_color"))
+    lm["theme"] = theme or seeded_theme(name)  # always a valid primary (deck-crash guard)
+    lm.pop("theme_color", None)
+    lm["source"] = "import"  # provenance — a pasted card, not authored here
+
+    data: dict[str, Any] = {
+        "name": name,
+        "description": description,
+        "personality": personality,
+        "scenario": field("scenario"),
+        "first_mes": first_mes,
+        "mes_example": field("mes_example"),
+        "system_prompt": field("system_prompt"),
+        "post_history_instructions": field("post_history_instructions"),
+        "alternate_greetings": arr(src.get("alternate_greetings"), 8),
+        "creator_notes": str(src.get("creator_notes") or "").strip(),
+        "creator": str(src.get("creator") or "").strip(),
+        "character_version": str(src.get("character_version") or "1.0").strip() or "1.0",
+        "tags": arr(src.get("tags"), 24),
+        "extensions": {"lunamoth": lm},
+    }
+    book = normalize_character_book(src.get("character_book"))
+    if book is not None:
+        data["character_book"] = book
+    return {"version": "1.0", "name": name, "data": data}
+
+
+def _attach_png_art(card_path: str, raw_png: bytes) -> None:
+    """Bring a dragged-in card PNG's portrait over as the character's ART — the keyvisual
+    (参考图, the identity anchor reused as a reference for later generation) AND the sprite
+    (立绘). NOT the avatar: a tavern portrait is the character's reference art, while the
+    avatar (and stickers / background) are left for the user to generate. Best-effort —
+    a failure just leaves the card art-less, the card itself already imported."""
+    try:
+        b64 = base64.b64encode(raw_png).decode("ascii")
+        asset_save(card_path, "keyvisual", b64, "png")
+        asset_save(card_path, "sprite", b64, "png")
+    except Exception:  # noqa: BLE001 — the art is a bonus, never fatal to the import
+        _log.warning("could not attach the PNG portrait as art for %s", card_path, exc_info=True)
+
+
+def import_foreign_card(text: str = "", png_b64: str = "") -> dict[str, Any]:
+    """Faithfully import a foreign character card into the user deck — NO model call: the
+    persona, greeting, and lorebook are preserved verbatim. Accepts either a JSON card
+    (`text` — SillyTavern V2/V3, a V1 flat card, or a character-tavern API card) OR a
+    SillyTavern PNG card (`png_b64` — the classic format, card embedded in the portrait),
+    in which case the portrait is also brought over as the avatar. Returns {path, name}.
+    The card lands UNLOCKED (a deck template) like any create."""
+    png_b64 = str(png_b64 or "").strip()
+    raw_png = b""
+    if png_b64:
+        try:
+            raw_png = base64.b64decode(png_b64, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise HubRpcError(-32050, f"that isn't valid image data ({exc})", {"kind": "import_png"}) from exc
+        try:
+            obj = card_json_from_png_bytes(raw_png)
+        except (ValueError, json.JSONDecodeError) as exc:
+            raise HubRpcError(-32050, f"no character card is embedded in that PNG ({exc})",
+                              {"kind": "import_png"}) from exc
+    else:
+        raw = str(text or "").strip()
+        if not raw:
+            raise RpcError(-32602, "paste a character-card JSON, or drop a card file, to import")
+        try:
+            obj = json.loads(raw)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise HubRpcError(-32050, f"that isn't valid JSON ({exc})", {"kind": "import_json"}) from exc
+    if not isinstance(obj, dict):
+        raise RpcError(-32602, "a character card is a JSON object")
+    card = _foreign_to_card(obj)
+    saved = save_card(card)  # deck-write + sanitize; returns {"path": ...}
+    if raw_png:
+        _attach_png_art(saved["path"], raw_png)  # the portrait → keyvisual + sprite (bonus)
+    return {"path": saved["path"], "name": card["name"]}
 
 
 def _deep_patch(base: Any, over: Any) -> Any:

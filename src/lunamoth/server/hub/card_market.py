@@ -20,8 +20,6 @@ The card's cover art is attached as the keyvisual anchor + avatar, best-effort.
 """
 from __future__ import annotations
 
-import colorsys
-import hashlib
 import json
 import logging
 import urllib.error
@@ -29,8 +27,9 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+from ...content.cards import normalize_character_book
 from . import cards as _cards
-from ._common import HubRpcError
+from ._common import SEEDED_THEME_DEFAULT, HubRpcError, seeded_theme
 
 _log = logging.getLogger("lunamoth.server.hub.card_market")
 
@@ -38,15 +37,24 @@ _log = logging.getLogger("lunamoth.server.hub.card_market")
 # proxy fronts). Overridable for a mirror / self-hosted ST instance.
 _SEARCH_ENDPOINT = "https://character-tavern.com/api/search/cards"
 _DETAIL_ENDPOINT = "https://character-tavern.com/api/character"
-_IMAGE_BASE = "https://cards.character-tavern.com"
+# The cover host is the STORAGE CDN (serves any client, supports on-the-fly resize via
+# ?width/quality/format) — NOT cards.character-tavern.com, which hotlink-403s everyone.
+_IMAGE_BASE = "https://ct-cards.storage.character-tavern.com"
 _PAGE_BASE = "https://character-tavern.com/character"
 
 _DEFAULT_LIMIT = 24
-_MAX_LIMIT = 40
+_MAX_LIMIT = 48
 _TIMEOUT_S = 15.0
 _NSFW_EXCLUDES = ("nsfw", "explicit", "smut", "porn")
+# The upstream honours these distinct sorts; everything else aliases to most_popular.
+_VALID_SORTS = ("most_popular", "trending", "newest")
+_THUMB_WIDTH = 400   # grid card cover (resized → ~10% of raw bytes)
+_PREVIEW_WIDTH = 640  # detail-view cover
 _UA = "lunamoth-card-market/1.0 (+https://lunamoth.ai)"
-_DEFAULT_THEME_PRIMARY = "#5B9FD4"  # deck signature blue — the ultimate fallback
+# Deterministic per-card theme lives in _common (shared with the paste-import path);
+# alias the names this module + its tests use.
+_DEFAULT_THEME_PRIMARY = SEEDED_THEME_DEFAULT
+_seeded_theme = seeded_theme
 
 
 # ---- HTTP (stdlib; the hub already does outbound HTTP for model calls) ----------
@@ -114,10 +122,28 @@ def _encode_path(path: str) -> str:
     return "/".join(urllib.parse.quote(seg) for seg in path.split("/"))
 
 
+def _int(v: Any) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _image_url(path: str, *, width: int = 0) -> str:
+    """A card's cover on the storage CDN. With `width` it's a resized/auto-format thumb
+    (small, fast); without, the full-res original (used as the imported sprite source)."""
+    if not path:
+        return ""
+    base = f"{_IMAGE_BASE}/{_encode_path(path)}.png"
+    return f"{base}?width={width}&quality=82&format=auto" if width else base
+
+
 # ---- search --------------------------------------------------------------------
 
 def _normalize_hit(raw: Any) -> dict[str, Any] | None:
-    """One search hit → a lightweight row for the grid (no full definition)."""
+    """One search hit → a row for the grid (no full definition; the persona is fetched
+    on demand by `detail`). Carries the ranking signals the upstream exposes so the grid
+    can show download/like badges."""
     if not isinstance(raw, dict):
         return None
     path = _norm_path(raw.get("path"))
@@ -125,26 +151,46 @@ def _normalize_hit(raw: Any) -> dict[str, Any] | None:
         return None
     return {
         "path": path,
-        "name": _s(raw.get("name")),
+        "name": _s(raw.get("inChatName")) or _s(raw.get("name")),
         "tagline": _s(raw.get("tagline")),
         "author": _s(raw.get("author")),
         "tags": _arr(raw.get("tags"))[:12],
         "nsfw": raw.get("isNSFW") is True,
         "hasLorebook": raw.get("hasLorebook") is True,
-        "imageUrl": f"{_IMAGE_BASE}/{_encode_path(path)}.png",
+        "oc": raw.get("isOC") is True,
+        "downloads": _int(raw.get("downloads")),
+        "likes": _int(raw.get("likes")),
+        "messages": _int(raw.get("messages")),
+        "imageUrl": _image_url(path, width=_THUMB_WIDTH),
         "pageUrl": f"{_PAGE_BASE}/{_encode_path(path)}",
         "excerpt": _truncate(_s(raw.get("characterFirstMessage")) or _s(raw.get("pageDescription")), 240),
     }
 
 
-def search(query: str, *, limit: int = _DEFAULT_LIMIT, nsfw: bool = False) -> dict[str, Any]:
-    """Search the open card catalog. Returns lightweight rows; import fetches the full
-    definition on demand. A blank query is an explicit error (no point hitting upstream)."""
+def search(query: str = "", *, sort: str = "most_popular", limit: int = _DEFAULT_LIMIT,
+           page: int = 1, nsfw: bool = False, tags: Any = None,
+           oc: bool = False, lorebook: bool = False) -> dict[str, Any]:
+    """Browse / search the open card catalog. The query is OPTIONAL — an empty query with
+    a sort is the default browse (the popularity ranking / trending / newest), so the
+    market opens to real content, not a blank box. Filters: `tags` (one or more), `oc`
+    (original characters), `lorebook` (carries a world book), `nsfw` (default excludes it).
+    Paged via `page`/`totalPages`. Returns grid rows; `detail` fetches a card's persona."""
     q = _s(query)
-    if not q:
-        raise HubRpcError(-32602, "a search query is required", {"kind": "market"})
+    sort = sort if sort in _VALID_SORTS else "most_popular"
     n = max(1, min(_MAX_LIMIT, int(limit or _DEFAULT_LIMIT)))
-    params = [("query", q), ("sort", "most_popular"), ("limit", str(n))]
+    pg = max(1, _int(page) or 1)
+    params: list[tuple[str, str]] = [("sort", sort), ("limit", str(n)), ("page", str(pg))]
+    if q:
+        params.append(("query", q))
+    tag_list = [tags] if isinstance(tags, str) else (tags if isinstance(tags, list) else [])
+    # multiple tags AND via ONE comma-joined param (repeated `tags=` only honours the first).
+    tags_joined = ",".join(t for t in (_s(x) for x in tag_list) if t)
+    if tags_joined:
+        params.append(("tags", tags_joined))
+    if oc:
+        params.append(("isOC", "true"))
+    if lorebook:
+        params.append(("hasLorebook", "true"))
     if not nsfw:
         params.append(("exclude_tags", ",".join(_NSFW_EXCLUDES)))
     url = f"{_SEARCH_ENDPOINT}?{urllib.parse.urlencode(params)}"
@@ -154,28 +200,48 @@ def search(query: str, *, limit: int = _DEFAULT_LIMIT, nsfw: bool = False) -> di
     total = payload.get("totalHits")
     return {
         "query": q,
+        "sort": sort,
+        "page": pg,
+        "totalPages": max(1, _int(payload.get("totalPages")) or 1),
         "candidates": candidates,
         "totalHits": int(total) if isinstance(total, (int, float)) else len(candidates),
     }
 
 
-# ---- theme derivation (deterministic per card, never primary-less) --------------
-
-def _seeded_theme(seed: str) -> dict[str, str]:
-    """A stable, pleasant {primary, secondary} derived from the card identity, so an
-    imported card (which carries no theme) still gets a distinct, valid color — not the
-    same flat blue for every import, and never a missing primary."""
-    if not seed:
-        return {"primary": _DEFAULT_THEME_PRIMARY, "secondary": ""}
-    h = int(hashlib.sha1(seed.encode("utf-8")).hexdigest(), 16)
-    hue = (h % 360) / 360.0
-    primary = _hex(colorsys.hls_to_rgb(hue, 0.60, 0.55))
-    secondary = _hex(colorsys.hls_to_rgb((hue + 35 / 360.0) % 1.0, 0.55, 0.50))
-    return {"primary": primary, "secondary": secondary}
-
-
-def _hex(rgb: tuple[float, float, float]) -> str:
-    return "#" + "".join(f"{max(0, min(255, round(c * 255))):02X}" for c in rgb)
+def detail(path: str) -> dict[str, Any]:
+    """A card's full persona for the preview view (read-only browse before importing) —
+    the same `/api/character` fetch `import_card` uses, normalized for display. No write."""
+    p = _norm_path(path)
+    if not p:
+        raise HubRpcError(-32602, "a card path is required", {"kind": "market"})
+    payload = _get_json(f"{_DETAIL_ENDPOINT}/{_encode_path(p)}")
+    d = payload.get("card") if isinstance(payload.get("card"), dict) else payload
+    if not isinstance(d, dict) or not (
+        _s(d.get("name")) or _s(d.get("inChatName")) or _s(d.get("definition_character_description"))
+    ):
+        raise HubRpcError(-32050, "character-tavern returned no usable card definition", {"kind": "market"})
+    tags = _arr(d.get("tags"))[:24]
+    nsfw = d.get("isNSFW") is True or bool({t.lower() for t in tags} & set(_NSFW_EXCLUDES))
+    return {
+        "path": p,
+        "name": _s(d.get("inChatName")) or _s(d.get("name")),
+        "author": _s(d.get("author")) or (p.split("/")[0] if "/" in p else ""),
+        "tagline": _s(d.get("tagline")),
+        "description": _s(d.get("definition_character_description")),
+        "personality": _s(d.get("definition_personality")),
+        "scenario": _s(d.get("definition_scenario")),
+        "first_mes": _s(d.get("definition_first_message")),
+        "mes_example": _s(d.get("definition_example_messages")),
+        "tags": tags,
+        "nsfw": nsfw,
+        "hasLorebook": bool(d.get("lorebookId")) or d.get("hasLorebook") is True,
+        "oc": d.get("isOC") is True,
+        "downloads": _int(d.get("analytics_downloads")),
+        "views": _int(d.get("analytics_views")),
+        "messages": _int(d.get("analytics_messages")),
+        "imageUrl": _image_url(p, width=_PREVIEW_WIDTH),
+        "pageUrl": f"{_PAGE_BASE}/{_encode_path(p)}",
+    }
 
 
 # ---- import (foreign ST card → our card shape) ---------------------------------
@@ -200,9 +266,9 @@ def _map_to_card(detail: dict[str, Any]) -> dict[str, Any]:
         "source": "character_tavern",
         "source_path": path,
         "source_url": f"{_PAGE_BASE}/{_encode_path(path)}" if path else "",
-        # the cover URL, preserved so the UI can show it browser-side even if the
-        # server can't download the bytes (the CDN hotlink-protects server fetches).
-        "source_image": f"{_IMAGE_BASE}/{_encode_path(path)}.png" if path else "",
+        # the full-res cover URL, preserved as the sprite/立绘 display fallback (and the
+        # source the client fetches to store a local keyvisual+sprite).
+        "source_image": _image_url(path),
     }
     if tagline:
         ext["tagline"] = tagline
@@ -225,8 +291,8 @@ def _map_to_card(detail: dict[str, Any]) -> dict[str, Any]:
         "tags": _arr(detail.get("tags"))[:24],
         "extensions": {"lunamoth": ext},
     }
-    book = detail.get("character_book")
-    if isinstance(book, dict) and isinstance(book.get("entries"), list) and book["entries"]:
+    book = normalize_character_book(detail.get("character_book"))
+    if book is not None:
         data["character_book"] = book  # embedded world — our two-tier worldinfo reads it as-is
     return {"version": "1.0", "name": name, "data": data}
 
@@ -261,5 +327,4 @@ def import_card(path: str, *, nsfw: bool = False) -> dict[str, Any]:
     card = _map_to_card(detail)
     saved = _cards.save_card(card)  # writes into the user deck, returns {"path": ...}
     card_path = str(saved.get("path") or "")
-    image_url = f"{_IMAGE_BASE}/{_encode_path(p)}.png"
-    return {"path": card_path, "name": card["name"], "image_url": image_url, "source_path": p}
+    return {"path": card_path, "name": card["name"], "image_url": _image_url(p), "source_path": p}

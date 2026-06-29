@@ -325,3 +325,33 @@ export function serializeCardFields(
   }
   return data;
 }
+
+/** Does a string hold a real character-card JSON (vs free-text inspiration)? A cheap
+ *  client check so the create box can offer a faithful as-is import instead of the AI
+ *  rewrite — the backend (`cards.import_foreign`) validates authoritatively. Recognizes
+ *  the SillyTavern V2/V3 `data` block, a V1 flat card, and character-tavern's flat
+ *  `definition_*` API shape. Tolerant of half-typed text: anything that doesn't parse as
+ *  a JSON object with a name + some persona is treated as plain inspiration. */
+export function looksLikeCardJson(text: string): boolean {
+  const s = text.trim();
+  if (s.length < 2 || s[0] !== "{") return false;
+  let o: Record<string, unknown>;
+  try {
+    o = JSON.parse(s) as Record<string, unknown>;
+  } catch {
+    return false;
+  }
+  if (!o || typeof o !== "object") return false;
+  const d = (o.data && typeof o.data === "object" ? o.data : o) as Record<string, unknown>;
+  const str = (k: string) => typeof d[k] === "string" && (d[k] as string).trim().length > 0;
+  const hasName =
+    str("name") || str("inChatName") || (typeof o.name === "string" && o.name.trim().length > 0);
+  const hasPersona =
+    str("description") ||
+    str("personality") ||
+    str("first_mes") ||
+    str("scenario") ||
+    str("definition_character_description") ||
+    str("definition_first_message");
+  return hasName && hasPersona;
+}

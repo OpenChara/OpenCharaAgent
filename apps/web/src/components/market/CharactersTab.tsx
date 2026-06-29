@@ -1,26 +1,27 @@
-/* Characters market tab — search character-tavern.com's open card catalog and add a
- * card to the local deck in one click. Pure client over two hub RPCs:
- *   market.search { query, nsfw } -> { candidates[], totalHits }
- *   market.import { path, nsfw }  -> { path, name, cover }
- * The cover thumbnails load directly in the browser from character-tavern's CDN; the
- * hub only proxies the JSON. Imported cards land UNLOCKED in the deck (editable, then
- * wakeable like any card). */
+/* Characters market tab — browse & search character-tavern.com's open card catalog and
+ * add cards to the local deck. Opens to a real ranking (popular / trending / newest), not
+ * a blank search box; filterable by tags / OC / lorebook / NSFW; paged via "load more";
+ * each card opens a read-only preview before importing. Pure client over three hub RPCs:
+ *   market.search { query, sort, page, nsfw, tags, oc, lorebook } -> { candidates[], totalPages, ... }
+ *   market.detail { path } -> the card's persona (for the preview)
+ *   market.import { path, nsfw } -> { path, name, image_url }
+ * Covers load directly from the storage CDN (resized thumbs). Imported cards land UNLOCKED. */
 
-import { useCallback, useRef, useState } from "react";
-import { useT } from "../../i18n";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useT, type TKey } from "../../i18n";
 import { useHub } from "../../state/hub";
 import { rpcErrText } from "../../lib/status";
 import { fileToB64 } from "../../lib/file";
 import { deckToast } from "../ui/deckToast";
 import { BrandLoader } from "../ui/BrandLoader";
+import { MarketCardDetail } from "./MarketCardDetail";
 
 type HubCaller = { call<T = unknown>(m: string, p?: Record<string, unknown>, t?: number): Promise<T> };
 const MIME_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
 
-/** Bring a card's cover over CLIENT-SIDE: the browser fetches the CDN image (it's the
- *  reliable real client — the hub gets 403'd by hotlink protection) and uploads the
- *  bytes to the deck card as the keyvisual anchor + avatar. Best-effort: a CORS block /
- *  offline just leaves the monogram (the card still stores the cover URL). */
+/** Bring a card's cover over CLIENT-SIDE as the character's ART — keyvisual (参考图) AND
+ *  sprite (立绘), never the avatar. Best-effort: a CORS block / offline just leaves the
+ *  card showing its stored cover URL as the sprite (see _card_entry). */
 async function bringCoverOver(hub: HubCaller, cardPath: string, imageUrl: string): Promise<void> {
   let blob: Blob;
   try {
@@ -28,7 +29,7 @@ async function bringCoverOver(hub: HubCaller, cardPath: string, imageUrl: string
     if (!r.ok) return;
     blob = await r.blob();
   } catch {
-    return; // CORS / network — graceful
+    return;
   }
   const ext = MIME_EXT[blob.type];
   if (!ext) return;
@@ -36,13 +37,13 @@ async function bringCoverOver(hub: HubCaller, cardPath: string, imageUrl: string
   if (!b64) return;
   try {
     await hub.call("card.asset_save", { path: cardPath, kind: "keyvisual", data_b64: b64, ext }, 30000);
-    if (ext !== "webp") await hub.call("card.avatar_upload", { path: cardPath, data_b64: b64, ext }, 30000);
+    await hub.call("card.asset_save", { path: cardPath, kind: "sprite", data_b64: b64, ext }, 30000);
   } catch {
-    /* best-effort — the keyvisual may have landed even if the avatar didn't */
+    /* best-effort */
   }
 }
 
-interface MarketCard {
+export interface MarketCard {
   path: string;
   name: string;
   tagline: string;
@@ -50,6 +51,10 @@ interface MarketCard {
   tags: string[];
   nsfw: boolean;
   hasLorebook: boolean;
+  oc: boolean;
+  downloads: number;
+  likes: number;
+  messages: number;
   imageUrl: string;
   pageUrl: string;
   excerpt: string;
@@ -57,25 +62,59 @@ interface MarketCard {
 
 interface SearchResult {
   query: string;
+  sort: string;
+  page: number;
+  totalPages: number;
   candidates: MarketCard[];
   totalHits: number;
+}
+
+const SORTS: ReadonlyArray<readonly [string, TKey]> = [
+  ["most_popular", "market-sort-popular"],
+  ["trending", "market-sort-trending"],
+  ["newest", "market-sort-newest"],
+] as const;
+
+// Curated common tags (the API has no facet endpoint) — quick filter chips.
+const TAGS = [
+  "female", "male", "anime", "fantasy", "romance", "adventure", "rpg",
+  "sci-fi", "horror", "comedy", "slice of life", "action", "mystery", "wholesome",
+] as const;
+
+const PAGE_SIZE = 24;
+
+function compactNum(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "k";
+  return String(n);
 }
 
 export function CharactersTab() {
   const t = useT();
   const { hub, refresh } = useHub();
-  const [query, setQuery] = useState("");
+  const [queryInput, setQueryInput] = useState("");
+  const [query, setQuery] = useState(""); // the committed query (drives the fetch)
+  const [sort, setSort] = useState<string>("most_popular");
   const [nsfw, setNsfw] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [oc, setOc] = useState(false);
+  const [lorebook, setLorebook] = useState(false);
+  const [tags, setTags] = useState<string[]>([]);
+
+  const [cards, setCards] = useState<MarketCard[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalHits, setTotalHits] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
-  const [result, setResult] = useState<SearchResult | null>(null);
+
   const [importing, setImporting] = useState<Set<string>>(new Set());
   const [imported, setImported] = useState<Set<string>>(new Set());
-  // Covers that failed to load — tracked in STATE (not a DOM style mutation), so a
-  // re-search of the same card path re-attempts the load instead of staying hidden
-  // forever (character-tavern's hotlink 403s are intermittent).
   const [broken, setBroken] = useState<Set<string>>(new Set());
-  const reqSeq = useRef(0); // drop stale responses if the user searches again fast
+  const [preview, setPreview] = useState<MarketCard | null>(null);
+  const reqSeq = useRef(0);
+
+  const tagsKey = [...tags].sort().join(",");
 
   const mark = (set: React.Dispatch<React.SetStateAction<Set<string>>>, path: string, on: boolean) =>
     set((prev) => {
@@ -85,53 +124,80 @@ export function CharactersTab() {
       return next;
     });
 
-  const runSearch = useCallback(async () => {
-    const q = query.trim();
-    if (!q) return;
-    const seq = ++reqSeq.current;
-    setLoading(true);
-    setError("");
-    try {
-      const res = await hub.call<SearchResult>("market.search", { query: q, nsfw }, 25000);
-      if (seq === reqSeq.current) {
-        setResult(res);
-        setBroken(new Set()); // fresh result set → re-attempt every cover
+  const fetchPage = useCallback(
+    async (pageNum: number, append: boolean) => {
+      const seq = append ? reqSeq.current : ++reqSeq.current;
+      if (append) setLoadingMore(true);
+      else {
+        setLoading(true);
+        setError("");
       }
-    } catch (e) {
-      if (seq === reqSeq.current) {
-        setError(rpcErrText(t, e as { message?: string }));
-        setResult(null);
+      try {
+        const res = await hub.call<SearchResult>(
+          "market.search",
+          { query, sort, page: pageNum, nsfw, tags, oc, lorebook, limit: PAGE_SIZE },
+          25000,
+        );
+        if (seq !== reqSeq.current) return;
+        setCards((prev) => (append ? [...prev, ...res.candidates] : res.candidates));
+        setPage(res.page);
+        setTotalPages(res.totalPages);
+        setTotalHits(res.totalHits);
+        if (!append) setBroken(new Set());
+      } catch (e) {
+        if (seq === reqSeq.current && !append) {
+          setError(rpcErrText(t, e as { message?: string }));
+          setCards([]);
+        } else if (seq === reqSeq.current) {
+          deckToast(rpcErrText(t, e as { message?: string }), true);
+        }
+      } finally {
+        if (seq === reqSeq.current) {
+          setLoading(false);
+          setLoadingMore(false);
+        }
       }
-    } finally {
-      if (seq === reqSeq.current) setLoading(false);
-    }
-  }, [query, nsfw, hub, t]);
+    },
+    [hub, query, sort, nsfw, oc, lorebook, tags, t],
+  );
 
-  const importCard = useCallback(
-    async (c: MarketCard) => {
-      mark(setImporting, c.path, true);
+  // Re-browse from page 1 whenever the query/sort/filters change (the committed query,
+  // not every keystroke). On mount this fires the default browse → opens to content.
+  useEffect(() => {
+    void fetchPage(1, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, sort, nsfw, oc, lorebook, tagsKey]);
+
+  const submitSearch = () => setQuery(queryInput.trim());
+  const toggleTag = (tag: string) =>
+    setTags((prev) => (prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]));
+
+  const importByPath = useCallback(
+    async (path: string, name: string, imageUrl: string) => {
+      mark(setImporting, path, true);
       try {
         const res = await hub.call<{ path?: string; name?: string; image_url?: string }>(
-          "market.import", { path: c.path, nsfw }, 40000);
-        // Bring the cover over HERE, in the browser — the only reliable "real client"
-        // for the CDN (the hub gets 403'd by hotlink protection). Best-effort: if it
-        // can't (CORS / offline), the card keeps its monogram + stored cover URL.
-        if (res?.path) await bringCoverOver(hub, res.path, res.image_url || c.imageUrl);
-        mark(setImported, c.path, true);
-        deckToast(t("market-added", { name: res?.name || c.name }));
-        // The import already succeeded — a refresh blip must NOT turn it into an error
-        // toast, so refresh OUT of the try (its own catch). The deck reflects it on next sync.
+          "market.import", { path, nsfw }, 40000);
+        if (res?.path) await bringCoverOver(hub, res.path, res.image_url || imageUrl);
+        mark(setImported, path, true);
+        deckToast(t("market-added", { name: res?.name || name }));
         void refresh().catch(() => {});
       } catch (e) {
         deckToast(rpcErrText(t, e as { message?: string }), true);
       } finally {
-        mark(setImporting, c.path, false);
+        mark(setImporting, path, false);
       }
     },
     [hub, nsfw, refresh, t],
   );
 
-  const cards = result?.candidates ?? [];
+  const filterPills = (
+    <>
+      <FilterToggle on={oc} onClick={() => setOc((v) => !v)} label={t("market-filter-oc")} />
+      <FilterToggle on={lorebook} onClick={() => setLorebook((v) => !v)} label={t("market-filter-lorebook")} />
+      <FilterToggle on={nsfw} onClick={() => setNsfw((v) => !v)} label={t("market-nsfw")} />
+    </>
+  );
 
   return (
     <div className="market-body">
@@ -139,83 +205,135 @@ export function CharactersTab() {
         <input
           className="searchfield"
           placeholder={t("market-search-ph")}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          value={queryInput}
+          onChange={(e) => setQueryInput(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.nativeEvent.isComposing) void runSearch();
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) submitSearch();
           }}
         />
-        <button className="btn primary" disabled={loading || !query.trim()} onClick={() => void runSearch()}>
+        <button className="btn primary" disabled={loading} onClick={submitSearch}>
           {loading ? <span className="spin" /> : t("search")}
         </button>
-        <label className="market-nsfw">
-          <input type="checkbox" checked={nsfw} onChange={(e) => setNsfw(e.target.checked)} />
-          <span>{t("market-nsfw")}</span>
-        </label>
       </div>
-      <div className="market-source-note">{t("market-source")}</div>
+
+      <div className="market-bar">
+        <div className="market-sorts">
+          {SORTS.map(([key, label]) => (
+            <button
+              key={key}
+              className={"market-sort" + (sort === key ? " on" : "")}
+              onClick={() => setSort(key)}
+            >
+              {t(label)}
+            </button>
+          ))}
+        </div>
+        <div className="market-filters">{filterPills}</div>
+      </div>
+
+      <div className="market-tagrow">
+        {TAGS.map((tag) => (
+          <button
+            key={tag}
+            className={"market-tagchip" + (tags.includes(tag) ? " on" : "")}
+            onClick={() => toggleTag(tag)}
+          >
+            {tag}
+          </button>
+        ))}
+      </div>
 
       <div className="market-scroll">
-        {loading && !cards.length ? (
+        {loading ? (
           <BrandLoader />
         ) : error ? (
           <div className="empty-state market-empty">{error}</div>
-        ) : !result ? (
-          <div className="empty-state market-empty">{t("market-empty")}</div>
         ) : !cards.length ? (
           <div className="empty-state market-empty">{t("market-none")}</div>
         ) : (
-          <div className="market-grid">
-            {cards.map((c) => {
-              const busy = importing.has(c.path);
-              const done = imported.has(c.path);
-              return (
-                <div className="market-card" key={c.path}>
-                  <div className="market-thumb">
-                    {/* monogram fallback shows when the CDN image can't load (it
-                        hotlink-protects some contexts) — the grid never looks broken */}
-                    <span className="market-thumb-fallback" aria-hidden>
-                      {(c.name || "?").trim().charAt(0).toUpperCase()}
-                    </span>
-                    {!broken.has(c.path) && (
-                      <img
-                        src={c.imageUrl}
-                        alt={c.name}
-                        loading="lazy"
-                        onError={() => mark(setBroken, c.path, true)}
-                      />
-                    )}
-                    {c.nsfw && <span className="market-badge nsfw">NSFW</span>}
-                    {c.hasLorebook && <span className="market-badge lore">{t("market-lorebook")}</span>}
-                  </div>
-                  <div className="market-meta">
-                    <div className="market-name" title={c.name}>{c.name}</div>
-                    {c.author && <div className="market-author">{t("market-by", { author: c.author })}</div>}
-                    {c.tagline && <div className="market-tagline" title={c.tagline}>{c.tagline}</div>}
-                    {!!c.tags.length && (
-                      <div className="market-tags">
-                        {c.tags.slice(0, 4).map((tag) => (
-                          <span className="market-tag" key={tag}>{tag}</span>
-                        ))}
+          <>
+            <div className="market-count">{t("market-results", { n: compactNum(totalHits) })}</div>
+            <div className="market-grid">
+              {cards.map((c) => {
+                const busy = importing.has(c.path);
+                const done = imported.has(c.path);
+                return (
+                  <div
+                    className="market-card"
+                    key={c.path}
+                    onClick={() => setPreview(c)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") setPreview(c);
+                    }}
+                  >
+                    <div className="market-thumb">
+                      <span className="market-thumb-fallback" aria-hidden>
+                        {(c.name || "?").trim().charAt(0).toUpperCase()}
+                      </span>
+                      {!broken.has(c.path) && (
+                        <img
+                          src={c.imageUrl}
+                          alt={c.name}
+                          loading="lazy"
+                          onError={() => mark(setBroken, c.path, true)}
+                        />
+                      )}
+                      {c.nsfw && <span className="market-badge nsfw">NSFW</span>}
+                      {c.hasLorebook && <span className="market-badge lore">{t("market-lorebook")}</span>}
+                    </div>
+                    <div className="market-meta">
+                      <div className="market-name" title={c.name}>{c.name}</div>
+                      {c.author && <div className="market-author">{t("market-by", { author: c.author })}</div>}
+                      {c.tagline && <div className="market-tagline" title={c.tagline}>{c.tagline}</div>}
+                      <div className="market-stats">
+                        {c.downloads > 0 && <span title="downloads">⬇ {compactNum(c.downloads)}</span>}
+                        {c.likes > 0 && <span title="likes">♥ {compactNum(c.likes)}</span>}
+                        {c.oc && <span className="market-oc">OC</span>}
                       </div>
-                    )}
-                    <div className="market-acts">
-                      <button
-                        className={"btn sm" + (done ? "" : " primary")}
-                        disabled={busy || done}
-                        onClick={() => void importCard(c)}
-                      >
-                        {busy ? <span className="spin" /> : done ? t("market-imported") : t("market-import")}
-                      </button>
-                      <a className="market-link" href={c.pageUrl} target="_blank" rel="noreferrer noopener" title={c.pageUrl}>↗</a>
+                      <div className="market-acts" onClick={(e) => e.stopPropagation()}>
+                        <button
+                          className={"btn sm" + (done ? "" : " primary")}
+                          disabled={busy || done}
+                          onClick={() => void importByPath(c.path, c.name, c.imageUrl)}
+                        >
+                          {busy ? <span className="spin" /> : done ? t("market-imported") : t("market-import")}
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+            {page < totalPages && (
+              <div className="market-more">
+                <button className="btn soft" disabled={loadingMore} onClick={() => void fetchPage(page + 1, true)}>
+                  {loadingMore ? <span className="spin" /> : t("market-load-more")}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
+
+      {preview && (
+        <MarketCardDetail
+          card={preview}
+          onClose={() => setPreview(null)}
+          onImport={() => void importByPath(preview.path, preview.name, preview.imageUrl)}
+          importing={importing.has(preview.path)}
+          imported={imported.has(preview.path)}
+        />
+      )}
     </div>
+  );
+}
+
+function FilterToggle({ on, onClick, label }: { on: boolean; onClick: () => void; label: string }) {
+  return (
+    <button className={"market-filter" + (on ? " on" : "")} onClick={onClick} aria-pressed={on}>
+      {label}
+    </button>
   );
 }

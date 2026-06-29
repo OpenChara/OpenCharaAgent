@@ -45,7 +45,12 @@ def detect_language(source_path: str = "", text: str = "") -> str:
 
 def _read_png_text_chunks(path: Path) -> dict[str, bytes]:
     """Return tEXt/iTXt keyword -> value bytes from a PNG (character cards live here)."""
-    data = path.read_bytes()
+    return _png_text_chunks(path.read_bytes())
+
+
+def _png_text_chunks(data: bytes) -> dict[str, bytes]:
+    """tEXt/iTXt keyword -> value bytes from PNG bytes (the byte-level core, shared by
+    the path reader and the in-memory drag-drop import)."""
     if data[:8] != b"\x89PNG\r\n\x1a\n":
         raise ValueError("not a PNG file")
     out: dict[str, bytes] = {}
@@ -75,13 +80,18 @@ def _decode_card_chunk(raw: bytes) -> dict[str, Any]:
     return json.loads(text)
 
 
-def _card_json_from_png(path: Path) -> dict[str, Any]:
-    chunks = _read_png_text_chunks(path)
-    # Prefer V3 (ccv3) then V2 (chara).
+def card_json_from_png_bytes(raw: bytes) -> dict[str, Any]:
+    """Extract the embedded character card (V3 `ccv3` then V2 `chara`) from PNG bytes —
+    the in-memory path for a dragged-in card PNG. Raises ValueError when none is found."""
+    chunks = _png_text_chunks(raw)
     for key in ("ccv3", "chara"):
         if key in chunks:
             return _decode_card_chunk(chunks[key])
     raise ValueError("no embedded character card (chara/ccv3) found in PNG")
+
+
+def _card_json_from_png(path: Path) -> dict[str, Any]:
+    return card_json_from_png_bytes(path.read_bytes())
 
 
 @dataclass
@@ -350,6 +360,23 @@ def _entries_as_list(raw: Any) -> list[dict[str, Any]]:
     else:
         items = []
     return [e for e in items if isinstance(e, dict)]
+
+
+def normalize_character_book(book: Any) -> dict[str, Any] | None:
+    """A foreign card's embedded `character_book` → our canonical shape, or None when
+    there's nothing usable. Tolerant of the two SillyTavern entry encodings: `entries`
+    as a list (V3 / the spec) OR as a dict keyed by id (some V2 cards) — both collapse
+    to a list, matching what the native loader (`from_card_dict` → `_entries_as_list`)
+    already accepts. Used by every card-IMPORT path so they don't drop a dict-form
+    lorebook the loader would have kept."""
+    if not isinstance(book, dict):
+        return None
+    entries = _entries_as_list(book.get("entries"))
+    if not entries:
+        return None
+    out = dict(book)
+    out["entries"] = entries
+    return out
 
 
 def _entry_signature(entry: dict[str, Any]) -> tuple[tuple[str, ...], str]:

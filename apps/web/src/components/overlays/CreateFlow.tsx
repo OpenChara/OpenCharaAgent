@@ -22,11 +22,13 @@ import {
   sectionText,
   putSection,
   toWorldEntries,
+  looksLikeCardJson,
   type NormalizedDraft,
   type WorldEntryFull,
 } from "../../lib/cards";
 import { CardField, CardBlock, cardCtxString, type FieldHandle } from "../deck/CardField";
 import { WorldBookEditor } from "../deck/WorldBookEditor";
+import { fileToB64 } from "../../lib/file";
 import { useDirtyGuard } from "../../hooks/useDirtyGuard";
 import { DeckModal } from "../ui/DeckModal";
 import { deckToast } from "../ui/deckToast";
@@ -94,6 +96,26 @@ export function CreateFlow({ onClose }: { onClose: () => void }) {
     return r.path;
   };
 
+  // Faithful import → land on the deck. Shared by the pasted-JSON banner and a dragged-in
+  // file (.json card text, or a .png card whose embedded portrait also becomes the avatar).
+  const importForeign = async (params: { text?: string; png_b64?: string }) => {
+    const r = await hub.call<{ name?: string }>("cards.import_foreign", params, 30000);
+    await refresh();
+    onClose();
+    deckToast(t("create-import-done", { name: r?.name || "" }));
+    nav("#/deck");
+  };
+  const importFile = async (file: File) => {
+    const lower = file.name.toLowerCase();
+    if (lower.endsWith(".png") || file.type === "image/png") {
+      const b64 = await fileToB64(file);
+      if (!b64) throw new Error("could not read the file");
+      await importForeign({ png_b64: b64 });
+    } else {
+      await importForeign({ text: await file.text() });
+    }
+  };
+
   // Dirty-guard (shared hook): typing the telling or any shape-step edit flags
   // dirty, so a stray Esc/backdrop/Cancel can't throw away a half-built character.
   const { guardedClose, dirtyProps } = useDirtyGuard(onClose);
@@ -114,6 +136,10 @@ export function CreateFlow({ onClose }: { onClose: () => void }) {
               draftRef.current = normalizeDraft(raw as Record<string, unknown>);
               setStep("shape");
             }}
+            // Faithful import (no model call — persona/greeting/lorebook verbatim), then
+            // land on the deck. Used by both the pasted-JSON banner and a dragged-in file.
+            importJson={(text) => importForeign({ text })}
+            importFile={importFile}
             modelsList={() => hub.call<{ models?: ModelInfo[] }>("models.list", {}, 30000).then((r) => r?.models ?? []).catch(() => [] as ModelInfo[])}
           />
         ) : (
@@ -159,6 +185,8 @@ function TellStep({
   defaultModel,
   onClose,
   generate,
+  importJson,
+  importFile,
   modelsList,
 }: {
   t: ReturnType<typeof useT>;
@@ -168,13 +196,38 @@ function TellStep({
   defaultModel: string;
   onClose: () => void;
   generate: () => Promise<void>;
+  importJson: (text: string) => Promise<void>;
+  importFile: (file: File) => Promise<void>;
   modelsList: () => Promise<ModelInfo[]>;
 }) {
   const [busy, setBusy] = useState(false);
   const [secs, setSecs] = useState(0);
   const [err, setErr] = useState("");
   const [noStar, setNoStar] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const started = useRef(0);
+  const isCard = looksLikeCardJson(origin);
+
+  // One import runner for both the pasted-JSON banner and a dropped file. A thrown import
+  // leaves the flow open with the error (retry); a success unmounts us (lands on deck).
+  const runImport = async (go: () => Promise<void>) => {
+    setErr("");
+    setImporting(true);
+    try {
+      await go();
+    } catch (e) {
+      setErr(rpcErrText(t, e as { message?: string }));
+      setImporting(false);
+    }
+  };
+
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file && !importing) void runImport(() => importFile(file));
+  };
 
   // gentle writing-star hint when the default model lacks ★ (app.js renderTellStep)
   useEffect(() => {
@@ -211,7 +264,20 @@ function TellStep({
   return (
     <>
       <FlowSteps active={0} />
-      <div className="flow-inner">
+      <div
+        className={"flow-inner" + (dragOver ? " drag-over" : "")}
+        onDragOver={(e) => {
+          if (e.dataTransfer?.types?.includes("Files")) {
+            e.preventDefault();
+            setDragOver(true);
+          }
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false);
+        }}
+        onDrop={onDrop}
+      >
+        {dragOver && <div className="flow-drop-veil">{t("create-drop-hint")}</div>}
         <div className="tell-guide">{t("tell-guide")}</div>
         <textarea
           className="tell-box"
@@ -220,12 +286,27 @@ function TellStep({
           autoFocus
           onChange={(e) => setOrigin(e.target.value)}
         />
+        {isCard && (
+          <div className="card-detected">
+            <span>{t("create-card-detected")}</span>
+            <button className="btn primary" disabled={importing} onClick={() => void runImport(() => importJson(origin))}>
+              {importing ? <span className="spin" /> : t("create-import-faithful")}
+            </button>
+          </div>
+        )}
         <div className="gen-model">{t("gen-with", { model: defaultModel || "—" })}</div>
+        <div className="drop-hint">{t("create-drop-hint")}</div>
         {noStar && <div className="cap-hint" style={{ marginTop: 10 }}>{t("tell-star-hint")}</div>}
         {busy && (
           <div className="transcribing">
             <i />
             <span className="think-elapsed">{t("thinking-n", { n: secs })}</span>
+          </div>
+        )}
+        {importing && !isCard && (
+          <div className="transcribing">
+            <i />
+            <span>{t("create-importing")}</span>
           </div>
         )}
         {err && (
@@ -238,7 +319,7 @@ function TellStep({
       <div className="flow-bar">
         <button className="btn text" onClick={onClose}>{t("cancel")}</button>
         <div className="grow" />
-        <button className="btn primary big" disabled={busy} onClick={() => void run()}>
+        <button className={"btn big " + (isCard ? "soft" : "primary")} disabled={busy || importing} onClick={() => void run()}>
           {busy ? <span className="spin" /> : t("tell-go-edit")}
         </button>
       </div>

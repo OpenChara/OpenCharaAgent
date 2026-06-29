@@ -5,7 +5,9 @@ of the dependency graph and break would-be cycles.
 """
 from __future__ import annotations
 
+import colorsys
 import functools
+import hashlib
 import json
 import os
 import re
@@ -207,6 +209,29 @@ def _clean_theme(value: Any, legacy: Any = None) -> dict[str, str]:
     if secondary:
         out["secondary"] = secondary
     return out
+
+
+# ---- deterministic per-card theme (shared by card import paths: market + paste) ----
+SEEDED_THEME_DEFAULT = "#5B9FD4"  # deck signature blue — the fallback for a seedless theme
+
+
+def _theme_hex(rgb: tuple[float, float, float]) -> str:
+    return "#" + "".join(f"{max(0, min(255, round(c * 255))):02X}" for c in rgb)
+
+
+def seeded_theme(seed: str) -> dict[str, str]:
+    """A stable, pleasant {primary, secondary} derived from a card's identity, so an
+    imported card that carries no theme still gets a distinct, valid color — never the
+    same flat blue for every import, and never a missing primary (which crashes the deck).
+    The seed is anything stable per card (its source path or name)."""
+    seed = str(seed or "").strip()
+    if not seed:
+        return {"primary": SEEDED_THEME_DEFAULT, "secondary": ""}
+    h = int(hashlib.sha1(seed.encode("utf-8")).hexdigest(), 16)
+    hue = (h % 360) / 360.0
+    primary = _theme_hex(colorsys.hls_to_rgb(hue, 0.60, 0.55))
+    secondary = _theme_hex(colorsys.hls_to_rgb((hue + 35 / 360.0) % 1.0, 0.55, 0.50))
+    return {"primary": primary, "secondary": secondary}
 
 
 def _asset_url(p: Path | None) -> str | None:

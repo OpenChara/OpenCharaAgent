@@ -5,11 +5,40 @@ import {
   putSection,
   serializeCardFields,
   toWorldEntries,
+  looksLikeCardJson,
   type NormalizedDraft,
   type CardFields,
   type CardData,
   type WorldEntryFull,
 } from "./cards";
+
+describe("looksLikeCardJson", () => {
+  it("accepts a V2/V3 card (data block)", () => {
+    expect(looksLikeCardJson(JSON.stringify({ data: { name: "A", description: "x" } }))).toBe(true);
+  });
+  it("accepts a V1 flat card", () => {
+    expect(looksLikeCardJson(JSON.stringify({ name: "A", first_mes: "hi" }))).toBe(true);
+  });
+  it("accepts a character-tavern API card (definition_* + inChatName)", () => {
+    expect(
+      looksLikeCardJson(JSON.stringify({ inChatName: "A", definition_character_description: "x" })),
+    ).toBe(true);
+  });
+  it("rejects free-text inspiration", () => {
+    expect(looksLikeCardJson("a brooding space pirate who loves tea")).toBe(false);
+  });
+  it("rejects half-typed / invalid JSON", () => {
+    expect(looksLikeCardJson('{ "name": "A", ')).toBe(false);
+    expect(looksLikeCardJson("")).toBe(false);
+  });
+  it("rejects a JSON object with a name but no persona", () => {
+    expect(looksLikeCardJson(JSON.stringify({ name: "A" }))).toBe(false);
+  });
+  it("rejects a non-object JSON value", () => {
+    expect(looksLikeCardJson("[1,2,3]")).toBe(false);
+    expect(looksLikeCardJson('"just a string"')).toBe(false);
+  });
+});
 
 describe("normalizeDraft", () => {
   it("fills empty fields and a default theme", () => {

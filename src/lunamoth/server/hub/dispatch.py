@@ -186,9 +186,15 @@ class HubDispatcher:
             "card.avatar_read": lambda p: _avatars.avatar_read(str(p.get("path") or "")),
             "market.search": lambda p: _card_market.search(
                 str(p.get("query") or ""),
+                sort=str(p.get("sort") or "most_popular"),
                 limit=int(p.get("limit") or 24),
+                page=int(p.get("page") or 1),
                 nsfw=bool(p.get("nsfw")),
+                tags=p.get("tags"),
+                oc=bool(p.get("oc")),
+                lorebook=bool(p.get("lorebook")),
             ),
+            "market.detail": lambda p: _card_market.detail(str(p.get("path") or "")),
             "market.import": lambda p: _card_market.import_card(
                 str(p.get("path") or ""), nsfw=bool(p.get("nsfw")),
             ),
@@ -202,6 +208,8 @@ class HubDispatcher:
             "card.rewrite_field": self._card_rewrite_field,
             "card.merge_world": self._card_merge_world,
             "cards.draft": self._cards_draft,
+            "cards.import_foreign": lambda p: _cards.import_foreign_card(
+                str(p.get("text") or ""), png_b64=str(p.get("png_b64") or "")),
             "card.from_draft": self._card_from_draft,
             "card.generate_worldbook": self._card_generate_worldbook,
             "defaults.get": lambda p: _config._public_defaults(_config.load_defaults()),

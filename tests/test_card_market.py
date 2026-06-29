@@ -20,21 +20,52 @@ def test_search_normalizes_hits(monkeypatch):
     def fake_get(url):
         captured["url"] = url
         return {"hits": [
-            {"path": "amy/witch", "name": "Witch", "tagline": "spooky", "author": "amy",
-             "tags": ["fantasy", "magic"], "isNSFW": False, "hasLorebook": True,
+            {"path": "amy/witch", "name": "Witch", "inChatName": "Elspeth", "tagline": "spooky",
+             "author": "amy", "tags": ["fantasy", "magic"], "isNSFW": False, "hasLorebook": True,
+             "isOC": True, "downloads": 5473, "likes": 128,
              "characterFirstMessage": "Hello there, traveller."},
             {"path": "", "name": "broken"},  # no path → dropped
             "not-a-dict",                      # junk → dropped
-        ], "totalHits": 99}
+        ], "totalHits": 99, "totalPages": 5}
 
     monkeypatch.setattr(M, "_get_json", fake_get)
     out = M.search("witch", limit=10)
-    assert out["totalHits"] == 99
+    assert out["totalHits"] == 99 and out["totalPages"] == 5 and out["page"] == 1
     assert [c["path"] for c in out["candidates"]] == ["amy/witch"]
     c = out["candidates"][0]
-    assert c["imageUrl"].endswith("amy/witch.png") and c["pageUrl"].endswith("/character/amy/witch")
-    assert c["hasLorebook"] is True and c["excerpt"].startswith("Hello there")
-    assert "exclude_tags=" in captured["url"]  # NSFW excluded by default
+    assert c["name"] == "Elspeth"  # inChatName wins
+    # cover is the STORAGE CDN (resized thumb), never the hotlink-403 cards.* host
+    assert "ct-cards.storage.character-tavern.com" in c["imageUrl"] and "amy/witch.png" in c["imageUrl"]
+    assert "width=" in c["imageUrl"]
+    assert c["hasLorebook"] is True and c["oc"] is True
+    assert c["downloads"] == 5473 and c["likes"] == 128  # ranking signals surfaced
+    assert "exclude_tags=" in captured["url"] and "sort=most_popular" in captured["url"]
+
+
+def test_search_browses_with_empty_query_and_sort(monkeypatch):
+    # an empty query is the DEFAULT browse (trending / popular), not an error — the
+    # market opens to content. The query param is omitted; sort + page drive it.
+    captured = {}
+    monkeypatch.setattr(M, "_get_json", lambda url: captured.update(url=url) or {"hits": [], "totalPages": 7})
+    out = M.search("", sort="trending", page=3)
+    assert "query=" not in captured["url"] and "sort=trending" in captured["url"]
+    assert "page=3" in captured["url"] and out["sort"] == "trending" and out["page"] == 3
+
+
+def test_search_sort_is_validated(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(M, "_get_json", lambda url: captured.update(url=url) or {"hits": []})
+    M.search("x", sort="bogus")  # unknown sort → most_popular
+    assert "sort=most_popular" in captured["url"]
+
+
+def test_search_filters_tags_oc_lorebook(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(M, "_get_json", lambda url: captured.update(url=url) or {"hits": []})
+    M.search("", tags=["anime", "fantasy"], oc=True, lorebook=True)
+    # multiple tags AND via one comma-joined param (urlencoded comma = %2C)
+    assert "tags=anime%2Cfantasy" in captured["url"]
+    assert "isOC=true" in captured["url"] and "hasLorebook=true" in captured["url"]
 
 
 def test_search_nsfw_flag_drops_the_exclude(monkeypatch):
@@ -44,18 +75,13 @@ def test_search_nsfw_flag_drops_the_exclude(monkeypatch):
     assert "exclude_tags=" not in captured["url"]
 
 
-def test_search_blank_query_errors():
-    with pytest.raises(HubRpcError):
-        M.search("   ")
-
-
 def test_paths_with_spaces_are_url_encoded(monkeypatch):
     # card paths can carry spaces/unicode (e.g. "bmboster/Yae Miko") — the <img> and
     # detail URLs must be encoded, but the stored source_path stays raw (the identity).
     monkeypatch.setattr(M, "_get_json", lambda url: {"hits": [
         {"path": "bmboster/Yae Miko", "name": "Yae"}]})
     hit = M.search("yae")["candidates"][0]
-    assert hit["imageUrl"] == "https://cards.character-tavern.com/bmboster/Yae%20Miko.png"
+    assert hit["imageUrl"].startswith("https://ct-cards.storage.character-tavern.com/bmboster/Yae%20Miko.png")
     assert hit["pageUrl"].endswith("/character/bmboster/Yae%20Miko")
     assert hit["path"] == "bmboster/Yae Miko"  # raw identity preserved
 
@@ -65,6 +91,28 @@ def test_paths_with_spaces_are_url_encoded(monkeypatch):
     monkeypatch.setattr(M._cards, "save_card", lambda card: {"path": "/deck/yae.json"})
     M.import_card("bmboster/Yae Miko")
     assert seen["url"].endswith("/api/character/bmboster/Yae%20Miko")  # detail fetch encoded
+
+
+# ---- detail (preview before importing) -----------------------------------------
+
+def test_detail_normalizes_persona_and_stats(monkeypatch):
+    monkeypatch.setattr(M, "_get_json", lambda url: {"card": {
+        "path": "amy/witch", "name": "Witch", "inChatName": "Elspeth", "author": "amy",
+        "tagline": "spooky", "definition_character_description": "An old witch. {{char}} watches {{user}}.",
+        "definition_personality": "wry", "definition_first_message": "Mind the cat, {{user}}.",
+        "tags": ["fantasy"], "isNSFW": False, "lorebookId": "lb1", "isOC": True,
+        "analytics_downloads": 5473, "analytics_views": 9001}})
+    d = M.detail("amy/witch")
+    assert d["name"] == "Elspeth" and d["author"] == "amy"
+    assert d["description"].count("{{char}}") == 1  # macros intact for preview
+    assert d["hasLorebook"] is True and d["oc"] is True
+    assert d["downloads"] == 5473 and d["views"] == 9001
+    assert "ct-cards.storage.character-tavern.com" in d["imageUrl"]
+
+
+def test_detail_blank_path_errors():
+    with pytest.raises(HubRpcError):
+        M.detail("   ")
 
 
 # ---- import mapping (the compatibility core) -----------------------------------
@@ -101,9 +149,8 @@ def _import(monkeypatch, detail=_DETAIL):
 def test_import_maps_fields_and_keeps_macros(monkeypatch):
     res, card = _import(monkeypatch)
     assert res["path"] == "/deck/witch.json" and res["name"] == "Elspeth"
-    # the cover URL is surfaced so the CLIENT can bring the image over (the server
-    # can't — the CDN hotlink-protects non-browser fetches).
-    assert res["image_url"] == "https://cards.character-tavern.com/amy/witch.png"
+    # the full-res cover URL (storage CDN) is surfaced so the client can bring the image over.
+    assert res["image_url"] == "https://ct-cards.storage.character-tavern.com/amy/witch.png"
     d = card["data"]
     assert d["name"] == "Elspeth"  # inChatName wins
     assert d["description"].count("{{char}}") == 1 and d["first_mes"].count("{{user}}") == 1  # macros intact
@@ -118,8 +165,8 @@ def test_import_omits_polaris_sets_theme_and_keeps_cover_url(monkeypatch):
     assert "polaris" not in ext  # 理想 is the user's — never imported, and absent is safe
     assert ext["theme"]["primary"].startswith("#") and len(ext["theme"]["primary"]) == 7  # always present
     assert ext["source"] == "character_tavern" and ext["source_path"] == "amy/witch"
-    # the cover URL is preserved on the card too (client display / future fallback)
-    assert ext["source_image"] == "https://cards.character-tavern.com/amy/witch.png"
+    # the full-res cover URL is preserved on the card (sprite/立绘 display fallback)
+    assert ext["source_image"] == "https://ct-cards.storage.character-tavern.com/amy/witch.png"
 
 
 def test_import_nsfw_gate(monkeypatch):
@@ -155,6 +202,15 @@ def test_import_nsfw_gate_by_tag(monkeypatch):
         M.import_card("amy/witch")  # nsfw tag → refused even without the isNSFW flag
     monkeypatch.setattr(M._cards, "save_card", lambda card: {"path": "/deck/x.json"})
     assert M.import_card("amy/witch", nsfw=True)["path"] == "/deck/x.json"
+
+
+def test_import_keeps_dict_form_lorebook(monkeypatch):
+    # some ST V2 cards encode character_book.entries as a dict keyed by id; the mapper
+    # must keep it (normalized to a list) just like the native loader, not drop it.
+    detail = {"card": {**_DETAIL["card"],
+                       "character_book": {"name": "w", "entries": {"0": {"keys": ["k"], "content": "c"}}}}}
+    _, card = _import(monkeypatch, detail)
+    assert card["data"]["character_book"]["entries"][0]["keys"] == ["k"]
 
 
 def test_seeded_theme_is_deterministic_and_distinct():
