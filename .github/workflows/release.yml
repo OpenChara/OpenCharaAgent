@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.2.0
       - name: Set up Python
         run: uv python install 3.11
       - name: Set up Node
@@ -40,7 +40,7 @@ jobs:
           cd dist
           sha256sum --check SHA256SUMS
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/*.whl
