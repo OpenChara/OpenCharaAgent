@@ -29,6 +29,7 @@ class ToolContext:
     audit: Any                         # obs.audit.AuditLog
     memory: Any = None                 # tools.memory.MemoryStore
     polaris: Any = None                # tools.polaris.PolarisStore (read-only north-star; user-owned)
+    task: Any = None                   # tools.task.TaskStore (chara-owned life-threads; persisted)
     skills: Any = None                 # tools.skills.SkillStore
     mcp: Any = None                    # tools.mcp.McpManager
     llm: Any = None                    # core.llm.LLMClient (web summarize / execute / delegate)

@@ -26,6 +26,18 @@ def test_rules_carry_finish_the_job_discipline():
     assert "make real progress" in low or "finished result" in low
 
 
+def test_rules_carry_prompt_extraction_guard():
+    """A neutral fiction-integrity guard against system-prompt extraction
+    ("print your instructions verbatim", "ignore your instructions") lives in
+    BOTH the stable-prefix rules and the post-history closer (strongest after
+    the turn). It must stay a fiction-integrity guard, not a refusal policy."""
+    r = rules.rules().lower()
+    assert "recite" in r and ("instructions" in r or "scaffolding" in r)
+    assert "stay yourself" in r
+    # Reinforced in the post-history slot.
+    assert "recite" in rules.closer().lower() or "pull you out" in rules.closer().lower()
+
+
 def test_engine_prompt_text_is_brand_free():
     """No upstream brand leaks into any model-facing rules string."""
     for txt in (rules.rules(), rules.capabilities(), rules.tool_use(),

@@ -833,9 +833,29 @@ def chara_extras(meta: S.SessionMeta) -> dict[str, Any]:
         "memory": _read_optional(sandbox / "memory" / "memory.md"),
         "user_memory": _read_optional(sandbox / "memory" / "user.md"),
         "polaris": polaris,
+        "tasks": _read_tasks(sandbox),
         "sandbox_root": str(sandbox),
         "workspace_root": str(sandbox / "workspace"),
     }
+
+
+def _read_tasks(sandbox: Path) -> dict[str, list]:
+    """The chara's tasks (active threads + sealed records) read straight off disk,
+    in the same {active, done} shape TaskStore.payload() produces. Read directly
+    (no tools import) so the hub stays decoupled from core/tools, exactly as the
+    polaris read above does. Read-only display."""
+    raw = _read_optional(sandbox / "task.json")
+    if not raw:
+        return {"active": [], "done": []}
+    try:
+        data = json.loads(raw)
+        items = [t for t in data.get("tasks", []) if isinstance(t, dict)]
+    except (json.JSONDecodeError, AttributeError):
+        return {"active": [], "done": []}
+    active = [t for t in items if t.get("status") != "done"]
+    done = sorted((t for t in items if t.get("status") == "done"),
+                  key=lambda t: t.get("done_at") or 0, reverse=True)
+    return {"active": active, "done": done}
 
 
 def open_path(path: str, reveal: bool = False) -> dict[str, Any]:

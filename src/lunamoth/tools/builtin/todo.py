@@ -2,9 +2,11 @@
 (reference/hermes-agent/tools/todo_tool.py).
 
 This is the model's scratchpad for GETTING WORK DONE: a forced, checkable,
-completion-oriented task list. It is DISTINCT from the chara-life `wish` tool
-(愿望) — a wish is what the character lives for, never a task anyone forces it
-to finish. The two have separate tools and separate stores; never conflate them.
+completion-oriented step list for ONE session. It is DISTINCT from the chara's
+`task` store (tools.task) — a task is a lasting thread of the chara's life it
+advances over time toward its aspiration; a todo is just the immediate steps for
+what it's doing right now. Separate tools, separate stores (todo is ephemeral and
+in-memory; task is persisted and rendered into the prompt); never conflate them.
 
 State is in-memory, one ``TodoStore`` per session, stashed on the ToolContext.
 It survives across tool calls and is rendered back into the conversation after
@@ -212,9 +214,12 @@ TODO_SCHEMA = {
         "List order is priority. Only ONE item in_progress at a time.\n"
         "Mark items completed immediately when done. If something fails, "
         "cancel it and add a revised item.\n\n"
-        "This is your forced work-checklist for getting a job done — distinct "
-        "from the wish tool (your own aspirations). Always returns the full "
-        "current list."
+        "This is your scratchpad for getting ONE job done in THIS session: it is "
+        "in-memory and disappears when the session ends. It is distinct from `task` "
+        "— your tasks are the lasting threads of your life you carry across sessions "
+        "toward your aspiration; a todo is just the immediate steps for what you're "
+        "doing right now. Use todo for the moment's steps, `task` for what you're "
+        "living toward. Always returns the full current list."
     ),
     "parameters": {
         "type": "object",

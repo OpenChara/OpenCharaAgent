@@ -58,7 +58,7 @@ class ToolGateway:
         self, sandbox: Sandbox, state: EnvState, audit: AuditLog,
         memory: MemoryStore | None = None, polaris: "PolarisStore | None" = None,
         skills: "SkillStore | None" = None, mcp: "McpManager | None" = None,
-        llm: Any = None, transcript: Any = None,
+        llm: Any = None, transcript: Any = None, task: Any = None,
     ):
         _ensure_discovered()
         self.sandbox = sandbox
@@ -66,6 +66,7 @@ class ToolGateway:
         self.audit = audit
         self.memory = memory
         self.polaris = polaris
+        self.task = task
         self.skills = skills
         self.mcp = mcp
         self.llm = llm
@@ -101,7 +102,7 @@ class ToolGateway:
         if self._ctx_obj is None:
             self._ctx_obj = ToolContext(
                 sandbox=self.sandbox, state=self.state, audit=self.audit,
-                memory=self.memory, polaris=self.polaris, skills=self.skills,
+                memory=self.memory, polaris=self.polaris, task=self.task, skills=self.skills,
                 mcp=self.mcp, llm=self.llm, transcript=self.transcript,
                 permission_hook=self.permission_hook, clarify_hook=self.clarify_hook,
                 dispatch=self._code_dispatch,

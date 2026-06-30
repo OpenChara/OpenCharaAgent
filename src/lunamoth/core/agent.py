@@ -26,6 +26,7 @@ from .context import (
     estimate_tokens,
 )
 from ..tools.polaris import PolarisStore
+from ..tools.task import TaskStore
 from .llm import LLMClient
 from .request_log import _append_request_log
 from ..protocol import MUSE, Notice, TextDelta
@@ -114,6 +115,11 @@ class LunaMothAgent:
         # polaris.json in the sandbox.
         self.polaris = PolarisStore(SANDBOX_ROOT / "polaris.json")
         self._seed_card_polaris()
+        # Tasks: the chara's OWN life-threads (it sets/edits/completes them),
+        # advanced toward the aspiration. Persisted to task.json; active ones ride
+        # the volatile tail. Instrumental "what I'm doing now" — not a value-direction.
+        self.task = TaskStore(SANDBOX_ROOT / "task.json")
+        self._seed_card_task()
         # Skills: know-how the chara reads on demand AND writes for itself
         # (workspace/skills/ shadows user + bundled — hermes's local-first rule).
         self.skills = SkillStore()
@@ -126,7 +132,7 @@ class LunaMothAgent:
         )
         self.tools = ToolGateway(
             self.sandbox, self.state, self.audit, self.memory, self.polaris,
-            skills=self.skills, mcp=self.mcp,
+            skills=self.skills, mcp=self.mcp, task=self.task,
         )
         self._load_toolpack()
         self._stable_prefix_cache: list[str] | None = None
@@ -153,6 +159,7 @@ class LunaMothAgent:
         self._freeze_memory()  # a reconfigure starts a fresh prompt — reload the snapshot
         self._load_toolpack()
         self._seed_card_polaris()
+        self._seed_card_task()
         self._freeze_skills()
         self._invalidate_stable_prefix()
         self.llm = LLMClient(settings.to_llm_config())
@@ -276,6 +283,15 @@ class LunaMothAgent:
         polaris = defaults.get("polaris") if isinstance(defaults, dict) else None
         if isinstance(polaris, str):
             self.polaris.seed_once(polaris)
+
+    def _seed_card_task(self) -> None:
+        """Seed a starter task from the card so a freshly-woken chara has a concrete
+        thread from day one (the aspiration alone can be too abstract to act on).
+        seed_once is a no-op once the chara has any task of its own."""
+        defaults = self.character.defaults() if self.character else {}
+        starter = defaults.get("task") if isinstance(defaults, dict) else None
+        if isinstance(starter, (str, list)):
+            self.task.seed_once(starter)
 
     def _card_limit(self, key: str) -> int | None:
         """A limit declared by the card, in extensions.lunamoth or top-level extensions."""
@@ -723,6 +739,13 @@ class LunaMothAgent:
         polaris_block = self.polaris.render_block()
         if polaris_block:
             msgs.append(polaris_block)
+
+        # The chara's own tasks (active only) follow the aspiration: the star, then
+        # the threads it's advancing toward it. Empty state invites (non-coercively)
+        # when an aspiration exists to derive from.
+        task_block = self.task.render_block(has_aspiration=bool(self.polaris.get()))
+        if task_block:
+            msgs.append(task_block)
 
         post_history = self._post_history_slot()
         if post_history:
