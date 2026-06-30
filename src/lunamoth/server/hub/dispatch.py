@@ -142,6 +142,10 @@ class HubDispatcher:
             "chara.set_isolation": self._chara_set_isolation,
             "chara.set_aspiration": lambda p: _sessions.set_aspiration(_meta(p), str(p.get("text") or "")),
             "chara.apply_card": self._chara_apply_card,
+            # Restart = restart the chara's child (unblocks a stuck process AND re-reads
+            # card edits). Same mechanism as apply_card, but a normal always-available
+            # action rather than the dirty-card "立即应用" affordance.
+            "chara.restart": self._chara_apply_card,
             "card.visual_jobs": self._card_visual_jobs,
             "toolpacks.list": lambda p: _sessions.list_toolpacks(),
             "keys.list": lambda p: _config.list_keys(),
@@ -329,8 +333,7 @@ class HubDispatcher:
             _await_supervisor(self.supervisor, self.supervisor.stop_gateway(meta.name, persist=False))
         else:
             _sessions.stop_daemon(meta)
-        S.delete_session(meta.name)
-        return {"ok": True}
+        return S.soft_delete_session(meta.name)  # move to ~/.trash/sessions (recoverable)
 
     def _session_export(self, p: dict[str, Any]) -> Any:
         return _sessions.export_session(_meta(p))

@@ -8,6 +8,7 @@
 import { useEffect, useState } from "react";
 import { useT, type TKey } from "../../i18n";
 import { useHubApi, useHubState } from "../../state/hub";
+import { useNavigate } from "../../hooks/useHashRoute";
 import type { BoardSession } from "../../state/hub";
 import { deckToast } from "../ui/deckToast";
 import { rpcErrText } from "../../lib/status";
@@ -443,7 +444,8 @@ function ProfilePane({ stream, name }: { stream: CharaStream; name: string }) {
 
 function SettingsPane({ stream, name }: { stream: CharaStream; name: string }) {
   const t = useT();
-  const { hub } = useHubApi();
+  const { hub, refresh } = useHubApi();
+  const nav = useNavigate();
   // Distribution lock (server LUNAMOTH_FORCE_SANDBOX): the board state reports it; the
   // sandbox toggle below is then shown ON, greyed, and non-interactive.
   const { snapshot: hubSnap } = useHubState();
@@ -451,7 +453,8 @@ function SettingsPane({ stream, name }: { stream: CharaStream; name: string }) {
   const snap = (stream.snapshot as Snapshot | null) || {};
   const quiet = Number(snap.quiet) || 300;
   const patience = Number(snap.patience) || 3600;
-  const [resetting, setResetting] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // 网络 — instant (the /net command hits the live agent immediately).
   const snapNet = !!snap.net_on;
@@ -504,12 +507,38 @@ function SettingsPane({ stream, name }: { stream: CharaStream; name: string }) {
     });
   };
 
-  const doReset = async () => {
-    if (resetting || !confirm(t("reset-confirm"))) return;
-    setResetting(true); // visible working state, blocks a double-reset
-    await stream.runCommand("/reset");
-    setResetting(false);
-    deckToast(t("reset-done"));
+  // Restart — bounce the chara's process: unblocks a stuck one (e.g. wedged in a tool)
+  // AND applies any pending card edits (the fresh process re-reads the frozen card;
+  // history is restored). Harmless, no confirm. The same mechanism as 立即应用.
+  const doRestart = async () => {
+    if (restarting) return;
+    setRestarting(true);
+    try {
+      await hub.call("chara.restart", { name }, 60000);
+      deckToast(t("restart-done"));
+    } catch (e) {
+      deckToast(rpcErrText(t, e as { message?: string }), true);
+    } finally {
+      setRestarting(false);
+    }
+  };
+
+  // Delete — soft: the chara leaves awakened (off the board + its locked card off the
+  // deck) and returns to not-awakened (the deck template stays, re-wakeable). Data is
+  // moved to ~/.trash (recoverable), not erased. Confirm-gated; on success leave the
+  // now-dead chat for the board.
+  const doDelete = async () => {
+    if (deleting || !confirm(t("delete-confirm", { name }))) return;
+    setDeleting(true);
+    try {
+      await hub.call("session.delete", { name, confirm: name }, 60000);
+      await refresh();
+      deckToast(t("delete-done", { name }));
+      nav("#/");
+    } catch (e) {
+      setDeleting(false);
+      deckToast(rpcErrText(t, e as { message?: string }), true);
+    }
   };
   return (
     <div>
@@ -560,13 +589,24 @@ function SettingsPane({ stream, name }: { stream: CharaStream; name: string }) {
       </div>
       <div className="pgroup" style={{ marginTop: 22 }}>
         <div
-          className={"prow danger click" + (resetting ? " busy" : "")}
-          onClick={() => void doReset()}
+          className={"prow click" + (restarting ? " busy" : "")}
+          onClick={() => void doRestart()}
         >
           <div className="pmain">
-            <span className="plbl">{resetting ? t("resetting") : t("p-reset")}</span>
+            <span className="plbl">{restarting ? t("restarting") : t("p-restart")}</span>
+            <span className="psub">{t("p-restart-sub")}</span>
           </div>
-          {resetting && <span className="spin" />}
+          {restarting && <span className="spin" />}
+        </div>
+        <div
+          className={"prow danger click" + (deleting ? " busy" : "")}
+          onClick={() => void doDelete()}
+        >
+          <div className="pmain">
+            <span className="plbl">{deleting ? t("deleting") : t("p-delete")}</span>
+            <span className="psub">{t("p-delete-sub")}</span>
+          </div>
+          {deleting && <span className="spin" />}
         </div>
       </div>
     </div>

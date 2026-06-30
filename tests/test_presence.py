@@ -155,33 +155,6 @@ def test_reset_reshows_the_greeting(agent):
     assert CharaHandle(agent=a).attach().opening == "greeting"
 
 
-def test_reset_command_reseeds_greeting_before_selfwork(agent):
-    """The /reset COMMAND must re-seed first_mes into the fresh epoch IMMEDIATELY,
-    so a live chara that self-works before the human reopens still re-shows the
-    opener. (Self-work under a tool chara writes kind='chat' rows that an
-    empty-epoch gate alone can't distinguish — the command-level re-seed closes
-    that hole.)"""
-    from lunamoth.core.commands import _reset
-    from lunamoth.protocol.api import CharaHandle
-
-    a = agent()
-    a.state.set_rest_until(0)
-    session = a.make_session()
-    g = (a.greeting() or "").strip()
-    assert g, "default card should have a first_mes"
-
-    _reset(a, session, "")
-    # greeting is the FIRST row of the new epoch (rides `restored` on reopen)
-    assert session.context.messages, "reset must re-seed the greeting"
-    assert g[:40] in str(session.context.messages[0].get("content") or "")
-
-    # a self-work row afterwards must NOT erase the greeting from the reopened view
-    session.context.add("assistant", "...quiet self-work...")
-    info = CharaHandle(agent=a).attach()
-    joined = " ".join(str(m.get("content") or "") for m in info.restored)
-    assert g[:40] in joined, "greeting must survive self-work after /reset"
-
-
 def test_background_then_foreground_open_greets_once(agent):
     """A background open (the supervisor pre-attaching a resident) commits the
     greeting just like a foreground one — there is no present/away distinction.

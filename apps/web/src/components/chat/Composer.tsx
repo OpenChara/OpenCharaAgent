@@ -45,7 +45,6 @@ const COMMANDS: Cmd[] = [
   { name: "mcp", usage: "/mcp", en: "configured MCP tool servers", zh: "已配置的 MCP 工具服务器" },
   { name: "logs", usage: "/logs", en: "recent audit events", zh: "最近的审计事件" },
   { name: "compact", usage: "/compact", en: "fold older turns into a summary now", zh: "立即把旧对话折叠成摘要" },
-  { name: "reset", usage: "/reset", en: "zero session context (new transcript epoch)", zh: "清空会话上下文（新的记录纪元）" },
   { name: "help", usage: "/help", en: "this list", zh: "这个列表" },
 ];
 

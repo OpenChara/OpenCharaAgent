@@ -102,8 +102,12 @@ describe("I18N strings map", () => {
   //   img-key-ready kept — still used by TaskModels) → 707.
   // + 3 chat-timezone keys (set-timezone, set-timezone-sub, tz-auto).
   // (+3 more from concurrent work landed alongside, not itemized above) → 713.
-  it("preserves the full key set from the source dict (713 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(713);
+  // Chara restart/delete: removed the old clear-context (-4: reset-confirm, p-reset,
+  // resetting, reset-done) and added restart + soft-delete keys (+9: p-restart,
+  // p-restart-sub, restarting, restart-done, p-delete, p-delete-sub, deleting,
+  // delete-done, delete-confirm) → 718.
+  it("preserves the full key set from the source dict (718 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(718);
   });
 
   it("every value is a [zh, en] string tuple", () => {

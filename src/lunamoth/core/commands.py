@@ -101,29 +101,6 @@ def _compact(agent, session, arg: str) -> Reply:
     return Reply(True, "nothing to compact yet (the window isn't long enough to be worth summarizing).")
 
 
-def _reset(agent, session, arg: str) -> Reply:
-    session.context.messages.clear()
-    session.ticks = 0
-    session.wi_sticky.clear()
-    agent._freeze_memory()
-    agent._freeze_skills()
-    agent._invalidate_stable_prefix()
-    # New transcript epoch: old history stays on disk, no longer reloaded.
-    agent.transcript.reset()
-    # Re-seed the card's opening line into the fresh epoch, exactly as a first
-    # wake does. /reset is what creates the empty epoch, so it must re-emit
-    # first_mes HERE — before any self-work cycle can write to the new epoch —
-    # otherwise a live chara that self-works before the human reopens would
-    # suppress the greeting (attach keys on an empty epoch, and self-work rows
-    # under a tool-using chara are indistinguishable kind='chat'). Persisting it
-    # now makes the greeting the epoch's first row, so it rides `restored` on
-    # reopen with no double-show.
-    greeting = (agent.greeting() or "").strip()
-    if greeting:
-        session.context.add("assistant", greeting)
-    return Reply(True, "session context zeroed (new transcript epoch). durable memory remains.")
-
-
 def _polaris(agent, session, arg: str) -> Reply:
     """View or set the chara's aspiration — its single lifelong ideal. This is the
     USER's to author; the chara can never change or complete it. `/aspiration` shows
@@ -370,7 +347,6 @@ _REGISTRY: dict[str, Command] = dict([
     _cmd("provider", "/provider <label>", "switch this chara to a saved provider key (empty: show current)", _provider),
     _cmd("steps", "/steps <n>", "max tool-call iterations per turn (default 80)", _steps),
     _cmd("compact", "/compact", "fold older turns into a summary now", _compact),
-    _cmd("reset", "/reset", "zero session context (new transcript epoch)", _reset),
     _cmd("help", "/help", "this list", _help),
 ])
 

@@ -46,6 +46,31 @@ def test_create_list_delete():
     assert S.list_sessions() == []
 
 
+def test_soft_delete_moves_to_trash_frees_name_keeps_data():
+    meta = S.create_session("quinn", isolation="sandbox")
+    (meta.root / "card.json").write_text('{"v":1}', encoding="utf-8")  # a kept artifact
+    res = S.soft_delete_session("quinn")
+    assert res["ok"] and res["trash_id"]
+    # gone from the roster (→ and from the deck's locked-card listing)
+    assert S.list_sessions() == []
+    assert not meta.root.exists()  # moved out of the sessions dir
+    # data preserved in the trash (recoverable), with an origin manifest
+    trashed = S.lunamoth_home() / ".trash" / "sessions" / res["trash_id"]
+    assert (trashed / "card.json").read_text(encoding="utf-8") == '{"v":1}'
+    assert "quinn" in (trashed / "origin.json").read_text(encoding="utf-8")
+    # the name is freed → re-waking the template reuses it cleanly (no -2 drift)
+    S.create_session("quinn", isolation="sandbox")
+    assert [m.name for m in S.list_sessions()] == ["quinn"]
+
+
+def test_soft_delete_refuses_a_running_session(monkeypatch):
+    S.create_session("busy", isolation="sandbox")
+    monkeypatch.setattr(S.SessionMeta, "running_pid", lambda self: 4321)
+    with pytest.raises(RuntimeError):
+        S.soft_delete_session("busy")
+    assert [m.name for m in S.list_sessions()] == ["busy"]  # untouched
+
+
 def test_legacy_isolation_maps_to_admin():
     # Old session configs carrying dir/local/docker must read back as admin.
     meta = S.create_session("legacy", isolation="dir")  # accepted, normalized

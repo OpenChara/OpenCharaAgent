@@ -289,3 +289,29 @@ def delete_session(name: str) -> None:
     if pid:
         raise RuntimeError(f"session {name!r} is running (pid {pid}); stop it first")
     shutil.rmtree(meta.root)
+
+
+def soft_delete_session(name: str) -> dict[str, str]:
+    """SOFT delete (the UI 'delete chara' button): MOVE the session dir into
+    ~/.lunamoth/.trash/sessions/<id>/ instead of removing it. The chara leaves the board
+    and its locked card leaves the deck (list_sessions no longer sees it) → it's back to
+    'not awakened'; the deck TEMPLATE card it was woken from is untouched and re-wakeable.
+    All data stays on disk, recoverable, and the name is freed so re-waking reuses it
+    cleanly. Mirrors the card soft-delete (~/.trash/cards). Must be stopped first."""
+    import shutil
+
+    meta = load_session(name)
+    if meta is None:
+        raise FileNotFoundError(f"no session named {name!r}")
+    pid = meta.running_pid() or meta.daemon_pid()
+    if pid:
+        raise RuntimeError(f"session {name!r} is running (pid {pid}); stop it first")
+    trash = lunamoth_home() / ".trash" / "sessions"
+    trash.mkdir(parents=True, exist_ok=True)
+    tid = os.urandom(6).hex()
+    dest = trash / tid
+    shutil.move(str(meta.root), str(dest))
+    (dest / "origin.json").write_text(
+        json.dumps({"name": name, "ts": int(time.time())}), encoding="utf-8",
+    )
+    return {"ok": True, "trash_id": tid}
