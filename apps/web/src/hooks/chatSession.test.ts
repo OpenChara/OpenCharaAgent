@@ -62,6 +62,7 @@ function makeDeps(model: StreamModel, over: Partial<ChatSessionDeps> = {}): Chat
     renderLifeState: vi.fn(),
     finalize: vi.fn(),
     flushQueue: vi.fn(),
+    restoreQueue: vi.fn(),
     refreshSnapshot: vi.fn().mockResolvedValue(null),
     runStream: vi.fn().mockResolvedValue(undefined),
     ...over,
@@ -88,6 +89,29 @@ describe("ChatSession", () => {
     expect(deps.setReady).toHaveBeenCalledWith(true);
     expect(typeof fake.onLifeState).toBe("function"); // callbacks got wired
     expect(typeof fake.onClose).toBe("function");
+  });
+
+  it("holds live frames that arrive during attach, flushing them AFTER restore", async () => {
+    // Regression: a turn already in flight when we (re)enter streams a think frame
+    // WHILE attach is awaiting. It must be buffered until the restored history is
+    // down, then delivered — otherwise it renders above the history (the bug where
+    // in-progress thinking jumped to the top and looked missing).
+    const model = new StreamModel();
+    const order: string[] = [];
+    const deps = makeDeps(model, {
+      setReady: vi.fn(() => order.push("ready")),
+      onEvent: vi.fn(() => order.push("event")),
+    });
+    const fake: FakeClient = makeFakeClient({
+      attach: vi.fn().mockImplementation(async () => {
+        fake.onProtocolEvent?.({ type: "think", text: "…" }); // arrives mid-attach
+        return { char_name: "Quinn", restored: [], opening: "none" };
+      }),
+    });
+    await session("quinn", fake, deps).start();
+
+    expect(order).toEqual(["ready", "event"]); // event held until after restore/ready
+    expect(deps.onEvent).toHaveBeenCalledWith({ type: "think", text: "…" });
   });
 
   it("falls back to the requested name when attach omits char_name", async () => {

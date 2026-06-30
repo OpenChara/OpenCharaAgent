@@ -48,6 +48,8 @@ export interface ChatSessionDeps {
   renderLifeState: () => void;
   finalize: () => void;
   flushQueue: () => void;
+  /** restore + flush any queue persisted from a previous visit (after restore renders). */
+  restoreQueue: () => void;
   refreshSnapshot: () => Promise<SessionSnapshot | null>;
   runStream: (fn: () => Promise<unknown>) => Promise<void>;
 }
@@ -62,6 +64,10 @@ export class ChatSession {
   private lifeTimer: ReturnType<typeof setInterval> | null = null;
   private snapTimer: ReturnType<typeof setInterval> | null = null;
   private ownDisposed = false;
+  // Live frames are buffered until the restored history is rendered, so a turn that
+  // was already in flight when we (re)attached can't render ABOVE the history.
+  private restored = false;
+  private pendingEvents: ProtocolEvent[] = [];
 
   constructor(
     private readonly name: string,
@@ -94,15 +100,27 @@ export class ChatSession {
       deps.bump();
       deps.setReady(true);
 
-      // attach ≠ wake: a resting chara stays asleep; only note arrival otherwise.
-      const snap = await deps.refreshSnapshot();
+      // History is down — now flush any live frames buffered during attach, in order,
+      // so an in-flight turn's thinking renders at the END (where it belongs) and is
+      // visible, instead of stranded above the history. A non-empty buffer also means
+      // a turn is in flight (so the restored queue must wait for it, not send now).
+      const hadLiveTurn = this.pendingEvents.length > 0;
+      this.restored = true;
+      for (const ev of this.pendingEvents) deps.onEvent(ev);
+      this.pendingEvents = [];
+
+      // A message queued on a previous visit (sent while busy, then the user left):
+      // re-draw its bubble after the history, then send it only if the chara is idle —
+      // if a turn is in flight, its end (onTurnEnd) flushes the queue.
+      deps.restoreQueue();
+      if (!hadLiveTurn) deps.flushQueue();
+
+      // attach ≠ wake AND attach injects nothing: presence was removed 2026-06-18
+      // (no enter/leave marker, no `user_present` fact), so re-entering a chat draws
+      // NO local "arrived" divider either — it is a pure connection event. We still
+      // refresh the snapshot (it drives the panel + the resting placeholder).
+      await deps.refreshSnapshot();
       if (this.dead) return;
-      const restingNow = !!(snap && snap.rest_until && snap.rest_until * 1000 > Date.now());
-      const hasOpening = info.opening && info.opening !== "none" && !!info.opening_text;
-      if (!restingNow && !hasOpening) {
-        model.systemLine(deps.t("st-arrived"), "arrived");
-        deps.bump();
-      }
       if (!this.snapTimer) {
         this.snapTimer = setInterval(() => {
           if (!document.hidden) void deps.refreshSnapshot();
@@ -124,7 +142,16 @@ export class ChatSession {
     const { model } = deps;
     const client = this.client;
 
-    client.onProtocolEvent = (ev) => deps.onEvent(ev);
+    client.onProtocolEvent = (ev) => {
+      // Until the restored history is laid down, a live frame (a turn already in
+      // flight when we attached) must be HELD — rendering it now would push it above
+      // the history. Flushed in order right after renderRestored (see start()).
+      if (!this.restored) {
+        this.pendingEvents.push(ev);
+        return;
+      }
+      deps.onEvent(ev);
+    };
     client.onPermissionAsk = (p) => {
       model.pushPermission(p.id, p.kind, p.reason);
       deps.bump();

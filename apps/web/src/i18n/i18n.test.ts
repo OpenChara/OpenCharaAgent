@@ -106,6 +106,9 @@ describe("I18N strings map", () => {
   // resetting, reset-done) and added restart + soft-delete keys (+9: p-restart,
   // p-restart-sub, restarting, restart-done, p-delete, p-delete-sub, deleting,
   // delete-done, delete-confirm) → 718.
+  // − 1 (st-arrived "· 你来了 ·") removed: attach injects no presence marker, so the
+  //   client draws no "arrived" divider either (the .arrived CSS stays for rejoin-gap) → 717.
+  // + vis-ref-del-q (the "delete this reference? irreversible" confirm) → 718.
   it("preserves the full key set from the source dict (718 keys)", () => {
     expect(Object.keys(I18N).length).toBe(718);
   });

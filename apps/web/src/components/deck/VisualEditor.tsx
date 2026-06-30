@@ -162,7 +162,10 @@ export function VisualEditor({
   };
   const removeRef = (i: number) => {
     const r = refs[i];
+    // A persisted reference lives in the asset library — deleting it unlinks the file
+    // (irreversible), so confirm first.
     if (r?.rel) {
+      if (!confirm(t("vis-ref-del-q"))) return;
       void hub.call("card.asset_file_delete", { path: cardPath, rel: r.rel }, 20000).then(() => refresh()).catch(() => {});
     }
     setRefs((cur) => cur.filter((_, j) => j !== i));

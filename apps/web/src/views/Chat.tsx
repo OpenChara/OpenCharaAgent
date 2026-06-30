@@ -365,6 +365,7 @@ function ChatStreamPage({
       </div>
       <Composer
         charName={stream.charName}
+        persistKey={name}
         streaming={stream.streaming}
         resting={stream.resting}
         statusSlot={workText ? <div className={`work-status ${workCls}`}>{workText}</div> : null}

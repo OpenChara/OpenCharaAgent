@@ -56,8 +56,9 @@ def manual_command() -> str:
 
 
 def fetch_releases(timeout: float = _TIMEOUT) -> list[dict[str, Any]]:
-    """Releases (newest first), each with a ``wheel_url`` (its .whl asset). Prefers the
-    gh CLI (authed — handles a private repo, no anon rate limit), else unauth HTTP.
+    """Releases (newest first), each with a ``wheel_url`` (its .whl asset). The repo is
+    PUBLIC, so anonymous HTTP is all the update needs — gh is NOT required. gh is used
+    only WHEN it already happens to be installed, to dodge the 60/hr anon rate limit.
     Raises on a hard fetch failure (caller decides whether to fall back to a cache)."""
     data: Any = None
     gh = shutil.which("gh")
@@ -137,8 +138,8 @@ def apply() -> dict[str, Any]:
     else:
         url = latest_wheel_url()
         if not url:
-            return _fail("could not resolve the latest release wheel — GitHub may be unreachable, "
-                         "or a private repo (install the gh CLI and `gh auth login`)")
+            return _fail("could not resolve the latest release wheel — GitHub may be "
+                         "unreachable or rate-limited; try again shortly")
         # Reinstall from the LATEST wheel URL — `uv tool upgrade` is a no-op on a
         # URL-pinned tool, so this is the only thing that actually moves the version.
         steps = [[uv, "tool", "install", "--force", f"lunamoth[{EXTRAS}] @ {url}"]]

@@ -248,16 +248,53 @@ export function useCharaStream(name: string): CharaStream {
     [bump, runStream],
   );
 
+  // Persist the unsent QUEUE per-session so leaving the chat mid-turn doesn't drop a
+  // message the user already committed — it's restored + flushed on return. Text-only:
+  // queued items carrying attachments aren't persisted (blobs are too heavy for
+  // localStorage); they stay in-memory for this mount only.
+  const queueStoreKey = `lm-queue:${name}`;
+  const persistQueue = useCallback(() => {
+    try {
+      const items = queueRef.current.filter((q) => !q.atts.length).map((q) => ({ text: q.text }));
+      if (items.length) localStorage.setItem(queueStoreKey, JSON.stringify(items));
+      else localStorage.removeItem(queueStoreKey);
+    } catch {
+      /* quota / private mode — the in-memory queue still works */
+    }
+  }, [queueStoreKey]);
+
   const flushQueueRef = useRef<() => void>(() => {});
   const flushQueue = useCallback(() => {
     if (disposedRef.current || !queueRef.current.length) return;
     if (clientRef.current?.streaming || appTurnRef.current) return;
     const item = queueRef.current.shift()!;
+    persistQueue();
     modelRef.current!.removeItem(item.id);
     bump();
     void sendUser(item.text, item.atts);
-  }, [bump, sendUser]);
+  }, [bump, sendUser, persistQueue]);
   flushQueueRef.current = flushQueue;
+
+  // Restore a persisted queue after attach: re-draw the queued bubbles and repopulate
+  // the queue. The caller (ChatSession) decides WHEN to flush — immediately if the
+  // chara is idle, or on the in-flight turn's end (onTurnEnd → flushQueue) otherwise.
+  const restoreQueue = useCallback(() => {
+    let saved: { text?: string }[] = [];
+    try {
+      const raw = localStorage.getItem(queueStoreKey);
+      saved = raw ? JSON.parse(raw) : [];
+    } catch {
+      saved = [];
+    }
+    if (!Array.isArray(saved) || !saved.length) return;
+    for (const it of saved) {
+      const text = typeof it?.text === "string" ? it.text : "";
+      if (!text) continue;
+      const id = modelRef.current!.pushUser(text, [], { queued: true });
+      queueRef.current.push({ text, atts: [], id });
+    }
+    bump();
+  }, [queueStoreKey, bump]);
 
   /* ---- public send: queue if busy (chat.js submit/queueMessage) ---- */
   const send = useCallback(
@@ -268,11 +305,12 @@ export function useCharaStream(name: string): CharaStream {
         const id = modelRef.current!.pushUser(text, atts, { queued: true });
         bump();
         queueRef.current.push({ text, atts, id });
+        persistQueue();
       } else {
         void sendUser(text, atts);
       }
     },
-    [bump, sendUser],
+    [bump, sendUser, persistQueue],
   );
 
   const runCommand = useCallback(async (line: string, quiet?: boolean): Promise<string | null> => {
@@ -376,6 +414,7 @@ export function useCharaStream(name: string): CharaStream {
       renderLifeState,
       finalize,
       flushQueue: () => flushQueueRef.current(),
+      restoreQueue,
       refreshSnapshot,
       runStream,
     });

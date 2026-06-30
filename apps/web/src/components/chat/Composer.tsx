@@ -50,6 +50,7 @@ const COMMANDS: Cmd[] = [
 
 export function Composer({
   charName,
+  persistKey,
   streaming,
   resting,
   statusSlot,
@@ -60,6 +61,10 @@ export function Composer({
   onError,
 }: {
   charName: string;
+  /** STABLE per-session key for persisting the draft — the route/session name, not the
+   *  display charName (which flips from session-name to card-name after attach and would
+   *  wipe the in-progress draft on that change). */
+  persistKey: string;
   streaming: boolean;
   resting: boolean;
   /** the work-status line, rendered at the top of the composer-wrap (chat.js). */
@@ -72,7 +77,7 @@ export function Composer({
 }) {
   const t = useT();
   const { lang } = useLang();
-  // Persist the unsent text draft per-chara so leaving the chat doesn't throw away
+  // Persist the unsent text draft per-session so leaving the chat doesn't throw away
   // a half-typed message — restored on return. (Attachments are blobs, not persisted.)
   const draftKey = (n: string) => `lm-composer-draft:${n}`;
   const readDraft = (n: string): string => {
@@ -82,20 +87,26 @@ export function Composer({
       return "";
     }
   };
-  const [text, setText] = useState(() => readDraft(charName));
+  const [text, setText] = useState(() => readDraft(persistKey));
   const [staged, setStaged] = useState<StagedAttachment[]>([]);
   useEffect(() => {
-    setText(readDraft(charName));
+    setText(readDraft(persistKey));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [charName]);
+  }, [persistKey]);
   useEffect(() => {
     try {
-      if (text) localStorage.setItem(draftKey(charName), text);
-      else localStorage.removeItem(draftKey(charName));
+      if (text) localStorage.setItem(draftKey(persistKey), text);
+      else localStorage.removeItem(draftKey(persistKey));
     } catch {
       /* private mode — ignore */
     }
-  }, [text, charName]);
+  }, [text, persistKey]);
+  // The textarea auto-grows on input (onChange sets an inline height). When the box
+  // is cleared — after sending, or by deleting everything — that inline height would
+  // otherwise stick, leaving a tall empty box; collapse it back to one row.
+  useEffect(() => {
+    if (!text && taRef.current) taRef.current.style.height = "auto";
+  }, [text]);
   const [stopping, setStopping] = useState(false);
   // The optimistic "stopping" state must clear when the turn ends (whether the
   // interrupt landed or its request failed and was swallowed) — otherwise the
@@ -107,6 +118,14 @@ export function Composer({
   const [slashOff, setSlashOff] = useState(false); // Esc dismissed the palette
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  // IME guard: `nativeEvent.isComposing` alone is unreliable across CJK IMEs — the
+  // Enter that COMMITS a composition can arrive with isComposing=false, sending a
+  // half-finished message. Track composition with a ref AND treat keyCode 229 (the
+  // "IME is processing" code) as composing, so confirming pinyin/English-through-IME
+  // never leaks an accidental send.
+  const composingRef = useRef(false);
+  const imeBusy = (ev: KeyboardEvent<HTMLTextAreaElement>) =>
+    ev.nativeEvent.isComposing || composingRef.current || ev.keyCode === 229;
   const wrapRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   // Drag-and-drop file upload. A depth counter balances the dragenter/dragleave
@@ -276,14 +295,14 @@ export function Composer({
     if (paletteOpen) {
       if (ev.key === "ArrowDown") { ev.preventDefault(); setSel((i) => (i + 1) % matches.length); return; }
       if (ev.key === "ArrowUp") { ev.preventDefault(); setSel((i) => (i - 1 + matches.length) % matches.length); return; }
-      if (ev.key === "Tab" || (ev.key === "Enter" && !ev.shiftKey && !ev.nativeEvent.isComposing)) {
+      if (ev.key === "Tab" || (ev.key === "Enter" && !ev.shiftKey && !imeBusy(ev))) {
         ev.preventDefault();
         chooseCmd(matches[Math.min(sel, matches.length - 1)]); // autocomplete; a 2nd Enter sends
         return;
       }
       if (ev.key === "Escape") { ev.preventDefault(); setSlashOff(true); return; }
     }
-    if (ev.key === "Enter" && !ev.shiftKey && !ev.nativeEvent.isComposing) {
+    if (ev.key === "Enter" && !ev.shiftKey && !imeBusy(ev)) {
       ev.preventDefault();
       submit();
     }
@@ -404,6 +423,8 @@ export function Composer({
             el.style.height = "auto";
             el.style.height = Math.min(el.scrollHeight, 130) + "px";
           }}
+          onCompositionStart={() => { composingRef.current = true; }}
+          onCompositionEnd={() => { composingRef.current = false; }}
           onKeyDown={onKeyDown}
         />
         <button
