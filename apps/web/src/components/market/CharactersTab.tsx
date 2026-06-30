@@ -20,9 +20,10 @@ import { MarketCardDetail } from "./MarketCardDetail";
 type HubCaller = { call<T = unknown>(m: string, p?: Record<string, unknown>, t?: number): Promise<T> };
 const MIME_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
 
-/** Bring a card's cover over CLIENT-SIDE as the character's ART — keyvisual (参考图) AND
- *  sprite (立绘), never the avatar. Best-effort: a CORS block / offline just leaves the
- *  card showing its stored cover URL as the sprite (see _card_entry). */
+/** Bring a card's cover over CLIENT-SIDE as: the sprite (立绘, the displayed standing art)
+ *  AND a persisted reference image (参考图) in the card's asset library. NOT the keyvisual
+ *  (主视觉, the AI-generated anchor, left empty) and never the avatar. Best-effort: a CORS
+ *  block / offline just leaves the card showing its stored cover URL as the sprite. */
 async function bringCoverOver(hub: HubCaller, cardPath: string, imageUrl: string): Promise<void> {
   let blob: Blob;
   try {
@@ -37,8 +38,8 @@ async function bringCoverOver(hub: HubCaller, cardPath: string, imageUrl: string
   const b64 = await fileToB64(new File([blob], "cover", { type: blob.type }));
   if (!b64) return;
   try {
-    await hub.call("card.asset_save", { path: cardPath, kind: "keyvisual", data_b64: b64, ext }, 30000);
     await hub.call("card.asset_save", { path: cardPath, kind: "sprite", data_b64: b64, ext }, 30000);
+    await hub.call("card.asset_file_upload", { path: cardPath, name: `reference.${ext}`, data_b64: b64, ext }, 30000);
   } catch {
     /* best-effort */
   }

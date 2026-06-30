@@ -41,7 +41,7 @@ from ._common import (
     locked_card_write,
     seeded_theme,
 )
-from .avatars import _avatar_thumb_uri, asset_save
+from .avatars import _avatar_thumb_uri, asset_file_upload, asset_save
 from .config import bundled_cards_dir, user_cards_dir, user_worlds_dir
 
 _log = logging.getLogger("lunamoth.server.hub")
@@ -374,17 +374,17 @@ def _foreign_to_card(obj: dict[str, Any]) -> dict[str, Any]:
 
 
 def _attach_png_art(card_path: str, raw_png: bytes) -> None:
-    """Bring a dragged-in card PNG's portrait over as the character's ART — the keyvisual
-    (参考图, the identity anchor reused as a reference for later generation) AND the sprite
-    (立绘). NOT the avatar: a tavern portrait is the character's reference art, while the
-    avatar (and stickers / background) are left for the user to generate. Best-effort —
-    a failure just leaves the card art-less, the card itself already imported."""
+    """Bring a dragged-in card PNG's portrait over as: the sprite (立绘, its displayed
+    standing art) AND a persisted reference image (参考图) in the card's asset library, so
+    the visuals editor's reference tray loads it and generation can use it as the guide.
+    NOT the keyvisual (主视觉, the AI-GENERATED anchor — left empty for the user) and NOT
+    the avatar. Best-effort: a failure just leaves the card art-less, already imported."""
     try:
         b64 = base64.b64encode(raw_png).decode("ascii")
-        asset_save(card_path, "keyvisual", b64, "png")
-        asset_save(card_path, "sprite", b64, "png")
+        asset_save(card_path, "sprite", b64, "png")              # 立绘 (display)
+        asset_file_upload(card_path, "reference.png", b64, "png")  # 参考图 (persisted, in assets/)
     except Exception:  # noqa: BLE001 — the art is a bonus, never fatal to the import
-        _log.warning("could not attach the PNG portrait as art for %s", card_path, exc_info=True)
+        _log.warning("could not attach the PNG portrait for %s", card_path, exc_info=True)
 
 
 def import_foreign_card(text: str = "", png_b64: str = "") -> dict[str, Any]:

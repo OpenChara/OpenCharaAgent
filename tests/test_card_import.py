@@ -180,6 +180,34 @@ def test_import_png_without_embedded_card(monkeypatch):
         C.import_foreign_card(png_b64=base64.b64encode(bare).decode("ascii"))
 
 
+def test_import_png_saves_sprite_and_persists_reference(tmp_path, monkeypatch):
+    """A dragged-in PNG card's portrait → the sprite (立绘) AND a persisted reference image
+    (参考图) in the card's asset library — never the keyvisual (主视觉, left for the user)."""
+    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
+    import io
+    import zlib
+    from PIL import Image
+    from lunamoth.content.cards import CharacterCard
+    from lunamoth.server.hub import avatars as A
+
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 96), (90, 140, 200)).save(buf, "PNG")  # a real raster
+    raw = buf.getvalue()
+    body = b"chara\x00" + base64.b64encode(json.dumps(
+        {"data": {"name": "Refy", "description": "x", "first_mes": "hi"}}).encode())
+    crc = zlib.crc32(b"tEXt" + body) & 0xffffffff
+    chunk = struct.pack(">I", len(body)) + b"tEXt" + body + struct.pack(">I", crc)
+    i = raw.rfind(b"\x00\x00\x00\x00IEND")
+    png = raw[:i] + chunk + raw[i:]
+
+    res = C.import_foreign_card(png_b64=base64.b64encode(png).decode("ascii"))
+    card = CharacterCard.load(res["path"])
+    assert card.asset_path("sprite") is not None          # 立绘 set (displayed art)
+    assert card.asset_path("keyvisual") is None           # 主视觉 left empty (AI-generated slot)
+    imgs = [a for a in A.assets_list(res["path"])["assets"] if a["kind"] == "image"]
+    assert imgs, "the portrait must persist as a reference in the asset library (参考图)"
+
+
 # ---- the source art is the 立绘/sprite, never the avatar -----------------------
 
 def test_card_entry_shows_source_image_as_sprite_not_avatar(tmp_path):

@@ -15,6 +15,9 @@ export type VisKind = "avatar" | "sprite" | "background" | "keyvisual" | "sticke
 export interface Ref {
   data_b64: string;
   mime: string;
+  /** The card asset-library path (`assets/<name>`) when this reference is PERSISTED
+   *  there — so removing it can delete the saved file. Absent for a not-yet-saved ref. */
+  rel?: string;
 }
 
 export interface Brief {

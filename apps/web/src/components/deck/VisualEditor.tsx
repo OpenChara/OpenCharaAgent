@@ -119,16 +119,54 @@ export function VisualEditor({
     return () => { live = false; };
   }, [wantsCut, hasImageKey, hub]);
 
+  // Reference images PERSIST in the card's asset library (assets/) — they're the "参考图"
+  // the user uploads, and a tavern import drops its art here too. Load them on open so
+  // they survive leaving the view and guide generation; add/remove write through to the
+  // library. (Only the first REF_MAX images are used as references.)
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      try {
+        const r = await hub.call<{ assets?: { rel: string; kind: string }[] }>(
+          "card.assets_list", { path: cardPath }, 20000);
+        const imgs = (r.assets || []).filter((a) => a.kind === "image").slice(0, REF_MAX);
+        const loaded: Ref[] = [];
+        for (const a of imgs) {
+          try {
+            const f = await hub.call<{ data_uri?: string }>(
+              "card.asset_file_read", { path: cardPath, rel: a.rel }, 20000);
+            const m = /^data:([^;]+);base64,(.*)$/.exec(f.data_uri || "");
+            if (m) loaded.push({ mime: m[1], data_b64: m[2], rel: a.rel });
+          } catch { /* skip an unreadable asset */ }
+        }
+        if (live && loaded.length) setRefs(loaded);
+      } catch { /* no assets / offline — empty tray */ }
+    })();
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cardPath]);
+
   const addRef = async (f: File) => {
     if (refs.length >= REF_MAX) return;
     try {
       const b64 = await fileToB64(f);
-      setRefs((cur) => (cur.length >= REF_MAX ? cur : [...cur, { data_b64: b64, mime: f.type || "image/png" }]));
+      const ext = f.type === "image/webp" ? "webp" : f.type === "image/jpeg" ? "jpg" : "png";
+      const saved = await hub.call<{ rel?: string }>(
+        "card.asset_file_upload", { path: cardPath, name: `reference.${ext}`, data_b64: b64, ext }, 30000);
+      setRefs((cur) => (cur.length >= REF_MAX ? cur
+        : [...cur, { data_b64: b64, mime: f.type || "image/png", rel: saved?.rel }]));
+      void refresh();
     } catch {
       deckToast(t("av-up-read"), true);
     }
   };
-  const removeRef = (i: number) => setRefs((cur) => cur.filter((_, j) => j !== i));
+  const removeRef = (i: number) => {
+    const r = refs[i];
+    if (r?.rel) {
+      void hub.call("card.asset_file_delete", { path: cardPath, rel: r.rel }, 20000).then(() => refresh()).catch(() => {});
+    }
+    setRefs((cur) => cur.filter((_, j) => j !== i));
+  };
 
   const slotApi = useRef<Partial<Record<VisKind, (() => Promise<void>) | null>>>({});
   const [genAllBusy, setGenAllBusy] = useState(false);
