@@ -17,6 +17,7 @@ import { Select, type SelectOption } from "../settings/Select";
 import { Segmented } from "../ui/Segmented";
 import type { ModelInfo } from "../deck/types";
 import type { CharaStream, Snapshot } from "../../hooks/useCharaStream";
+import { TasksSection, type TaskItem } from "./TasksSection";
 
 const REASONING = ["off", "low", "medium", "high"] as const;
 
@@ -321,13 +322,6 @@ function ModelEffort({ stream, snap }: { stream: CharaStream; snap: Snapshot }) 
   );
 }
 
-interface TaskItem {
-  id: string;
-  content: string;
-  status?: string;
-  done_at?: number;
-}
-
 interface Extras {
   polaris?: string;
   memory?: string;
@@ -345,7 +339,6 @@ function ProfilePane({ stream, name }: { stream: CharaStream; name: string }) {
   const { hub } = useHubApi();
   const [ex, setEx] = useState<Extras | null>(null);
   const [skills, setSkills] = useState<string | null>(null);
-  const [showDone, setShowDone] = useState(false);
   // Polaris + tasks are DISPLAY-ONLY here — the chara owns its tasks (set via the
   // `task` tool); the aspiration is changed only with the `/aspiration` command.
 
@@ -385,34 +378,7 @@ function ProfilePane({ stream, name }: { stream: CharaStream; name: string }) {
         )}
       </section>
 
-      <section className="dsec">
-        <h4>{t("p-tasks")}</h4>
-        {ex === null ? (
-          <div className="placeholder-pane">…</div>
-        ) : (ex.tasks?.active.length ?? 0) > 0 ? (
-          <ul className="task-list">
-            {ex.tasks!.active.map((it) => (
-              <li key={it.id} className="task-item">{it.content}</li>
-            ))}
-          </ul>
-        ) : (
-          <div className="placeholder-pane">{t("tasks-empty")}</div>
-        )}
-        {ex && (ex.tasks?.done.length ?? 0) > 0 && (
-          <div className="task-done">
-            <button className="task-done-toggle" onClick={() => setShowDone((v) => !v)}>
-              {showDone ? "▾" : "▸"} {t("tasks-sealed")} ({ex.tasks!.done.length})
-            </button>
-            {showDone && (
-              <ul className="task-list done">
-                {ex.tasks!.done.map((it) => (
-                  <li key={it.id} className="task-item done">{it.content}</li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
-      </section>
+      <TasksSection tasks={ex?.tasks} loading={ex === null} />
 
       <section className="dsec">
         <h4>{t("p-skills")}</h4>

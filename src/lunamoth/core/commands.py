@@ -122,13 +122,17 @@ def _polaris(agent, session, arg: str) -> Reply:
 def _skills(agent, session, arg: str) -> Reply:
     skills = agent.skills.scan()
     if not skills:
-        body = "(no skills yet)\n\nThe chara writes its own with skill_manage;\nyou can drop SKILL.md dirs into ~/.lunamoth/skills/."
+        body = (
+            "No skills yet.\n\n"
+            "Skills are bits of step-by-step know-how. This chara writes its own as it "
+            "learns from real work, and can also draw on a shared library and the "
+            "bundled examples."
+        )
         return Reply(True, body, (), verbose=True)
-    else:
-        tag = {"own": "✎", "user": "⌂", "bundled": "·"}
-        body = "\n".join(
-            f"{tag.get(sk['origin'], '?')} {sk['name']} — {sk['description']}" for sk in skills
-        ) + "\n\n✎ the chara's own  ⌂ ~/.lunamoth/skills  · bundled"
+    tag = {"own": "✎", "user": "⌂", "bundled": "·"}
+    body = "\n".join(
+        f"{tag.get(sk['origin'], '?')} {sk['name']} — {sk['description']}" for sk in skills
+    ) + "\n\n✎ this chara's own   ⌂ shared library   · bundled"
     return Reply(True, body, tuple(skills), verbose=True)
 
 
