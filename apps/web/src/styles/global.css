@@ -2360,6 +2360,7 @@ body.dark .no-fallback-row{border-color:var(--hairline)}
   background:var(--panel); border:1px solid var(--hairline); border-radius:12px;
   box-shadow:0 12px 36px rgba(20,40,60,.18); padding:14px; display:flex; flex-direction:column; gap:15px;
 }
+.market-pop-group{display:flex; flex-direction:column}
 .market-pop-h{
   font-size:10.5px; letter-spacing:.4px; text-transform:uppercase; color:var(--text-3);
   font-weight:650; margin-bottom:8px;
