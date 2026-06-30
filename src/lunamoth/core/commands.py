@@ -122,13 +122,7 @@ def _polaris(agent, session, arg: str) -> Reply:
 def _skills(agent, session, arg: str) -> Reply:
     skills = agent.skills.scan()
     if not skills:
-        body = (
-            "No skills yet.\n\n"
-            "Skills are bits of step-by-step know-how. This chara writes its own as it "
-            "learns from real work, and can also draw on a shared library and the "
-            "bundled examples."
-        )
-        return Reply(True, body, (), verbose=True)
+        return Reply(True, "No skills yet.", (), verbose=True)
     tag = {"own": "✎", "user": "⌂", "bundled": "·"}
     body = "\n".join(
         f"{tag.get(sk['origin'], '?')} {sk['name']} — {sk['description']}" for sk in skills

@@ -18,6 +18,7 @@ import { Segmented } from "../ui/Segmented";
 import type { ModelInfo } from "../deck/types";
 import type { CharaStream, Snapshot } from "../../hooks/useCharaStream";
 import { TasksSection, type TaskItem } from "./TasksSection";
+import { CollapsibleSection } from "./CollapsibleSection";
 
 const REASONING = ["off", "low", "medium", "high"] as const;
 
@@ -378,10 +379,11 @@ function ProfilePane({ stream, name }: { stream: CharaStream; name: string }) {
         )}
       </section>
 
-      <TasksSection tasks={ex?.tasks} loading={ex === null} />
+      <CollapsibleSection title={t("p-tasks")}>
+        <TasksSection tasks={ex?.tasks} loading={ex === null} />
+      </CollapsibleSection>
 
-      <section className="dsec">
-        <h4>{t("p-skills")}</h4>
+      <CollapsibleSection title={t("p-skills")}>
         {skills === null ? (
           <div className="placeholder-pane">…</div>
         ) : skills ? (
@@ -389,10 +391,9 @@ function ProfilePane({ stream, name }: { stream: CharaStream; name: string }) {
         ) : (
           <div className="placeholder-pane">{t("d-empty-skills")}</div>
         )}
-      </section>
+      </CollapsibleSection>
 
-      <section className="dsec">
-        <h4>{t("p-memory")}</h4>
+      <CollapsibleSection title={t("p-memory")} defaultOpen={false}>
         {ex === null ? (
           <div className="placeholder-pane">…</div>
         ) : (
@@ -403,7 +404,7 @@ function ProfilePane({ stream, name }: { stream: CharaStream; name: string }) {
             <div className="memory-text">{ex.user_memory || t("d-empty-mem")}</div>
           </>
         )}
-      </section>
+      </CollapsibleSection>
     </div>
   );
 }

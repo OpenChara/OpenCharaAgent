@@ -182,7 +182,7 @@ export const I18N = {
   "p-polaris": ["理想", "Aspiration"],
   "polaris-empty": ["还没设定 · 用 /aspiration 设定", "Not set yet · set it with /aspiration"],
   "p-tasks": ["任务", "Tasks"],
-  "tasks-empty": ["还没有任务 · 由角色自己设定", "No tasks yet · the chara sets its own"],
+  "tasks-empty": ["还没有任务", "No tasks yet"],
   "tasks-sealed": ["已完成", "Completed"],
   "p-profile": ["档案", "Profile"],
   "p-model-scope-note": ["供应商、模型与思考强度都为这个角色单独保存，重启后依然生效。供应商密钥仍统一存放在 设置·提供商。", "Provider, model and reasoning are saved per character and survive a restart. Provider keys still live in Settings · Providers."],
