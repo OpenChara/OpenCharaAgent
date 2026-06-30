@@ -12,6 +12,7 @@ import { useT, type TKey } from "../../i18n";
 import { useHub } from "../../state/hub";
 import { rpcErrText } from "../../lib/status";
 import { fileToB64 } from "../../lib/file";
+import { compactNum } from "../../lib/format";
 import { deckToast } from "../ui/deckToast";
 import { BrandLoader } from "../ui/BrandLoader";
 import { MarketCardDetail } from "./MarketCardDetail";
@@ -83,12 +84,6 @@ const TAGS = [
 
 const PAGE_SIZE = 24;
 
-function compactNum(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
-  if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "k";
-  return String(n);
-}
-
 export function CharactersTab() {
   const t = useT();
   const { hub, refresh } = useHub();
@@ -112,7 +107,16 @@ export function CharactersTab() {
   const [imported, setImported] = useState<Set<string>>(new Set());
   const [broken, setBroken] = useState<Set<string>>(new Set());
   const [preview, setPreview] = useState<MarketCard | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const reqSeq = useRef(0);
+
+  const activeCount = tags.length + (oc ? 1 : 0) + (lorebook ? 1 : 0) + (nsfw ? 1 : 0);
+  const clearFilters = () => {
+    setTags([]);
+    setOc(false);
+    setLorebook(false);
+    setNsfw(false);
+  };
 
   const tagsKey = [...tags].sort().join(",");
 
@@ -168,6 +172,15 @@ export function CharactersTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, sort, nsfw, oc, lorebook, tagsKey]);
 
+  useEffect(() => {
+    if (!filtersOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFiltersOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [filtersOpen]);
+
   const submitSearch = () => setQuery(queryInput.trim());
   const toggleTag = (tag: string) =>
     setTags((prev) => (prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]));
@@ -189,14 +202,6 @@ export function CharactersTab() {
       }
     },
     [hub, nsfw, refresh, t],
-  );
-
-  const filterPills = (
-    <>
-      <FilterToggle on={oc} onClick={() => setOc((v) => !v)} label={t("market-filter-oc")} />
-      <FilterToggle on={lorebook} onClick={() => setLorebook((v) => !v)} label={t("market-filter-lorebook")} />
-      <FilterToggle on={nsfw} onClick={() => setNsfw((v) => !v)} label={t("market-nsfw")} />
-    </>
   );
 
   return (
@@ -228,20 +233,89 @@ export function CharactersTab() {
             </button>
           ))}
         </div>
-        <div className="market-filters">{filterPills}</div>
+        <div className="market-filterwrap">
+          <button
+            className={"market-filtersbtn" + (activeCount ? " on" : "")}
+            onClick={() => setFiltersOpen((v) => !v)}
+            aria-expanded={filtersOpen}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden>
+              <path d="M2 4h12M4 8h8M6 12h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" fill="none" />
+            </svg>
+            {t("market-filters-btn")}
+            {activeCount > 0 && <span className="market-filter-badge">{activeCount}</span>}
+          </button>
+          {filtersOpen && (
+            <>
+              <div className="market-pop-catch" onClick={() => setFiltersOpen(false)} />
+              <div className="market-pop" role="dialog" aria-label={t("market-filters-btn")}>
+                <div className="market-pop-group">
+                  <div className="market-pop-h">{t("market-filter-tags")}</div>
+                  <div className="market-pop-tags">
+                    {TAGS.map((tag) => (
+                      <button
+                        key={tag}
+                        className={"market-tagchip" + (tags.includes(tag) ? " on" : "")}
+                        onClick={() => toggleTag(tag)}
+                      >
+                        {tag}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="market-pop-group">
+                  <div className="market-pop-h">{t("market-filter-type")}</div>
+                  <label className="market-check">
+                    <input type="checkbox" checked={oc} onChange={(e) => setOc(e.target.checked)} />
+                    <span>{t("market-filter-oc")}</span>
+                  </label>
+                  <label className="market-check">
+                    <input type="checkbox" checked={lorebook} onChange={(e) => setLorebook(e.target.checked)} />
+                    <span>{t("market-filter-lorebook")}</span>
+                  </label>
+                </div>
+                <div className="market-pop-group">
+                  <div className="market-pop-h">{t("market-filter-mature")}</div>
+                  <label className="market-check">
+                    <input type="checkbox" checked={nsfw} onChange={(e) => setNsfw(e.target.checked)} />
+                    <span>{t("market-nsfw")}</span>
+                  </label>
+                  <div className="market-pop-note">{t("market-nsfw-note")}</div>
+                </div>
+                {activeCount > 0 && (
+                  <button className="market-pop-clear" onClick={clearFilters}>{t("market-clear")}</button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
-      <div className="market-tagrow">
-        {TAGS.map((tag) => (
-          <button
-            key={tag}
-            className={"market-tagchip" + (tags.includes(tag) ? " on" : "")}
-            onClick={() => toggleTag(tag)}
-          >
-            {tag}
-          </button>
-        ))}
-      </div>
+      {activeCount > 0 && (
+        <div className="market-applied">
+          {tags.map((tag) => (
+            <button key={tag} className="market-applied-chip" onClick={() => toggleTag(tag)}>
+              {tag} <span aria-hidden>✕</span>
+            </button>
+          ))}
+          {oc && (
+            <button className="market-applied-chip" onClick={() => setOc(false)}>
+              {t("market-filter-oc")} <span aria-hidden>✕</span>
+            </button>
+          )}
+          {lorebook && (
+            <button className="market-applied-chip" onClick={() => setLorebook(false)}>
+              {t("market-filter-lorebook")} <span aria-hidden>✕</span>
+            </button>
+          )}
+          {nsfw && (
+            <button className="market-applied-chip mature" onClick={() => setNsfw(false)}>
+              {t("market-nsfw")} <span aria-hidden>✕</span>
+            </button>
+          )}
+          <button className="market-applied-clear" onClick={clearFilters}>{t("market-clear")}</button>
+        </div>
+      )}
 
       <div className="market-scroll">
         {loading ? (
@@ -327,13 +401,5 @@ export function CharactersTab() {
         />
       )}
     </div>
-  );
-}
-
-function FilterToggle({ on, onClick, label }: { on: boolean; onClick: () => void; label: string }) {
-  return (
-    <button className={"market-filter" + (on ? " on" : "")} onClick={onClick} aria-pressed={on}>
-      {label}
-    </button>
   );
 }

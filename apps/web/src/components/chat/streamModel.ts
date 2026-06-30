@@ -69,8 +69,8 @@ export interface TextItem {
   id: string;
   kind: "say" | "super";
   raw: string;
-  /** super-chat only: the speak timestamp (epoch s). Read/unread is derived in the
-   *  view from its own watermark (Chat.tsx superReadTs) — NOT stored on the item. */
+  /** message time (epoch s) — drives the WeChat-style time separators. For a
+   *  super-chat it doubles as the read/unread watermark key (Chat.tsx superReadTs). */
   ts?: number;
 }
 
@@ -91,6 +91,8 @@ export interface UserItem {
   queued?: boolean;
   /** an incoming peer (gateway) message — shows a "via X" tag. */
   via?: string;
+  /** message time (epoch s) — drives the WeChat-style time separators. */
+  ts?: number;
 }
 
 export interface UserAttachment {
@@ -266,10 +268,11 @@ export class StreamModel {
   }
 
   /* ---- user / peer / queued bubbles ---- */
-  pushUser(text: string, atts: UserAttachment[], opts?: { queued?: boolean; via?: string }): string {
+  pushUser(text: string, atts: UserAttachment[], opts?: { queued?: boolean; via?: string; ts?: number }): string {
     this.closeCurrent();
     const id = this.nextId();
-    this.items.push({ id, kind: "user", text, atts, queued: opts?.queued, via: opts?.via });
+    const ts = opts?.ts ?? Date.now() / 1000;
+    this.items.push({ id, kind: "user", text, atts, queued: opts?.queued, via: opts?.via, ts });
     return id;
   }
 
@@ -326,13 +329,11 @@ export class StreamModel {
     if (this.cur.kind !== kind) {
       this.closeCurrent();
       this.breakToolGroup();
-      // Restore uses the message's recorded ts (chat.js `m.ts || now`) so an
-      // already-read historical super-chat doesn't re-render as unread.
+      // Restore uses the message's recorded ts (chat.js `m.ts || now`) so an already-read
+      // historical super-chat doesn't re-render as unread, and time separators line up
+      // with when the message was actually said rather than when it was replayed.
       const ts = tsOverride ?? Date.now() / 1000;
-      const item: TextItem =
-        kind === "super"
-          ? { id: this.nextId(), kind, raw: "", ts }
-          : { id: this.nextId(), kind, raw: "" };
+      const item: TextItem = { id: this.nextId(), kind, raw: "", ts };
       this.items.push(item);
       this.cur = { kind, item };
     }
@@ -397,7 +398,7 @@ export class StreamModel {
       const hasText = content.trim().length > 0;
       if (m.role === "user") {
         if (!hasText) continue;
-        this.pushUser(content, []);
+        this.pushUser(content, [], { ts: m.ts });
       } else if (m.role === "system") {
         // A summary row marks a compaction BOUNDARY: render a subtle divider (not the
         // summary text) so the reader knows the chara's verbatim memory above here is
@@ -421,7 +422,7 @@ export class StreamModel {
           });
         }
         if (hasText) {
-          this.appendSay(content, false);
+          this.appendSay(content, false, m.ts);
           this.closeCurrent();
         }
         const calls = Array.isArray(m.tool_calls) ? m.tool_calls : [];

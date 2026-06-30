@@ -425,6 +425,11 @@ body.technical .chan-badge{display:inline-block}
 .sys-note.compacted::before,.sys-note.compacted::after{
   content:""; height:1px; flex:1; background:var(--hairline-2);
 }
+/* WeChat-style centered time separator between messages. */
+.time-sep{
+  align-self:center; margin:10px 0 2px; font-size:11px; color:var(--text-3);
+  letter-spacing:.04em; text-align:center; user-select:none;
+}
 .md-pre{
   font-family:var(--mono); font-size:11.5px; background:rgba(20,40,60,.05); border-radius:8px;
   padding:9px 11px; overflow:auto; line-height:1.5; margin:4px 0;
@@ -2284,16 +2289,6 @@ body.dark #statusbar{background:var(--bg)}
 body.dark .no-fallback-row{border-color:var(--hairline)}
 
 /* ---- Market section (角色卡市场) ------------------------------------------------ */
-.market-tabs{display:flex; gap:6px}
-.market-tab{
-  padding:6px 14px; font-size:13px; font-weight:550; border-radius:8px;
-  border:1px solid transparent; background:transparent; color:var(--text-2); cursor:pointer;
-}
-.market-tab:hover:not(:disabled){background:var(--accent-soft); color:var(--accent-deep)}
-.market-tab.active{background:var(--accent-soft); color:var(--accent-deep); border-color:var(--accent)}
-.market-tab:disabled{opacity:.5; cursor:default}
-body.dark .market-tab.active{background:rgba(91,159,212,.18)}
-
 .market-body{flex:1; min-height:0; display:flex; flex-direction:column}
 .market-controls{display:flex; align-items:center; gap:10px; padding:4px 28px 6px}
 .market-controls .searchfield{flex:1; max-width:520px}
@@ -2347,18 +2342,53 @@ body.dark .market-tab.active{background:rgba(91,159,212,.18)}
   color:var(--text-2); cursor:pointer; font-weight:550;
 }
 .market-sort.on{background:var(--panel); color:var(--text); box-shadow:0 1px 3px rgba(20,40,60,.12)}
-.market-filters{display:flex; gap:6px; margin-left:auto}
-.market-filter{
-  border:1px solid var(--hairline); background:var(--panel); color:var(--text-2);
-  padding:4px 11px; border-radius:999px; font-size:12px; cursor:pointer;
+/* the Filters button + its popover panel — faceted filters live HERE, not sprawled */
+.market-filterwrap{position:relative; margin-left:auto}
+.market-filtersbtn{
+  display:flex; align-items:center; gap:6px; border:1px solid var(--hairline); background:var(--panel);
+  color:var(--text-2); padding:5px 12px; border-radius:9px; font-size:13px; cursor:pointer; font-weight:550;
 }
-.market-filter.on{background:var(--accent); border-color:var(--accent); color:#fff}
-.market-tagrow{display:flex; flex-wrap:wrap; gap:6px; padding:2px 28px 8px}
+.market-filtersbtn:hover{border-color:var(--accent)}
+.market-filtersbtn.on{border-color:var(--accent); color:var(--accent-deep)}
+.market-filter-badge{
+  display:inline-flex; align-items:center; justify-content:center; min-width:17px; height:17px; padding:0 5px;
+  border-radius:999px; background:var(--accent); color:#fff; font-size:10.5px; font-weight:700;
+}
+.market-pop-catch{position:fixed; inset:0; z-index:40}
+.market-pop{
+  position:absolute; right:0; top:calc(100% + 6px); z-index:41; width:300px; max-width:90vw;
+  background:var(--panel); border:1px solid var(--hairline); border-radius:12px;
+  box-shadow:0 12px 36px rgba(20,40,60,.18); padding:14px; display:flex; flex-direction:column; gap:15px;
+}
+.market-pop-h{
+  font-size:10.5px; letter-spacing:.4px; text-transform:uppercase; color:var(--text-3);
+  font-weight:650; margin-bottom:8px;
+}
+.market-pop-tags{display:flex; flex-wrap:wrap; gap:6px}
 .market-tagchip{
   border:1px solid var(--hairline); background:var(--panel); color:var(--text-3);
   padding:3px 10px; border-radius:999px; font-size:11.5px; cursor:pointer;
 }
 .market-tagchip.on{background:var(--accent-soft); border-color:var(--accent); color:var(--accent-deep)}
+.market-check{display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text); cursor:pointer; padding:3px 0}
+.market-check input{accent-color:var(--accent)}
+.market-pop-note{font-size:11px; color:var(--text-3); margin-top:4px; line-height:1.4}
+.market-pop-clear{
+  border:0; background:var(--bg); color:var(--text-2); padding:7px; border-radius:8px;
+  font-size:12.5px; cursor:pointer; font-weight:550;
+}
+.market-pop-clear:hover{color:var(--accent-deep)}
+/* applied-filter chips above the results — at-a-glance, each removable, + clear all */
+.market-applied{display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:0 28px 10px}
+.market-applied-chip{
+  display:inline-flex; align-items:center; gap:5px; border:1px solid var(--accent); background:var(--accent-soft);
+  color:var(--accent-deep); padding:3px 9px; border-radius:999px; font-size:11.5px; cursor:pointer;
+}
+.market-applied-chip.mature{border-color:rgba(200,60,70,.6); background:rgba(200,60,70,.10); color:#c8323e}
+.market-applied-chip span{opacity:.65}
+.market-applied-clear{
+  border:0; background:transparent; color:var(--text-3); font-size:11.5px; cursor:pointer; text-decoration:underline;
+}
 .market-count{font-size:11.5px; color:var(--text-3); padding:0 2px 10px}
 .market-stats{display:flex; gap:10px; font-size:11px; color:var(--text-3); margin-top:2px}
 .market-stats .market-oc{color:var(--accent-deep); font-weight:650}
@@ -2392,10 +2422,21 @@ body.dark .market-sorts{background:rgba(255,255,255,.05)}
 body.dark .market-sort.on{background:#2A323A}
 @media (max-width:760px){
   .market-controls{padding:8px 14px 6px; flex-wrap:wrap}
-  .market-bar,.market-tagrow{padding-left:14px; padding-right:14px}
-  .market-filters{margin-left:0}
+  .market-bar,.market-applied{padding-left:14px; padding-right:14px}
   .market-scroll{padding:4px 14px 22px}
   .market-grid{grid-template-columns:repeat(2,1fr); gap:12px}
   .mkd-head{flex-direction:column}
   .mkd-cover{width:120px}
 }
+
+/* The chara's tasks in the Profile pane — active threads + a fold of sealed (done)
+ * records. The chara owns these (set via the `task` tool); display-only here. */
+.task-list{list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px}
+.task-item{font-size:13px; line-height:1.45; padding:7px 10px; border-radius:8px;
+  background:var(--surface-2, rgba(127,127,127,.08)); border:1px solid var(--border, rgba(127,127,127,.16))}
+.task-item.done{opacity:.6; text-decoration:line-through}
+.task-done{margin-top:8px}
+.task-done-toggle{background:none; border:none; cursor:pointer; font-size:12px;
+  color:var(--text-dim, #888); padding:2px 0}
+.task-done-toggle:hover{color:var(--text, inherit)}
+.task-list.done{margin-top:6px}

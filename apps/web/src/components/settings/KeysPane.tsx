@@ -3,11 +3,10 @@
  * self-registered Local/Custom OpenAI-compatible endpoints (each needs a name +
  * base_url + key — this is how you point at a relay / a self-hosted model). A
  * filled dot marks the active text provider (chosen here or in the Model pane);
- * a hollow dot means a saved-but-inactive key. The image-gen key lives in its own
- * row at the bottom. Keys never echo back — a saved row shows a masked chip.
+ * a hollow dot means a saved-but-inactive key. Keys never echo back — a saved
+ * row shows a masked chip.
  *
- * Backed by keys.list/save/delete + defaults.use_key (text) and defaults.get/set
- * image_api_key (image). One visual language across both. */
+ * Backed by keys.list/save/delete + defaults.use_key. */
 
 import { useCallback, useEffect, useState } from "react";
 import { useT } from "../../i18n";
@@ -19,8 +18,6 @@ import { PROVIDER_PRESETS as PRESETS } from "../../lib/providers";
 interface KeyRowData { label: string; provider: string; base_url: string; model: string; has_key: boolean; active: boolean }
 interface TestResult { ok?: boolean; error?: { kind?: string; detail?: string } }
 
-interface ImageProviderRow { id: string; label: string; has_key: boolean; active: boolean }
-
 export function KeysPane() {
   const t = useT();
   const { hub } = useHubApi();
@@ -28,20 +25,11 @@ export function KeysPane() {
   const [busy, setBusy] = useState<string>("");
   const [addingCustom, setAddingCustom] = useState(false);
   const [cust, setCust] = useState({ name: "", base_url: "", key: "" });
-  const [imgProviders, setImgProviders] = useState<ImageProviderRow[]>([]);
-
-  const refreshImage = useCallback(async () => {
-    try {
-      const r = await hub.call<{ providers: ImageProviderRow[] }>("image.catalog", {}, 15000);
-      setImgProviders(Array.isArray(r?.providers) ? r.providers : []);
-    } catch { /* status list is best-effort */ }
-  }, [hub]);
 
   const refresh = useCallback(async () => {
     try { setRows(await hub.call<KeyRowData[]>("keys.list", {}, 15000)); }
     catch (e) { deckToast(rpcErrText(t, e as { message?: string }), true); }
-    void refreshImage();
-  }, [hub, t, refreshImage]);
+  }, [hub, t]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
@@ -125,23 +113,6 @@ export function KeysPane() {
       ) : (
         <button className="btn soft prov-add-btn" onClick={() => setAddingCustom(true)}>{t("prov-add-custom")}</button>
       )}
-
-      <h2 className="prov-section">{t("prov-image-section")}</h2>
-      <div className="sub">{t("prov-image-desc")}</div>
-      <div className="prov-list">
-        {imgProviders.map((p) => (
-          <div key={p.id} className={"prov-row" + (p.active ? " active" : "")}>
-            <span className={"prov-dot" + (p.active ? " on" : p.has_key ? " set" : "")} />
-            <div className="prov-meta">
-              <div className="prov-name">{p.label}{p.active && <span className="prov-badge">{t("img-active")}</span>}</div>
-              <div className="prov-desc">{p.has_key ? t("img-key-ready") : t("img-key-missing-row")}</div>
-            </div>
-            <div className="prov-key">
-              <span className={"okline" + (p.has_key ? "" : " bad")}>{p.has_key ? "✓" : "✗"}</span>
-            </div>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

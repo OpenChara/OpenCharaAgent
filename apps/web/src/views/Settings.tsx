@@ -14,6 +14,8 @@ import { useIsMobile } from "../hooks/useIsMobile";
 import { useT, useLang } from "../i18n";
 import { useHub } from "../state/hub";
 import { Segmented } from "../components/ui/Segmented";
+import { Select } from "../components/settings/Select";
+import { TIMEZONES, TZ_STORAGE_KEY, currentTimezone, tzOffsetLabel } from "../lib/format";
 import { applyTheme, currentThemePref, type ThemePref } from "../theme";
 import { ModelPane } from "../components/settings/ModelPane";
 import { KeysPane } from "../components/settings/KeysPane";
@@ -78,6 +80,7 @@ export function Settings() {
   const mview = isMobile ? (seg ? "detail" : "menu") : "";
   const [theme, setTheme] = useState<ThemePref>(currentThemePref());
   const [display, setDisplay] = useState<Display>(currentDisplay());
+  const [tz, setTz] = useState<string>(currentTimezone());
 
   const home = String((snapshot?.home as string) || "");
   const version = String((snapshot?.version as string) || "");
@@ -102,6 +105,22 @@ export function Settings() {
     }
     document.body.classList.toggle("technical", d === "technical");
   };
+
+  // Timezone is a pure display choice — the chat stores absolute time and renders it
+  // in the chosen zone. "" = follow the browser. localStorage, like the display toggle.
+  const pickTimezone = (z: string) => {
+    setTz(z); // optimistic
+    try {
+      if (z) localStorage.setItem(TZ_STORAGE_KEY, z);
+      else localStorage.removeItem(TZ_STORAGE_KEY);
+    } catch {
+      /* private */
+    }
+  };
+  const tzOptions = TIMEZONES.map((z) => ({
+    value: z,
+    label: z ? `${z.replace(/_/g, " ")} · ${tzOffsetLabel(z)}` : t("tz-auto"),
+  }));
 
   const revealHome = () => {
     if (!home) return;
@@ -180,6 +199,20 @@ export function Settings() {
                   }))}
                   onChange={pickDisplay}
                 />
+              </div>
+              <div className="set-row">
+                <div className="lbl">
+                  <span>{t("set-timezone")}</span>
+                  <small>{t("set-timezone-sub")}</small>
+                </div>
+                <div style={{ minWidth: 220 }}>
+                  <Select
+                    value={tz}
+                    options={tzOptions}
+                    onChange={pickTimezone}
+                    placeholder={t("tz-auto")}
+                  />
+                </div>
               </div>
             </div>
           )}

@@ -278,7 +278,7 @@ class TranscriptStore:
             with self._connect() as conn:
                 epoch = self.epoch()
                 rows = conn.execute(
-                    "SELECT role, content, kind FROM messages "
+                    "SELECT role, content, kind, ts FROM messages "
                     "WHERE epoch=? AND kind IN ('chat','think','struct','tool','summary') ORDER BY id",
                     (epoch,),
                 ).fetchall()
@@ -287,21 +287,25 @@ class TranscriptStore:
         if max_messages > 0:
             rows = rows[-max_messages:]
         out: list[dict] = []
-        for role, content, kind in rows:
+        # Each row carries its absolute timestamp (epoch seconds) so a frontend can
+        # render WeChat-style time separators in the viewer's own timezone. We store
+        # absolute time only; the timezone is a pure display choice client-side.
+        for role, content, kind, ts in rows:
             if kind in ("struct", "tool"):
                 try:
                     msg = json.loads(content)
                     if isinstance(msg, dict) and msg.get("role"):
+                        msg.setdefault("ts", ts)
                         out.append(msg)
                         continue
                 except (json.JSONDecodeError, TypeError):
                     pass
-                out.append({"role": str(role), "content": str(content)})
+                out.append({"role": str(role), "content": str(content), "ts": ts})
             elif kind == "summary":
-                out.append({"role": str(role), "content": str(content), "kind": "summary"})
+                out.append({"role": str(role), "content": str(content), "kind": "summary", "ts": ts})
             else:
                 # Plain chat AND legacy "think" rows render as ordinary messages.
-                out.append({"role": str(role), "content": str(content)})
+                out.append({"role": str(role), "content": str(content), "ts": ts})
         return out
 
     def export_jsonl(self, path: Path) -> int:

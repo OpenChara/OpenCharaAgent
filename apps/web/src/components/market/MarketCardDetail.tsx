@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { useT, type TKey } from "../../i18n";
 import { useHub } from "../../state/hub";
 import { rpcErrText } from "../../lib/status";
+import { compactNum } from "../../lib/format";
 import { DeckModal } from "../ui/DeckModal";
 import { BrandLoader } from "../ui/BrandLoader";
 import { CardField } from "../deck/CardField";
@@ -41,12 +42,6 @@ const SECTIONS: ReadonlyArray<readonly [keyof MarketDetail, TKey]> = [
   ["first_mes", "sec-first"],
   ["mes_example", "market-sec-example"],
 ] as const;
-
-function compactNum(n: number): string {
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
-  if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "k";
-  return String(n);
-}
 
 export function MarketCardDetail({
   card,

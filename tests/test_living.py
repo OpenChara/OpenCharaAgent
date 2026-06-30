@@ -37,11 +37,30 @@ def test_rest_tool_sets_clamped_wake_time(agent):
     out = a.tools.call("rest", minutes=99999)
     assert out["ok"], out
     until = a.state.load()["rest_until"]
-    assert time.time() + 119 * 60 < until <= time.time() + 121 * 60  # clamped to 120min
+    assert time.time() + 10079 * 60 < until <= time.time() + 10081 * 60  # clamped to 7 days (10080min)
     # A word from the user always wakes it early.
     s = a.make_session()
     a.handle("早上好", s)
     assert a.state.load()["rest_until"] == 0.0
+
+
+def test_rest_tool_parses_units(agent):
+    a = agent()
+
+    def mins(duration):
+        out = a.tools.call("rest", duration=duration)
+        assert out["ok"], out
+        return json.loads(out["data"])["resting_minutes"]
+
+    assert mins("2h") == 120                 # hours
+    assert mins("3d") == 3 * 1440            # days
+    assert mins("45") == 45                  # bare number = minutes
+    assert mins("2小时") == 120               # zh unit
+    assert mins("0.5m") == 1                 # clamped up to the 1-minute floor
+    assert mins("30d") == 10080              # clamped down to the 7-day ceiling
+    # garbage / zero → tool error
+    assert not a.tools.call("rest", duration="whenever")["ok"]
+    assert not a.tools.call("rest", duration="0m")["ok"]
 
 
 def test_idle_tick_carries_only_a_timestamp(agent, monkeypatch):

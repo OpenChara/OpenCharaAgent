@@ -8,16 +8,16 @@
  * only — this view never drives idle.
  */
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { useT } from "../i18n";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useT, useLang } from "../i18n";
 import { useNavigate, type ChatSub } from "../hooks/useHashRoute";
 import { isMobileViewport } from "../hooks/useIsMobile";
 import { useHubApi, useHubState, type BoardSession } from "../state/hub";
-import { glyphOf, paletteClass } from "../lib/format";
+import { chatTimeLabel, currentTimezone, glyphOf, paletteClass } from "../lib/format";
 import { assetUrl } from "../rpc";
 import { readVisualPrefs } from "../lib/visual";
 import { useCharaStream, type Snapshot } from "../hooks/useCharaStream";
-import { StreamItemView } from "../components/chat/StreamItems";
+import { StreamItemView, TimeSeparator } from "../components/chat/StreamItems";
 import { Composer } from "../components/chat/Composer";
 import { ChatPanel } from "../components/chat/ChatPanel";
 import { ChatWorks } from "../components/chat/ChatWorks";
@@ -181,6 +181,7 @@ function ChatStreamPage({
   snap: Snapshot | null;
 }) {
   const t = useT();
+  const { lang } = useLang();
   const { hub, refresh } = useHubApi();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [superReadTs, setSuperReadTs] = useState(0);
@@ -291,6 +292,25 @@ function ChatStreamPage({
     : stream.statusWord;
   const workCls = work.active ? work.phase : "life";
 
+  // WeChat-style time separators: a centered time line before a message when its gap
+  // from the previous timestamped message exceeds 5 min (and always before the first).
+  // Only user / say / super messages carry a time; tool & reasoning items don't.
+  const tz = currentTimezone();
+  const timeMarks = useMemo(() => {
+    const SEP_GAP = 5 * 60; // seconds
+    const marks = new Map<string, string>();
+    const tsOf = (it: { kind: string; ts?: number }) =>
+      it.kind === "user" || it.kind === "say" || it.kind === "super" ? it.ts : undefined;
+    let prev = 0;
+    for (const it of stream.items) {
+      const ts = tsOf(it);
+      if (ts === undefined) continue;
+      if (prev === 0 || ts - prev >= SEP_GAP) marks.set(it.id, chatTimeLabel(t, lang, ts, tz));
+      prev = ts;
+    }
+    return marks;
+  }, [stream.items, lang, tz, t]);
+
   return (
     <div className="chat-page on" id="page-chat" style={visualVars}>
       {bgUrl && (
@@ -326,18 +346,20 @@ function ChatStreamPage({
             )}
           </div>
           {stream.items.map((item) => (
-            <StreamItemView
-              key={item.id}
-              item={item}
-              charName={stream.charName}
-              superReadTs={superReadTs}
-              technical={technical}
-              avatarUri={avatarUri}
-              sandboxRoot={sandboxRoot}
-              workspaceRoot={workspaceRoot}
-              onPermission={stream.permissionReply}
-              onClarify={stream.clarifyReply}
-            />
+            <Fragment key={item.id}>
+              {timeMarks.has(item.id) && <TimeSeparator label={timeMarks.get(item.id)!} />}
+              <StreamItemView
+                item={item}
+                charName={stream.charName}
+                superReadTs={superReadTs}
+                technical={technical}
+                avatarUri={avatarUri}
+                sandboxRoot={sandboxRoot}
+                workspaceRoot={workspaceRoot}
+                onPermission={stream.permissionReply}
+                onClarify={stream.clarifyReply}
+              />
+            </Fragment>
           ))}
         </div>
       </div>

@@ -95,8 +95,15 @@ describe("I18N strings map", () => {
   // + 3 create-flow paste-import keys (create-card-detected / -import-faithful / -import-done) → 697.
   // + 2 drag-drop keys (create-drop-hint / create-importing) → 699.
   // + 9 Market v2 keys (sort tabs, filters, load-more, results, example, source link) → 708.
-  it("preserves the full key set from the source dict (708 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(708);
+  // + 6 Market filter-panel keys (filters button, group headers, nsfw note, clear) → 714.
+  // − 3 dead tab keys removed with the Skills "coming soon" tab (characters/skills/soon) → 711.
+  // − 4 keys removed with the redundant image-gen section in the Providers pane
+  //   (prov-image-section, prov-image-desc, img-active, img-key-missing-row;
+  //   img-key-ready kept — still used by TaskModels) → 707.
+  // + 3 chat-timezone keys (set-timezone, set-timezone-sub, tz-auto).
+  // (+3 more from concurrent work landed alongside, not itemized above) → 713.
+  it("preserves the full key set from the source dict (713 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(713);
   });
 
   it("every value is a [zh, en] string tuple", () => {

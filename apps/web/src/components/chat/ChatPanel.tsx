@@ -320,10 +320,18 @@ function ModelEffort({ stream, snap }: { stream: CharaStream; snap: Snapshot }) 
   );
 }
 
+interface TaskItem {
+  id: string;
+  content: string;
+  status?: string;
+  done_at?: number;
+}
+
 interface Extras {
   polaris?: string;
   memory?: string;
   user_memory?: string;
+  tasks?: { active: TaskItem[]; done: TaskItem[] };
 }
 
 /* The PROFILE tab — 愿望 · 技能 · 记忆 in one scrollable pane. The three were once
@@ -336,7 +344,9 @@ function ProfilePane({ stream, name }: { stream: CharaStream; name: string }) {
   const { hub } = useHubApi();
   const [ex, setEx] = useState<Extras | null>(null);
   const [skills, setSkills] = useState<string | null>(null);
-  // Polaris is DISPLAY-ONLY here — it is changed only with the `/polaris` command.
+  const [showDone, setShowDone] = useState(false);
+  // Polaris + tasks are DISPLAY-ONLY here — the chara owns its tasks (set via the
+  // `task` tool); the aspiration is changed only with the `/aspiration` command.
 
   useEffect(() => {
     let on = true;
@@ -371,6 +381,35 @@ function ProfilePane({ stream, name }: { stream: CharaStream; name: string }) {
           <div className="memory-text">{ex.polaris}</div>
         ) : (
           <div className="placeholder-pane">{t("polaris-empty")}</div>
+        )}
+      </section>
+
+      <section className="dsec">
+        <h4>{t("p-tasks")}</h4>
+        {ex === null ? (
+          <div className="placeholder-pane">…</div>
+        ) : (ex.tasks?.active.length ?? 0) > 0 ? (
+          <ul className="task-list">
+            {ex.tasks!.active.map((it) => (
+              <li key={it.id} className="task-item">{it.content}</li>
+            ))}
+          </ul>
+        ) : (
+          <div className="placeholder-pane">{t("tasks-empty")}</div>
+        )}
+        {ex && (ex.tasks?.done.length ?? 0) > 0 && (
+          <div className="task-done">
+            <button className="task-done-toggle" onClick={() => setShowDone((v) => !v)}>
+              {showDone ? "▾" : "▸"} {t("tasks-sealed")} ({ex.tasks!.done.length})
+            </button>
+            {showDone && (
+              <ul className="task-list done">
+                {ex.tasks!.done.map((it) => (
+                  <li key={it.id} className="task-item done">{it.content}</li>
+                ))}
+              </ul>
+            )}
+          </div>
         )}
       </section>
 
@@ -411,7 +450,7 @@ function SettingsPane({ stream, name }: { stream: CharaStream; name: string }) {
   const forceSandbox = !!(hubSnap as { force_sandbox?: boolean } | null)?.force_sandbox;
   const snap = (stream.snapshot as Snapshot | null) || {};
   const quiet = Number(snap.quiet) || 300;
-  const patience = Number(snap.patience) || 600;
+  const patience = Number(snap.patience) || 3600;
   const [resetting, setResetting] = useState(false);
 
   // 网络 — instant (the /net command hits the live agent immediately).

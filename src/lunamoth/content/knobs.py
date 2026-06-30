@@ -59,7 +59,7 @@ def _lang(lang: str) -> str:
 # card default can still win when the operator never touched it. The ONE definition
 # of both the default and the "is it explicit?" rule — agent.patience_resolved and
 # settings.load both read these instead of hard-coding the literal / the abs() test.
-DEFAULT_PATIENCE = 600.0
+DEFAULT_PATIENCE = 3600.0
 
 # Engagement window (seconds): while you're actively talking, the chara sets self-work
 # aside and resumes after this much silence. The ONE default — the dataclass field + the

@@ -210,6 +210,12 @@ function ToolChipRow({ chip, technical }: { chip: ToolGroupItem["chips"][number]
 }
 
 
+/** A centered WeChat-style time separator between messages (today→time, 昨天→昨天 HH:MM,
+ *  older→date). The label is computed by the caller in the viewer's chosen timezone. */
+export function TimeSeparator({ label }: { label: string }) {
+  return <div className="time-sep">{label}</div>;
+}
+
 function SystemLine({ item }: { item: SystemItem }) {
   const t = useT();
   // The compaction-boundary divider carries no text of its own — it renders a fixed
