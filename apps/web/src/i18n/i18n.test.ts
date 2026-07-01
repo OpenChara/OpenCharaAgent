@@ -109,8 +109,9 @@ describe("I18N strings map", () => {
   // − 1 (st-arrived "· 你来了 ·") removed: attach injects no presence marker, so the
   //   client draws no "arrived" divider either (the .arrived CSS stays for rejoin-gap) → 717.
   // + vis-ref-del-q (the "delete this reference? irreversible" confirm) → 718.
-  it("preserves the full key set from the source dict (718 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(718);
+  // + market-tag-add (manual tag entry in the market filter panel) → 719.
+  it("preserves the full key set from the source dict (719 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(719);
   });
 
   it("every value is a [zh, en] string tuple", () => {

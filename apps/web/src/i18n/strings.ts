@@ -34,6 +34,7 @@ export const I18N = {
   "market-open-source": ["在 character-tavern 查看", "View on character-tavern"],
   "market-filters-btn": ["筛选", "Filters"],
   "market-filter-tags": ["标签", "Tags"],
+  "market-tag-add": ["输入任意标签，回车添加…", "Add any tag, press Enter…"],
   "market-filter-type": ["类型", "Type"],
   "market-filter-mature": ["成人内容", "Mature"],
   "market-nsfw-note": ["默认隐藏；开启后显示 NSFW 角色卡。", "Hidden by default — turn on to show NSFW cards."],

@@ -190,6 +190,14 @@ export function CharactersTab() {
   const submitSearch = () => setQuery(queryInput.trim());
   const toggleTag = (tag: string) =>
     setTags((prev) => (prev.includes(tag) ? prev.filter((x) => x !== tag) : [...prev, tag]));
+  // Manual tag entry — the chips are a curated subset of the catalog's 700+ tags, so let
+  // the user filter by ANY tag by typing it (normalized lowercase; the API filters on it).
+  const [tagInput, setTagInput] = useState("");
+  const addTypedTag = () => {
+    const v = tagInput.trim().toLowerCase();
+    if (v && !tags.includes(v)) setTags((prev) => [...prev, v]);
+    setTagInput("");
+  };
 
   const importByPath = useCallback(
     async (path: string, name: string, imageUrl: string) => {
@@ -268,6 +276,18 @@ export function CharactersTab() {
                       </button>
                     ))}
                   </div>
+                  <input
+                    className="market-tag-input"
+                    placeholder={t("market-tag-add")}
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                        e.preventDefault();
+                        addTypedTag();
+                      }
+                    }}
+                  />
                 </div>
                 <div className="market-pop-group">
                   <div className="market-pop-h">{t("market-filter-type")}</div>
