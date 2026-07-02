@@ -432,10 +432,20 @@ def build_jail_command(
         if landlock_available():
             cmd = _linux_landlock_jail(command, workspace, allow_network, writable_list, browser=browser)
             note = ""
+            if not browser:
+                # The Landlock allow-list deliberately omits /proc (a readable
+                # /proc/<pid>/environ would leak the supervisor token; the
+                # browser variant re-adds it because Chromium's renderer needs
+                # it). Say so, or the resulting EACCES from ps/top/some
+                # interpreters reads as a broken command instead of jail policy.
+                note += (
+                    "\n[lunamoth: Landlock jail — /proc is unavailable by policy, so "
+                    "/proc-dependent tools (ps, top, some interpreters) fail with EACCES]"
+                )
             if not allow_network:
                 # Honest: Landlock ABI v1 confines the filesystem only — it cannot
                 # gate the network, so `/net off` is NOT enforced under this tier.
-                note = "\n[lunamoth: Landlock jail — filesystem confined, but network not gated (ABI v1)]"
+                note += "\n[lunamoth: Landlock jail — filesystem confined, but network not gated (ABI v1)]"
                 # The note above only reaches the MODEL. Surface it to the OPERATOR
                 # too (once per process) — they set /net off believing the agent is
                 # offline, but under this tier it is still network-capable.
@@ -497,6 +507,27 @@ def interactive_shell_argv(
             return _linux_landlock_argv(["/bin/bash", "-i"], workspace, allow_network, writable), str(workspace), env
         raise JailUnavailableError("sandbox isolation requested but neither bwrap nor Landlock is available on this host")
     raise JailUnavailableError(f"unknown isolation mechanism {isolation!r}")
+
+
+def interactive_shell_notice(isolation: str, *, allow_network: bool = False) -> str:
+    """The operator-facing caveat line for the jail :func:`interactive_shell_argv`
+    will select — parity with ``runner.run_terminal``'s jail note ("fail visibly").
+
+    When the sandbox ladder lands on the LANDLOCK tier, the shell is
+    filesystem-confined but /proc is unavailable by policy, and (ABI v1) the
+    network is NOT gated — an operator who set ``/net off`` would otherwise
+    believe the shell is offline. Returns ``""`` on every other tier
+    (admin / native jail), so callers just print it when non-empty.
+    """
+    isolation = (isolation or backend()).lower()
+    if isolation in {"dir", "local", "docker"}:
+        isolation = "admin"
+    if isolation != "sandbox" or os_sandbox_available() or not landlock_available():
+        return ""
+    parts = ["/proc unavailable by policy (ps/top fail with EACCES)"]
+    if not allow_network:
+        parts.append("network not gated (ABI v1) — '/net off' is not enforced in this shell")
+    return "[lunamoth: Landlock jail — " + "; ".join(parts) + "]"
 
 
 def runtime_permissions(sandbox_dir: Path) -> tuple[bool, list[str]]:

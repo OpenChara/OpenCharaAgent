@@ -137,6 +137,32 @@ def test_jail_unavailable_raises_no_degrade(tmp_path, monkeypatch):
     assert argv == ["/bin/bash", "-i"]
 
 
+def test_interactive_shell_notice_landlock_tier(monkeypatch):
+    """Landlock-tier PTY parity with runner.run_terminal's jail note: the
+    operator banner says network is NOT gated (ABI v1) and /proc is unavailable."""
+    monkeypatch.setattr(I, "os_sandbox_available", lambda: False)
+    monkeypatch.setattr(I, "landlock_available", lambda: True)
+    n = I.interactive_shell_notice("sandbox", allow_network=False)
+    assert "network not gated (ABI v1)" in n
+    assert "/proc" in n
+    # net ON: nothing to warn about network, but /proc is still policy-hidden
+    n_on = I.interactive_shell_notice("sandbox", allow_network=True)
+    assert "network not gated" not in n_on
+    assert "/proc" in n_on
+
+
+def test_interactive_shell_notice_empty_on_other_tiers(tmp_path, monkeypatch):
+    """The banner fires ONLY on the Landlock tier — admin and native jails get ''."""
+    assert I.interactive_shell_notice("admin", allow_network=False) == ""
+    assert I.interactive_shell_notice("docker", allow_network=False) == ""  # legacy → admin
+    monkeypatch.setattr(I, "os_sandbox_available", lambda: True)  # native jail wins
+    assert I.interactive_shell_notice("sandbox", allow_network=False) == ""
+    # no jail at all → interactive_shell_argv raises; the failure path speaks, not this
+    monkeypatch.setattr(I, "os_sandbox_available", lambda: False)
+    monkeypatch.setattr(I, "landlock_available", lambda: False)
+    assert I.interactive_shell_notice("sandbox", allow_network=False) == ""
+
+
 def test_runtime_permissions_reads_env_status(tmp_path):
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()

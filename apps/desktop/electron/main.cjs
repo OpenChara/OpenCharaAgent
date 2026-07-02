@@ -93,8 +93,12 @@ function startBackend() {
     }
     const log = []
     const note = (chunk) => {
-      for (const line of chunk.toString('utf8').split('\n')) {
+      for (let line of chunk.toString('utf8').split('\n')) {
         if (!line.trim()) continue
+        // The handshake line carries the auth token in the URL fragment; the
+        // ring feeds error DIALOGS (and the debug log), so scrub it there —
+        // the loadURL capture reads the raw stream before this buffer.
+        line = line.replace(/#token=[^\s&]+/g, '#token=***')
         log.push(line)
         if (log.length > 200) log.shift()
         if (process.env.LUNAMOTH_SHELL_DEBUG) console.log('[backend]', line)

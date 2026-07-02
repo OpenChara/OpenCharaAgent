@@ -106,6 +106,36 @@ def test_legacy_docker_value_maps_to_admin_and_runs(tmp_path):
     assert "legacy-docker" in out
 
 
+def test_landlock_tier_note_mentions_proc_and_network(tmp_path, monkeypatch):
+    """Every Landlock-tier run carries the honest notes: /proc unavailable by
+    policy (so a ps/top EACCES reads as the jail, not a mystery) and — with
+    net off — network not gated (ABI v1). Shape-only: the argv is not run."""
+    monkeypatch.setattr(ISO, "os_sandbox_available", lambda: False)
+    monkeypatch.setattr(ISO, "landlock_available", lambda: True)
+    ws = tmp_path / "ws"
+    _, _, note = ISO.build_jail_command("ps aux", ws, "sandbox", allow_network=False)
+    assert "/proc" in note and "EACCES" in note
+    assert "network not gated (ABI v1)" in note
+    # net ON: the network note drops, the /proc note stays
+    _, _, note_on = ISO.build_jail_command("ps aux", ws, "sandbox", allow_network=True)
+    assert "/proc" in note_on
+    assert "network not gated" not in note_on
+    # browser jail: /proc is re-added (--rw /proc), so no /proc note there
+    _, _, note_br = ISO.build_jail_command("chromium", ws, "sandbox",
+                                           allow_network=True, browser=True)
+    assert "/proc" not in note_br
+
+
+def test_native_tiers_carry_no_landlock_note(tmp_path, monkeypatch):
+    """The /proc note must not spam the other tiers (admin / native jail)."""
+    ws = tmp_path / "ws"
+    _, _, admin_note = ISO.build_jail_command("ps aux", ws, "admin")
+    assert admin_note == ""
+    if ISO.os_sandbox_available():  # native jail on this host (bwrap / sandbox-exec)
+        _, _, native_note = ISO.build_jail_command("ps aux", ws, "sandbox", allow_network=False)
+        assert native_note == ""
+
+
 @pytest.mark.skipif(not landlock.available(), reason="no Landlock (kernel <5.13 / not Linux)")
 def test_landlock_tier_runs_normal_commands(tmp_path, monkeypatch):
     """When bwrap is absent but Landlock is present, the sandbox tier still runs."""

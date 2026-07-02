@@ -515,6 +515,13 @@ class Supervisor:
         self._pty_bridges.add(bridge)
         audit.write("pty_open", chara=name, isolation=meta.isolation, pid=bridge.pid)
         _log.info("pty open for %s (isolation=%s, pid=%d)", name, meta.isolation, bridge.pid)
+        # Landlock-tier parity with runner.run_terminal's jail note ("fail
+        # visibly"): tell the OPERATOR this shell's caveats — network not gated
+        # under ABI v1, /proc unavailable. A text frame, like the failure path.
+        notice = I.interactive_shell_notice(meta.isolation, allow_network=allow_network)
+        if notice:
+            with contextlib.suppress(Exception):
+                await ws.send(f"\r\n{notice}\r\n")
         loop = asyncio.get_running_loop()
 
         async def pump_pty_to_ws() -> None:

@@ -32,9 +32,11 @@ history. The one deliberately-unbuilt item, **worth remembering**:
   background-job shape `generate_image` uses): the call returns a `{status: submitted}`
   receipt immediately, the subagents run alongside the main agent, and the aggregated
   results are drained as a synthetic user message at the next turn boundary. The
-  per-child timeout is now ENFORCED (`_run_fanout`: always-pooled `fut.result(timeout=
-  DEFAULT_PER_CHILD_TIMEOUT)` → a real `timed_out` result; `shutdown(wait=False)` so a
-  hung worker can't re-block). Caveat (documented in code): a Python thread can't be
+  per-child timeout is ENFORCED from each child's OWN start (`_run_fanout`, rewritten
+  in the 2026-07-02 sweep P2.4: daemon threads + a semaphore, late results discarded,
+  never-started tasks reported honestly past the batch deadline — the earlier
+  executor + `fut.result(timeout=…)`/`shutdown(wait=False)` shape is gone).
+  Caveat (documented in code): a Python thread can't be
   force-killed, so a stuck worker runs to its own end in the background — but it never
   blocks the parent. To shelve again: wrap the top-level `registry.register` in
   `if False:` (the discovery AST-scan only imports modules with a top-level register).
@@ -412,6 +414,22 @@ fixed, adversarially re-verified (the review's own 5 counter-findings fixed too)
   chat settings): all correct — one fix, the first-run welcome now closes on
   Escape like every other layer.
 
+## 2026-07-03 fourth sweep — RESOLVED (final wrap: shell/content/zh-UI/leftovers)
+
+The wrap-up round covered the last never-audited surfaces. Electron shell
+security posture verified sound (contextIsolation/sandbox/no-nodeIntegration,
+off-origin navigation blocked, single-instance, clean quit semantics; the one
+finding — the startup handshake token could surface in error dialogs — is now
+scrubbed from the log ring). All 8 bundled cards mechanically validated (ST
+shape, assets, tags, hooks; exactly one "default"); the six website-centric
+cards now declare `extensions.lunamoth.website: "on"` so their core premise
+works out of the box. zh-UI visual pass: all views × both widths, zero
+horizontal overflow, natural copy — clean. Landlock LOW ergonomics closed
+(/proc-unavailable note + PTY network-notice parity; a note-clobbering `=` vs
+`+=` bug found and fixed in the wiring). Part 4 retest items closed where code
+proves them (send_file→MEDIA UX, interrupt-feel mechanics); Part 1's stale
+delegate wording refreshed.
+
 ### Remaining OPEN residue (small, non-blocking)
 - Keyring cross-process last-write-wins (TUI `save_global_key` vs hub RPCs on
   `desktop.json`) — needs an flock to fully close; atomicity already prevents
@@ -424,15 +442,18 @@ fixed, adversarially re-verified (the review's own 5 counter-findings fixed too)
 ## Landlock ergonomics (LOW — clarity/ergonomics, NOT jail escape)
 From the 2026-06-17 security review (generate_image is now non-blocking — runs in a
 background thread, so a flapping endpoint can't freeze a turn). Remaining LOW:
-- The Landlock tier grants no `/proc` (deliberate — `/proc/1/environ` leaks the
-  supervisor token), so `/proc`-dependent tools (`ps`, some interpreters) fail with a
-  bare EACCES under Docker. Consider a clearer message, or a procfs-hidepid mount if
-  ever feasible.
-- `interactive_shell_argv`'s Landlock fallback doesn't surface "network not gated
-  (ABI v1)" to the operator PTY the way `runner.run_terminal` does — add the one-line
-  notice for parity with the "fail visibly" contract.
 - Network gating under Landlock needs ABI v4 (kernel 6.7); until then `/net off` is
-  fs-only under that tier.
+  fs-only under that tier (surfaced honestly: the per-run terminal note, the
+  once-per-process operator log warning, and the PTY open banner).
+- closed 2026-07-03: the bare-EACCES mystery — every Landlock-tier terminal run now
+  carries a one-line `[lunamoth: …]` note that `/proc` is unavailable by policy
+  (deliberate: `/proc/<pid>/environ` leaks the supervisor token), so `ps`/`top`/
+  interpreter failures read as jail policy, not mystery (`build_jail_command`;
+  browser jail excluded — it re-adds /proc).
+- closed 2026-07-03: the operator PTY now shows the same Landlock caveats (network
+  not gated ABI v1 + /proc unavailable) as a banner at shell open
+  (`isolation.interactive_shell_notice` → supervisor `_handle_pty`), parity with
+  `runner.run_terminal`'s "fail visibly" note.
 
 ## R5-followup (LOW) — card-view art editing + richer world/expressions
 R5 shipped the multi-page card view (display + 设定/世界 editing). DONE (2026-06-22 visuals
@@ -468,12 +489,16 @@ the keyless `cut_white_bg` fallback runs). Same shape as the WeChat/QQ messaging
 live-test (roadmap C.1). Budget one verification round with real keys.
 
 ## (2)(5)(6)(7) — deferred to the UI/feel refactor
-- **(2) send_file UX**: LARGELY ADDRESSED since (6b718b6 files preview/download in
-  the browser; afecbdb full webui history → cards re-render on reopen). Re-test on
-  the current build; close if it holds.
-- **(5) interrupt / insert-message feel**: fffbee0 (double-stop force-reset) +
-  bf65487 (persisted send-queue + stream ordering) landed in this area; re-test the
-  feel, then close or narrow. (Streaming preemption semantics.)
+- **(2) send_file UX**: closed 2026-07-03 — the standalone tool is gone; the MEDIA:
+  convention renders inline image / download in the SPA (`lib/media.ts`
+  `splitOutbound` → `StreamItems.tsx`), and restored history replays through the
+  SAME streamModel restore path, so the cards re-render on reopen.
+- **(5) interrupt / insert-message feel**: closed 2026-07-03 — the interrupt paths
+  were rebuilt in the July sweeps: per-turn interrupt Event server-side (a zombie
+  can't un-interrupt; honest `interrupted:false`), double-stop force-reset
+  (`useCharaStream.forceStop`), persisted send-queue + stream ordering
+  (`hooks/chatSession.ts`). The subjective "feel" was not re-tested live here; if
+  the owner still dislikes it, reopen as a NARROWED symptom.
 - **(6) tool-call compression**: fold consecutive tool calls with no assistant text
   into one group + one reasoning. NOTE: the React `streamModel.ts` already folds
   tool-groups — owner tested the OLD client; RE-TEST on the new SPA before doing work.
