@@ -275,3 +275,52 @@ def _strip_hint(raw: str) -> str:
     """Drop the trailing non-JSON truncation hint, if present."""
     idx = raw.rfind("\n\n[Hint:")
     return raw[:idx] if idx != -1 else raw
+
+
+# ---- fail-visibly on timeout / jail refusal (2026-07-02 audit P2) -----------------
+# A timed-out or refused command produces NO RC sentinel; the old parse read that
+# as exit=0 + empty stdout and returned a clean "0 matches" — a false negative.
+
+
+class _DeadTerminalCtx(FakeCtx):
+    """run_terminal shaped like runner.py's timeout / refusal / error returns."""
+
+    def __init__(self, ws, raw: str):
+        super().__init__(ws)
+        self._raw = raw
+
+    def run_terminal(self, command: str, *, timeout: int = 60, workdir=None) -> str:
+        return self._raw
+
+
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize("raw,expect", [
+    ("[timed out after 60s]", "timed out"),
+    ("[lunamoth: refused — no jail available]", "refused"),
+    ("[runner error: broken]", "runner error"),
+])
+def test_search_incomplete_run_is_an_error_not_zero_matches(ws, raw, expect):
+    import json as _json
+
+    from lunamoth.tools.builtin import search as search_mod
+
+    ctx = _DeadTerminalCtx(ws, raw)
+    search_mod._loop_state["last_key"] = None
+    search_mod._loop_state["consecutive"] = 0
+    search_mod._cmd_cache["rg"] = True  # probe cached earlier; the search itself dies
+    out = _json.loads(search_mod.search_files({"pattern": "TODO", "path": "."}, ctx))
+    assert out.get("total_count", 0) == 0
+    assert "error" in out, f"must surface an error, got: {out}"
+    assert "did not complete" in out["error"]
+    assert expect in out["error"]
+
+
+def test_incomplete_probe_is_not_cached(ws):
+    from lunamoth.tools.builtin import search as search_mod
+
+    search_mod._cmd_cache.clear()
+    ctx = _DeadTerminalCtx(ws, "[timed out after 60s]")
+    assert search_mod._has_command(ctx, "rg") is False
+    assert "rg" not in search_mod._cmd_cache  # next call re-probes

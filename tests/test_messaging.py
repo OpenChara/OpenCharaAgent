@@ -247,6 +247,43 @@ def test_chunking_long_outbound_text():
     assert "".join(chunks) == text
 
 
+def test_split_text_counts_utf16_units_not_python_chars():
+    # Platform caps (Telegram/Discord/Slack) are UTF-16 code units: an astral
+    # char (emoji) counts 2. 10 emoji = 20 units; a cap of 10 must split into
+    # chunks of at most 5 emoji, where a char count would have sent all 10.
+    from lunamoth.messaging.text import utf16_len
+
+    text = "😀" * 10
+    assert utf16_len(text) == 20
+    chunks = split_text(text, 10)
+    assert "".join(chunks) == text
+    assert all(utf16_len(c) <= 10 for c in chunks)
+    assert len(chunks) == 2
+
+
+def test_split_text_prefers_break_before_code_fence():
+    # The cut would land inside the fenced block; the newline BEFORE the fence
+    # is chosen instead, so the block travels whole in the next chunk.
+    prose = "p" * 90 + "\n"
+    fence = "```\n" + "x" * 20 + "\n```\n"
+    chunks = split_text(prose + fence, 100)
+    assert "".join(chunks) == prose + fence
+    assert chunks[0] == prose
+    assert chunks[1] == fence  # opening and closing ``` in ONE piece
+
+
+def test_split_text_oversized_fence_still_splits_inside():
+    # A fenced block bigger than the cap can't be kept whole — it is cut at its
+    # best inner newline instead of not at all (delivery beats purity).
+    fence = "```\n" + ("line one\n" * 30) + "```"
+    chunks = split_text(fence, 100)
+    assert "".join(chunks) == fence
+    assert len(chunks) > 1
+    from lunamoth.messaging.text import utf16_len
+
+    assert all(utf16_len(c) <= 100 for c in chunks)
+
+
 def test_weixin_context_tokens_no_race_between_send_and_poll(tmp_path):
     """Regression: the poll thread mutates context_tokens while the send thread
     iterates it (_target_for_send) and _save_state snapshots it. Before the fix
@@ -689,6 +726,85 @@ def test_qq_reconnect_backoff_resets_after_success():
     assert all(sock.entered and sock.exited for sock in sockets)
 
 
+class AckingQQSocket(FakeQQSocket):
+    """Resolves each send's OneBot action response synchronously (the recv loop
+    normally does this) so the ack path can be tested without threads."""
+
+    def __init__(self, adapter, ack_frame):
+        super().__init__()
+        self._adapter = adapter
+        self._ack_frame = dict(ack_frame)
+
+    def send(self, payload):
+        super().send(payload)
+        echo = json.loads(payload)["echo"]
+        self._adapter._resolve_ack(json.dumps({**self._ack_frame, "echo": echo}))
+
+
+def test_qq_rejected_send_surfaces_as_delivery_deferred():
+    # A non-zero retcode (not a friend, muted, bad id) used to be silently
+    # treated as delivered — the ack is now correlated on `echo` and surfaced.
+    from lunamoth.messaging.base import DeliveryDeferred
+    from lunamoth.messaging.qq import QQAdapter
+
+    adapter = QQAdapter({"url": "ws://127.0.0.1:3001", "peer_id": "999"}, ack_timeout=1.0)
+    adapter._socket = AckingQQSocket(
+        adapter, {"status": "failed", "retcode": 1400, "wording": "对方不是好友"})
+    adapter._recv_alive.set()  # the recv loop is "up": send waits for the ack
+
+    with pytest.raises(DeliveryDeferred, match="retcode=1400") as excinfo:
+        adapter.send("hello")
+    assert "对方不是好友" in str(excinfo.value)
+    assert adapter._pending_acks == {}  # the waiter slot is always reclaimed
+
+
+def test_qq_ok_ack_send_succeeds():
+    from lunamoth.messaging.qq import QQAdapter
+
+    adapter = QQAdapter({"url": "ws://127.0.0.1:3001", "peer_id": "999"}, ack_timeout=1.0)
+    sock = AckingQQSocket(adapter, {"status": "ok", "retcode": 0, "data": {"message_id": 7}})
+    adapter._socket = sock
+    adapter._recv_alive.set()
+
+    adapter.send("hello")  # no raise
+    assert json.loads(sock.sent[0])["params"]["message"] == "hello"
+
+
+def test_qq_missing_ack_never_hangs_the_send_path(caplog, monkeypatch):
+    # No action response within the timeout: the frame WAS written, so the send
+    # is treated as delivered with a visible warning — bounded, never a hang.
+    import logging
+
+    from lunamoth.messaging.qq import QQAdapter
+
+    # obs.setup_logging (run by sibling tests) cuts propagation on "lunamoth";
+    # restore it so caplog sees qq records regardless of test order.
+    monkeypatch.setattr(logging.getLogger("lunamoth"), "propagate", True)
+
+    adapter = QQAdapter({"url": "ws://127.0.0.1:3001", "peer_id": "999"}, ack_timeout=0.05)
+    sock = FakeQQSocket()
+    adapter._socket = sock
+    adapter._recv_alive.set()
+
+    with caplog.at_level(logging.WARNING, logger="lunamoth.messaging.qq"):
+        adapter.send("hello")
+    assert len(sock.sent) == 1
+    assert any("no action response" in r.message for r in caplog.records)
+    assert adapter._pending_acks == {}
+
+
+def test_qq_ack_frames_are_consumed_events_still_flow():
+    from lunamoth.messaging.qq import QQAdapter
+
+    adapter = QQAdapter({"url": "ws://127.0.0.1:3001"})
+    # An action response (echo, no post_type) is consumed by the ack router...
+    assert adapter._resolve_ack(json.dumps({"status": "ok", "retcode": 0, "echo": "e1"})) is True
+    # ...but a real OneBot event is not (the recv loop parses it as inbound).
+    event = json.dumps({"post_type": "message", "message_type": "private",
+                        "user_id": 123, "message": "hi"})
+    assert adapter._resolve_ack(event) is False
+
+
 # ---- inbound dedup (audit #30; hermes gateway/platforms/helpers.py) -----------------
 
 
@@ -952,7 +1068,9 @@ def test_telegram_offset_persists_and_restart_never_replays(tmp_path):
 
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["offset"] == 102  # last update_id + 1: confirmed, never replayed
-    assert state["last_chat_id"] == "42"
+    # The raw poll must NOT persist the sender as the speak destination (pre-auth);
+    # only the host's post-allow-list remember_peer commits it.
+    assert state["last_chat_id"] == ""
     assert oct(state_path.stat().st_mode & 0o777) == "0o600"
 
     # A NEW adapter (the restart) resumes from the persisted offset.
@@ -960,6 +1078,24 @@ def test_telegram_offset_persists_and_restart_never_replays(tmp_path):
     restarted = TelegramAdapter({"bot_token": "tok"}, opener=transport2, state_path=state_path)
     assert restarted.poll_once(queue.Queue()) == 0
     assert transport2.body(0)["offset"] == 102
+
+
+def test_telegram_remember_peer_commits_and_persists(tmp_path):
+    """2026-07-02 P1: only the post-allow-list remember_peer moves the durable
+    speak destination; the ephemeral reply target never does."""
+    from lunamoth.messaging.telegram import TelegramAdapter
+
+    state_path = tmp_path / "telegram_state.json"
+    adapter = TelegramAdapter({"bot_token": "tok"}, opener=FakeTelegramTransport([]),
+                              state_path=state_path)
+    msg = InboundMessage("42", "Alice", "hi")
+    adapter.set_reply_target(msg)
+    adapter.clear_reply_target()
+    assert adapter.last_chat_id == ""     # the ephemeral target was never committed
+    adapter.remember_peer(msg)
+    assert adapter.last_chat_id == "42"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["last_chat_id"] == "42"  # committed peer survives a restart
 
 
 def test_telegram_default_state_path_honors_config_dir(monkeypatch, tmp_path):
@@ -1042,6 +1178,79 @@ def test_telegram_bad_token_is_a_clear_startup_error_not_a_retry_loop(tmp_path):
         adapter.run(queue.Queue())
     assert len(transport.requests) == 1   # exactly one getMe, no silent retrying
     assert "bad" not in str(excinfo.value)  # the token never leaks into the error
+
+
+def test_telegram_startup_check_retries_transient_then_polls(tmp_path):
+    """A transient network/API blip during the one-shot getMe must not
+    permanently kill the adapter (it used to raise out of run()); only a
+    rejected token stays fatal (see the 401 test above)."""
+    from lunamoth.messaging.telegram import TelegramAdapter
+
+    transport = FakeTelegramTransport([
+        ConnectionResetError("dns hiccup"),                       # getMe attempt 1
+        {"ok": True, "result": {"id": 1, "username": "bot"}},     # getMe attempt 2
+        {"ok": True, "result": True},                             # deleteWebhook
+        {"ok": True, "result": []},                               # first getUpdates
+    ])
+    sleeps = []
+    adapter = TelegramAdapter(
+        {"bot_token": "tok"}, opener=transport,
+        state_path=tmp_path / "telegram_state.json",
+        sleep=lambda s: sleeps.append(s),
+    )
+    inbox = queue.Queue()
+
+    # Close after the first successful poll so run() terminates.
+    original_poll = adapter.poll_once
+
+    def poll_and_close(q):
+        n = original_poll(q)
+        adapter.close()
+        return n
+
+    adapter.poll_once = poll_and_close
+    adapter.run(inbox)
+
+    assert sleeps == [5.0]                    # one visible retry wait, then live
+    assert len(transport.requests) == 4       # getMe ×2, deleteWebhook, getUpdates
+
+
+def test_weixin_transient_getupdates_error_retries_not_fatal(tmp_path):
+    """A non-ok getupdates payload (a server-side blip) used to re-raise and
+    permanently kill inbound; it now retries. A session timeout (needs the
+    interactive QR re-login) stays fatal."""
+    from lunamoth.messaging.weixin import WeixinAdapter
+
+    sleeps = []
+    adapter = WeixinAdapter({}, state_path=tmp_path / "state.json",
+                            sleep=lambda s: sleeps.append(s))
+    adapter.token = "tok"  # already logged in
+
+    calls = []
+
+    def flaky_poll(inbox):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("WeChat iLink getupdates failed: errcode=-1")
+        adapter.close()
+        return 0
+
+    adapter.poll_once = flaky_poll
+    adapter.run(queue.Queue())
+    assert len(calls) == 2       # retried after the blip
+    assert sleeps == [5.0]
+
+    # Session timeout → needs_relogin → fatal (the QR flow is interactive).
+    adapter2 = WeixinAdapter({}, state_path=tmp_path / "state2.json")
+    adapter2.token = "tok"
+
+    def timeout_poll(inbox):
+        adapter2.needs_relogin = True
+        raise RuntimeError("WeChat iLink getupdates session timed out; QR re-login is required")
+
+    adapter2.poll_once = timeout_poll
+    with pytest.raises(RuntimeError, match="re-login"):
+        adapter2.run(queue.Queue())
 
 
 def test_telegram_send_network_failure_is_delivery_deferred(tmp_path):

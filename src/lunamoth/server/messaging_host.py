@@ -30,6 +30,7 @@ from ..messaging.gateway import (
     MessageDeduplicator,
     _AdapterSink,
     _Envelope,
+    _parts_dropped_note,
     load_config,
     make_adapters,
 )
@@ -78,6 +79,15 @@ class MessagingHost:
         # ready→running, pending→needs_login. Rebuilt on every start/reconcile.
         self._ready_names: list[str] = []
         self._pending_names: list[str] = []
+        # Platforms whose adapter thread DIED (name → error detail). Without
+        # this a crashed adapter kept reading as "running" until the whole
+        # child restarted. Cleared when the platform is restarted/removed.
+        self._errored: dict[str, str] = {}
+        # True while _process runs an INBOUND platform turn — that's a live
+        # conversation with a human; the supervisor reads it (via status) so
+        # "autonomy off" never interrupts it. Plain bool: written only by the
+        # relay thread, read under the status lock.
+        self._turn_active = False
         self._ack: str | None = None  # cached "got it" receipt (char name + lang)
         # Proactive superchat buffer: a chara's idle/self-work `speak` (an idle
         # turn the SUPERVISOR drives, never this host) is observed via the
@@ -151,6 +161,7 @@ class MessagingHost:
         for name in live_names - set(desired_by):
             self._stop_one(name)
         self._pending_names = [n for n in self._pending_names if n in desired_by]
+        self._errored = {n: d for n, d in self._errored.items() if n in desired_by}
         # 2. add the newly-enabled (or promote a pending one that just logged in).
         for name, adapter in desired_by.items():
             if name in live_names:
@@ -186,6 +197,7 @@ class MessagingHost:
             self._dispatcher.set_stream_observer(self._on_stream_event)
 
     def _start_one(self, adapter: "Adapter") -> None:
+        self._errored.pop(adapter.name, None)  # a (re)start clears the crash record
         self._ensure_relay()
         th = threading.Thread(
             target=self._run_adapter, args=(adapter,),
@@ -210,6 +222,7 @@ class MessagingHost:
                 _log.exception("closing adapter %s failed", name)
         self._adapters = [a for a in self._adapters if a.name != name]
         self._ready_names = [n for n in self._ready_names if n != name]
+        self._errored.pop(name, None)
         th = self._threads_by_name.pop(name, None)
         if th is not None:
             th.join(timeout=2.0)
@@ -227,13 +240,18 @@ class MessagingHost:
     def _recompute_state(self) -> None:
         self._platform = ",".join(sorted(
             [a.name for a in self._adapters] + list(self._pending_names)))
+        err = "; ".join(f"adapter {n} stopped: {self._errored[n]}" for n in sorted(self._errored))
         if self._adapters:
             self._state = "running"
-            self._detail = ("" if not self._pending_names
-                            else f"awaiting login: {','.join(sorted(self._pending_names))}")
+            pend = (f"awaiting login: {','.join(sorted(self._pending_names))}"
+                    if self._pending_names else "")
+            self._detail = "; ".join(x for x in (pend, err) if x)
         elif self._pending_names:
             self._state = "needs_login"
-            self._detail = ",".join(sorted(self._pending_names))
+            self._detail = ",".join(sorted(self._pending_names)) + (f"; {err}" if err else "")
+        elif self._errored:
+            self._state = "error"
+            self._detail = err
         else:
             self._state, self._detail = "stopped", ""
 
@@ -255,6 +273,7 @@ class MessagingHost:
         self._relay = None
         self._ready_names = []
         self._pending_names = []
+        self._errored = {}
 
     def stop(self) -> dict[str, Any]:
         with self._lock:
@@ -270,16 +289,19 @@ class MessagingHost:
             platforms = (
                 [{"platform": n, "state": "running", "detail": ""} for n in self._ready_names]
                 + [{"platform": n, "state": "needs_login", "detail": ""} for n in self._pending_names]
+                + [{"platform": n, "state": "error", "detail": d}
+                   for n, d in sorted(self._errored.items())]
             )
             return {"state": self._state, "platform": self._platform,
-                    "detail": self._detail, "platforms": platforms}
+                    "detail": self._detail, "platforms": platforms,
+                    "turn_active": self._turn_active}
 
     # ---- relay --------------------------------------------------------------
 
     def _run_adapter(self, adapter: Adapter) -> None:
         try:
             adapter.run(_AdapterSink(adapter, self._inbox))  # type: ignore[arg-type]
-        except Exception:
+        except Exception as e:
             # A crash, NOT a clean shutdown: skip when the whole host is stopping
             # (self._stop) or this one platform is being stopped on purpose
             # (self._intentional) — otherwise a deliberate toggle would log a
@@ -287,7 +309,15 @@ class MessagingHost:
             if not self._stop.is_set() and adapter.name not in self._intentional:
                 _log.exception("messaging adapter %s stopped with an error", adapter.name)
                 with self._lock:
-                    self._detail = f"adapter {adapter.name} stopped"
+                    # The platform is DEAD: drop it from the live set and record
+                    # the error, so status says "error" — a stale "running" used
+                    # to hide the crash until the whole child restarted. The next
+                    # messaging.start (any gateway toggle) retries it.
+                    self._adapters = [a for a in self._adapters if a is not adapter]
+                    self._threads_by_name.pop(adapter.name, None)
+                    self._ready_names = [n for n in self._ready_names if n != adapter.name]
+                    self._errored[adapter.name] = f"{type(e).__name__}: {e}"[:240]
+                    self._recompute_state()
 
     def _relay_loop(self) -> None:
         while not self._stop.is_set():
@@ -306,6 +336,10 @@ class MessagingHost:
         if msg.message_id and self._dedup.is_duplicate(f"{adapter.name}:{msg.message_id}"):
             return
         adapter.set_reply_target(msg)
+        # Mark the whole inbound exchange as a live conversation — the
+        # supervisor reads this (status.turn_active) so `set_autonomy(off)`
+        # interrupts only self-work, never a user-facing platform reply.
+        self._turn_active = True
         try:
             sender = str(msg.sender_id)
             if not sender_allowed(sender, self._allowed, owner_id=adapter.owner_id()):
@@ -313,6 +347,9 @@ class MessagingHost:
                     self._send(adapter, self._refusal)
                 _log.info("ignored unauthorized messaging sender %s (%s)", sender, msg.sender_name)
                 return
+            # Only an AUTHORIZED sender becomes the durable destination for the
+            # chara's unattended speak — a stranger's DM must never hijack it.
+            adapter.remember_peer(msg)
             text = (msg.text or "").strip()
             attachments = list(msg.attachments)
             # A media-only message (a photo/file/sticker with no caption) has no
@@ -391,6 +428,7 @@ class MessagingHost:
                 for other in others:
                     self._emit_reply(other, speak_text)
         finally:
+            self._turn_active = False
             adapter.clear_reply_target()
 
     def _zh(self) -> bool:
@@ -463,14 +501,17 @@ class MessagingHost:
             return
         max_len = int(getattr(adapter, "max_message_length", 0) or 0)
         parts = split_text(text, max_len) if max_len else [text]
-        for part in parts:
+        for idx, part in enumerate(parts):
             for attempt in (1, 2):
                 try:
                     adapter.send(part)
                     break
                 except DeliveryDeferred as e:
-                    _log.error("messaging adapter %s could not deliver: %s", adapter.name, e)
-                    break
+                    # Permanent for this message — stop the whole thing: sending
+                    # the tail without this part would silently garble it.
+                    _log.error("messaging adapter %s could not deliver: %s%s",
+                               adapter.name, e, _parts_dropped_note(idx, len(parts)))
+                    return
                 except Exception as e:  # noqa: BLE001
                     if attempt == 1:
                         _log.warning(
@@ -482,4 +523,6 @@ class MessagingHost:
                         # if stop fires — we then make the second attempt at once.
                         self._stop.wait(_SEND_RETRY_DELAY)
                         continue
-                    _log.error("dropping outbound %s message after retry", adapter.name)
+                    _log.error("dropping outbound %s message after retry%s",
+                               adapter.name, _parts_dropped_note(idx, len(parts)))
+                    return

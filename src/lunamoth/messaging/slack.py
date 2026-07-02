@@ -33,12 +33,20 @@ SLACK_API_BASE = "https://slack.com/api"
 SLACK_TEXT_MAX = 4000
 API_TIMEOUT_S = 15
 
+# Bounded in-adapter retries for TRANSIENT outbound failures (HTTP 429 honors
+# Retry-After, 5xx/network back off briefly). An ok=false verdict (auth, bad
+# channel) is permanent for this message and defers immediately; the relay
+# treats DeliveryDeferred as final, so retrying here is the only retry.
+_SEND_TRANSIENT_RETRIES = 2
+_RETRY_AFTER_CAP_S = 15.0
+_STARTUP_RETRY_S = 5.0
+
 
 class SlackAPIError(RuntimeError):
     """A Web API call that returned ok=false (or an HTTP error). Carries the
     method + Slack's error code, never the Authorization header (the token)."""
 
-    def __init__(self, method: str, status: int, error: str) -> None:
+    def __init__(self, method: str, status: int, error: str, *, retry_after: float | None = None) -> None:
         detail = f"Slack {method} failed: HTTP {status}"
         if error:
             detail = f"{detail} {error}"
@@ -46,6 +54,7 @@ class SlackAPIError(RuntimeError):
         self.method = method
         self.status = status
         self.error = error
+        self.retry_after = retry_after
 
 
 class SlackAPI:
@@ -69,8 +78,13 @@ class SlackAPI:
             with self._opener(req, timeout=API_TIMEOUT_S) as resp:
                 raw = resp.read()
         except HTTPError as e:
+            try:
+                retry_after = float((getattr(e, "headers", None) or {}).get("Retry-After") or "")
+            except (TypeError, ValueError, AttributeError):
+                retry_after = None
             # `from None`: the request carries the token header — keep it out of tracebacks.
-            raise SlackAPIError(method, int(e.code), getattr(e, "reason", "") or "") from None
+            raise SlackAPIError(method, int(e.code), getattr(e, "reason", "") or "",
+                                retry_after=retry_after) from None
         out = json.loads(raw.decode("utf-8", errors="replace"))
         if not isinstance(out, dict):
             raise SlackAPIError(method, 200, "non-object response")
@@ -93,12 +107,15 @@ class SlackAPI:
         return self.call("chat.postMessage", {"channel": channel, "text": text})
 
 
-def parse_event(payload: Any, bot_user_id: str, *, allow_bot: bool = False) -> InboundMessage | None:
+def parse_event(payload: Any, bot_user_id: str, *, allow_bot: bool = False,
+                own_bot_id: str = "") -> InboundMessage | None:
     """Normalize a Socket Mode ``events_api`` payload → InboundMessage, or None.
 
     Engages on a DM message (channel_type == 'im') or an app_mention; ignores the
     bot's own / other bots' messages (loop guard), message edits/deletes
-    (subtypes), and empty text.
+    (subtypes), and empty text. ``allow_bot`` (config `allow_bot_messages`)
+    admits OTHER bots' plain posts (subtype bot_message); our own bot — matched
+    on ``own_bot_id`` from auth.test — is always dropped (the loop guard).
     """
     if not isinstance(payload, dict):
         return None
@@ -109,10 +126,16 @@ def parse_event(payload: Any, bot_user_id: str, *, allow_bot: bool = False) -> I
     if etype not in ("message", "app_mention"):
         return None
     # Loop guard: skip bots (incl. ourselves) and non-user message subtypes
-    # (edits, joins, bot_message, etc.).
-    if event.get("bot_id") or event.get("subtype"):
-        return None
-    user = str(event.get("user") or "")
+    # (edits, joins, bot_message, etc.) — unless allow_bot admits a plain
+    # bot post (bot_id set, subtype absent or bot_message, never ourselves).
+    subtype = event.get("subtype")
+    if event.get("bot_id") or subtype:
+        if not allow_bot or not event.get("bot_id") or subtype not in (None, "", "bot_message"):
+            return None
+        if own_bot_id and str(event.get("bot_id")) == own_bot_id:
+            return None
+    # A bot post may carry no `user` — its bot_id is the stable sender then.
+    user = str(event.get("user") or event.get("bot_id") or "")
     if not user or (bot_user_id and user == bot_user_id):
         return None
     if etype == "message" and event.get("channel_type") != "im":
@@ -146,7 +169,7 @@ class SlackAdapter(Adapter):
 
     max_message_length = SLACK_TEXT_MAX
 
-    def __init__(self, config: dict[str, Any], *, opener=None) -> None:
+    def __init__(self, config: dict[str, Any], *, opener=None, sleep=None) -> None:
         self.config = dict(config)
         self.bot_token = str(self.config.get("bot_token") or "").strip()
         self.app_token = str(self.config.get("app_token") or "").strip()
@@ -159,7 +182,10 @@ class SlackAdapter(Adapter):
         self._api = SlackAPI(self.bot_token, self.app_token, api_base=self.api_base, opener=opener)
 
         self._closed = threading.Event()
+        # Retry backoff wait — interruptible by close(); injectable for tests.
+        self._sleep = sleep or (lambda s: self._closed.wait(s))
         self._bot_user_id = ""
+        self._own_bot_id = ""
         self._reply_channel = ""
         self._last_channel = ""
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -173,15 +199,22 @@ class SlackAdapter(Adapter):
         return self.owner
 
     def set_reply_target(self, message: InboundMessage) -> None:
+        # Ephemeral only — pre-auth. The durable _last_channel (the unattended
+        # speak destination) moves in remember_peer, post-auth.
         channel = ""
         if isinstance(message.reply, dict):
             channel = str(message.reply.get("channel") or "").strip()
         self._reply_channel = channel
-        if channel:
-            self._last_channel = channel
 
     def clear_reply_target(self) -> None:
         self._reply_channel = ""
+
+    def remember_peer(self, message: InboundMessage) -> None:
+        channel = ""
+        if isinstance(message.reply, dict):
+            channel = str(message.reply.get("channel") or "").strip()
+        if channel:
+            self._last_channel = channel
 
     def _target_channel(self) -> str:
         return self._reply_channel or self._last_channel or self.default_channel
@@ -193,26 +226,62 @@ class SlackAdapter(Adapter):
                 "Slack has no channel to send to yet (no inbound message and no configured "
                 "channel_id); this message was dropped, not queued"
             )
-        try:
-            self._api.post_message(target, text)
-        except SlackAPIError as e:
-            raise DeliveryDeferred(
-                f"Slack send failed ({e.error or e.status}); this message was dropped"
-            ) from None
-        except OSError as e:
-            raise DeliveryDeferred(
-                f"Slack send network failure ({type(e).__name__}: {e}); this message was dropped"
-            ) from None
+        # Bounded retry for the transient failures (HTTP 429 honoring Retry-After,
+        # 5xx, network); an ok=false verdict (auth, bad channel) defers at once.
+        for attempt in range(_SEND_TRANSIENT_RETRIES + 1):
+            try:
+                self._api.post_message(target, text)
+                return
+            except SlackAPIError as e:
+                transient = e.status == 429 or 500 <= e.status < 600
+                if not transient or attempt == _SEND_TRANSIENT_RETRIES or self._closed.is_set():
+                    raise DeliveryDeferred(
+                        f"Slack send failed ({e.error or e.status}); this message was dropped"
+                    ) from None
+                if e.status == 429 and e.retry_after is not None:
+                    wait = min(e.retry_after, _RETRY_AFTER_CAP_S)
+                else:
+                    wait = float(attempt + 1)
+                _log.warning("Slack send got HTTP %s; retry %d/%d in %.1fs",
+                             e.status, attempt + 1, _SEND_TRANSIENT_RETRIES, wait)
+                self._sleep(wait)
+            except OSError as e:
+                if attempt == _SEND_TRANSIENT_RETRIES or self._closed.is_set():
+                    raise DeliveryDeferred(
+                        f"Slack send network failure ({type(e).__name__}: {e}); this message was dropped"
+                    ) from None
+                _log.warning("Slack send network failure (%s); retry %d/%d in %.1fs",
+                             type(e).__name__, attempt + 1, _SEND_TRANSIENT_RETRIES, float(attempt + 1))
+                self._sleep(float(attempt + 1))
 
     # ---- inbound (Socket Mode WebSocket) ------------------------------------------
 
     def run(self, inbox: "Any") -> None:
-        try:
-            me = self._api.auth_test()
+        # auth.test inside a retry loop: only Slack's own ok=false verdict (a
+        # rejected token, e.g. invalid_auth) is fatal — a transient HTTP/network
+        # failure at startup must not permanently kill the adapter.
+        while not self._closed.is_set():
+            try:
+                me = self._api.auth_test()
+            except SlackAPIError as e:
+                if e.status == 200:
+                    raise RuntimeError(
+                        f"Slack auth.test failed ({e.error}): check the bot_token"
+                    ) from None
+                _log.warning("Slack auth.test failed (HTTP %s); retrying in %.0fs", e.status, _STARTUP_RETRY_S)
+                self._sleep(_STARTUP_RETRY_S)
+                continue
+            except OSError as e:
+                _log.warning("Slack auth.test network error (%s); retrying in %.0fs",
+                             type(e).__name__, _STARTUP_RETRY_S)
+                self._sleep(_STARTUP_RETRY_S)
+                continue
             self._bot_user_id = str(me.get("user_id") or "")
+            self._own_bot_id = str(me.get("bot_id") or "")
             _log.info("Slack bot %s ready", me.get("user") or self._bot_user_id)
-        except SlackAPIError as e:
-            raise RuntimeError(f"Slack auth.test failed ({e.error or e.status}): check the bot_token") from None
+            break
+        if self._closed.is_set():
+            return
         self._loop = asyncio.new_event_loop()
         try:
             asyncio.set_event_loop(self._loop)
@@ -268,9 +337,11 @@ class SlackAdapter(Adapter):
                 with contextlib.suppress(Exception):
                     await ws.send(json.dumps({"envelope_id": envelope_id}))
             if mtype == "events_api":
-                inbound = parse_event(msg.get("payload"), self._bot_user_id, allow_bot=self.allow_bot_messages)
+                inbound = parse_event(msg.get("payload"), self._bot_user_id,
+                                      allow_bot=self.allow_bot_messages, own_bot_id=self._own_bot_id)
                 if inbound is not None:
-                    self._last_channel = str((inbound.reply or {}).get("channel") or "") or self._last_channel
+                    # _last_channel is updated post-auth via remember_peer, never
+                    # here — an unauthorized sender must not become the speak target.
                     inbox.put(inbound)
         return True
 

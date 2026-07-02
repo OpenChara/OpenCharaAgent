@@ -79,6 +79,12 @@ class EnvState:
             data.pop("isolation", None)
             changed = True
         data.setdefault("rest_until", 0.0)
+        if "network_access" not in data:
+            # State files from builds that predate network-on-by-default (owner
+            # 2026-06-15) lack the key; it must default to DEFAULT_STATUS's True,
+            # not False — an old env_status.json silently flipped a chara offline.
+            data["network_access"] = DEFAULT_STATUS["network_access"]
+            changed = True
         # user_present was retired — the chara is independent of attach/detach.
         # Drop any leftover so an old state file can't mislead a reader.
         if "user_present" in data:
@@ -96,7 +102,9 @@ class EnvState:
             # The ONE authority for the jail (LUNAMOTH_PY_BACKEND ← session config),
             # not a per-sandbox copy — so an `admin` chara is never silently sandboxed.
             isolation=_isolation_backend(),
-            network_on=bool(data.get("network_access", False)),
+            # load() backfills a missing key, so the default here is belt-and-braces;
+            # it must agree with DEFAULT_STATUS (True), never drift back to False.
+            network_on=bool(data.get("network_access", DEFAULT_STATUS["network_access"])),
             writable_paths=list(data.get("writable_paths", []) or []),
         )
 

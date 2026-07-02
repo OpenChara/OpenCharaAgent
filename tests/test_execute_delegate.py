@@ -587,3 +587,53 @@ def test_execute_code_runs_from_workspace_not_double_cd(tmp_path):
     rec = records[0]
     assert rec["workdir"] is None, "must not pass workdir=stage_dir (the double-cd bug)"
     assert rec["command"].startswith("cd ") and ".execute_code_" in rec["command"]
+
+
+# ---- per-child timeout semantics (2026-07-02 audit P2) ----------------------------
+# The budget must run from each child's OWN start: the old sequential
+# fut.result(timeout=600) gave task N a budget of 600s × its wait position and
+# reported queued-but-never-started tasks as "timed out" (a fabricated result).
+
+
+def test_fanout_per_child_timeout_is_from_own_start(monkeypatch, tmp_path):
+    import time as _time
+
+    monkeypatch.setattr(dt_mod, "DEFAULT_PER_CHILD_TIMEOUT", 1)
+
+    def fake_child(i, goal, context, toolsets, ctx, max_iter):
+        if goal == "hang":
+            _time.sleep(5.0)
+        else:
+            _time.sleep(0.05)
+        return dt_mod._result(i, "done", summary=f"ok-{i}")
+
+    monkeypatch.setattr(dt_mod, "_run_single_child", fake_child)
+    tasks = [{"goal": "hang"}, {"goal": "a"}, {"goal": "b"}, {"goal": "c"}]
+    t0 = _time.monotonic()
+    results = dt_mod._run_fanout(tasks, None, None, ctx=None, max_iter=3)
+    elapsed = _time.monotonic() - t0
+    # The hung child times out on ITS budget; the quick ones — including the one
+    # queued behind it — complete for real, and the batch returns promptly.
+    assert results[0]["status"] == "timed_out"
+    assert [r["status"] for r in results[1:]] == ["done", "done", "done"]
+    assert [r["summary"] for r in results[1:]] == ["ok-1", "ok-2", "ok-3"]
+    assert elapsed < 4.0
+
+
+def test_fanout_wedged_slots_report_never_started(monkeypatch, tmp_path):
+    import time as _time
+
+    monkeypatch.setattr(dt_mod, "DEFAULT_PER_CHILD_TIMEOUT", 1)
+
+    def fake_child(i, goal, context, toolsets, ctx, max_iter):
+        _time.sleep(10.0)  # wedge every slot
+        return dt_mod._result(i, "done", summary=f"late-{i}")
+
+    monkeypatch.setattr(dt_mod, "_run_single_child", fake_child)
+    tasks = [{"goal": "h1"}, {"goal": "h2"}, {"goal": "h3"}, {"goal": "queued"}]
+    results = dt_mod._run_fanout(tasks, None, None, ctx=None, max_iter=3)
+    assert [r["status"] for r in results[:3]] == ["timed_out"] * 3
+    # The queued task never ran: reported as never-started, not fabricated as
+    # having exceeded a budget it never got.
+    assert results[3]["status"] == "timed_out"
+    assert "never started" in results[3]["error"]

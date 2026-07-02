@@ -270,6 +270,15 @@ class CharaHandle:
 
         return commands.infos()
 
+    def command_is_exclusive(self, line: str) -> bool:
+        """Whether `line` mutates state a streaming turn shares (context buffer /
+        LLM route) and therefore must not run while a turn is in flight. The
+        server checks this before executing a `command` RPC; the classifier
+        lives with the registry so the two can't drift."""
+        from ..core import commands
+
+        return commands.is_exclusive(line)
+
     # ---- state -------------------------------------------------------------------
 
     def snapshot(self, fresh: bool = False) -> StateSnapshot:
@@ -349,8 +358,9 @@ class CharaHandle:
         self._agent.reconfigure(settings)
         self._visuals_cache = None  # the card may have changed
         self._snap = None
-        if self._session is not None:
-            self._session.context.max_tokens = self._agent.context_limit()
+        # max_tokens AND the trim buffer together — resizing only max_tokens can
+        # zero the trim target after a wide→narrow swap (see sync_context_window).
+        self._agent.sync_context_window(self._session)
 
     @property
     def settings(self):

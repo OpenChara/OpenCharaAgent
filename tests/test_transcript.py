@@ -56,6 +56,43 @@ def test_epoch_is_cached_and_invalidated_on_reset(tmp_path):
     assert TranscriptStore(t.path).load() == [{"role": "user", "content": "after reset"}]
 
 
+def test_reset_derives_epoch_in_the_write_connection_never_rewinds(tmp_path, monkeypatch):
+    """REGRESSION: reset() used to derive new = epoch() + 1 from a SEPARATE read;
+    a transient failure there returns 0, so the write rewound a long-lived chara
+    to epoch 1 — resurrecting every old message. The new epoch must be derived
+    from the same connection that writes it."""
+    t = TranscriptStore(tmp_path / "t.db")
+    t.reset()
+    t.reset()
+    t.reset()
+    assert t.epoch() == 3
+    # Simulate the transient epoch() failure (it returns 0 on a failed read).
+    monkeypatch.setattr(t, "epoch", lambda: 0)
+    new = t.reset()
+    assert new == 4  # derived from the DB row, not the flaky reader
+    assert TranscriptStore(t.path).epoch() == 4  # persisted forward, never rewound
+
+
+def test_reset_failure_leaves_epoch_unchanged(tmp_path, monkeypatch):
+    """A reset that can't reach the DB is best-effort: nothing is written, the
+    on-disk epoch stays put, and the cache is invalidated (no fabricated bump)."""
+    import sqlite3 as sq
+
+    t = TranscriptStore(tmp_path / "t.db")
+    t.reset()
+    assert t.epoch() == 1
+
+    def boom():
+        raise sq.OperationalError("database is locked")
+
+    monkeypatch.setattr(t, "_connect", boom)
+    t.reset()  # swallowed — never kills the host loop
+    assert t._epoch_cache is None  # cache invalidated, not trusted
+    monkeypatch.undo()
+    assert t.epoch() == 1  # unchanged on disk
+    assert TranscriptStore(t.path).epoch() == 1
+
+
 def test_structured_messages_roundtrip(tmp_path):
     t = TranscriptStore(tmp_path / "t.db")
     call = {"role": "assistant", "content": None, "tool_calls": [

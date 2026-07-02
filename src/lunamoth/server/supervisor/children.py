@@ -377,6 +377,18 @@ class CharaChild:
             # entry per slow call for the child's whole lifetime.
             self._pending.pop(rid, None)
 
+    async def messaging_turn_active(self) -> bool:
+        """True while the in-child messaging host is mid-turn on an INBOUND
+        platform message (WeChat/QQ/...): that turn is a conversation with a
+        human, so an autonomy-off interrupt must leave it alone — only
+        self-work (idle/react) is halted. Best-effort: no host / a slow child
+        reads as "no turn"."""
+        try:
+            st = await self.private_call("messaging.status", {}, timeout=5.0)
+        except Exception:  # noqa: BLE001
+            return False
+        return bool(isinstance(st, dict) and st.get("turn_active"))
+
     async def attach_background(self) -> None:
         if self._attached:
             return
@@ -676,9 +688,28 @@ class GatewayChild:
         return bool(self._config().get("enabled"))
 
     def set_enabled(self, enabled: bool) -> None:
+        """Persist the gateway kill-switch. The top-level `enabled` is DERIVED
+        from the per-platform flags on every messaging.save (session_messaging
+        recomputes it, and the web client re-derives it too), so a bare
+        top-level write is silently undone by the next save — the per-platform
+        flags themselves must move. OFF materializes `enabled: false` into
+        every adapter block so the stop sticks. ON writes the top level and
+        flips the platform flags back on only when NO platform would come on
+        otherwise (every block carries an explicit false — i.e. after a stop);
+        a deliberate per-platform choice is otherwise left alone."""
         path = self._config_path()
         data = self._config()
         data["enabled"] = bool(enabled)
+        adapters = data.get("adapters")
+        if isinstance(adapters, dict):
+            from ...messaging.gateway import adapter_enabled
+            blocks = [a for a in adapters.values() if isinstance(a, dict)]
+            if not enabled:
+                for a in blocks:
+                    a["enabled"] = False
+            elif blocks and not any(adapter_enabled(a, legacy=True) for a in blocks):
+                for a in blocks:
+                    a["enabled"] = True
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         with contextlib.suppress(OSError):

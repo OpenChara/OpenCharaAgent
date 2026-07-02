@@ -136,6 +136,14 @@ def make_adapters(config: dict[str, Any]) -> list[Adapter]:
     return out
 
 
+def _parts_dropped_note(index: int, total: int) -> str:
+    """Log suffix when part `index` of a split message ultimately fails: the
+    sender stops there (the tail would read garbled without the failed part),
+    and the log must say the tail was dropped too — never a silent hole."""
+    remaining = total - index - 1
+    return f"; {remaining} following part(s) of this message dropped too" if remaining > 0 else ""
+
+
 @dataclass(frozen=True)
 class _Envelope:
     adapter: Adapter
@@ -294,6 +302,9 @@ class MessagingGateway:
                 self._refuse_unknown_once_per_day(adapter, sender)
                 _log.info("ignored unauthorized messaging sender %s (%s)", sender, msg.sender_name)
                 return
+            # Only an AUTHORIZED sender becomes the durable destination for the
+            # chara's unattended speak — a stranger's DM must never hijack it.
+            adapter.remember_peer(msg)
 
             now = time.monotonic()
             self._last_user_at = now
@@ -398,16 +409,19 @@ class MessagingGateway:
             return
         max_len = int(getattr(adapter, "max_message_length", 0) or 0)
         parts = split_text(text, max_len) if max_len else [text]
-        for part in parts:
+        for idx, part in enumerate(parts):
             for attempt in (1, 2):
                 try:
                     adapter.send(part)
                     break
                 except DeliveryDeferred as e:
-                    # The adapter consciously deferred (e.g. no reply window
-                    # open) — retrying won't change that; log and move on.
-                    _log.error("messaging adapter %s could not deliver: %s", adapter.name, e)
-                    break
+                    # The adapter consciously deferred (no reply window open, a
+                    # permanent platform rejection) — retrying won't change that.
+                    # Stop the whole message: sending the tail without this part
+                    # would silently garble it.
+                    _log.error("messaging adapter %s could not deliver: %s%s",
+                               adapter.name, e, _parts_dropped_note(idx, len(parts)))
+                    return
                 except Exception as e:
                     if attempt == 1:
                         _log.warning(
@@ -421,7 +435,7 @@ class MessagingGateway:
                         self._stop.wait(_SEND_RETRY_DELAY)
                         continue
                     _log.error(
-                        "messaging adapter %s dropped a message after retry (%s: %s): %.80s",
-                        adapter.name, type(e).__name__, e, part,
+                        "messaging adapter %s dropped a message after retry (%s: %s)%s: %.80s",
+                        adapter.name, type(e).__name__, e, _parts_dropped_note(idx, len(parts)), part,
                     )
                     return  # drop the rest of THIS message; the gateway lives on

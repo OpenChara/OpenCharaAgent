@@ -116,6 +116,11 @@ class JsonRpcDispatcher:
         self._lock = threading.RLock()
         self._stream_thread: threading.Thread | None = None
         self._stream_kind: str = ""  # kind of the in-flight stream (send|event|idle|react)
+        # Interrupt flag of the CURRENT turn. Each turn installs a FRESH Event
+        # when it claims the slot (never clear()s the old one): after a timed-out
+        # takeover the superseded worker is still running, and clearing a shared
+        # flag would un-interrupt that zombie — two generators writing the one
+        # ContextBuffer. The zombie's own Event stays set until it dies.
         self._stream_interrupt = threading.Event()
         self._pending_permissions: dict[str, _PendingPermission] = {}
         self._pending_clarifies: dict[str, _PendingClarify] = {}
@@ -288,7 +293,9 @@ class JsonRpcDispatcher:
 
     def _interrupt(self) -> dict[str, bool]:
         with self._lock:
-            active = self._is_streaming_locked()
+            # A command-held slot is synchronous and never checks the Event —
+            # reporting interrupted:true for it would be a fabrication.
+            active = self._is_streaming_locked() and self._stream_kind != "command"
             if active:
                 self._stream_interrupt.set()
                 self._cancel_pending_permissions_locked()
@@ -299,7 +306,25 @@ class JsonRpcDispatcher:
         line = params.get("line")
         if not isinstance(line, str):
             raise RpcError(-32602, "command.line must be a string")
-        return self.handle.command(line)
+        if not self.handle.command_is_exclusive(line):
+            return self.handle.command(line)
+        # A context/route-mutating command (/compact, /model …) must not
+        # interleave with a streaming turn: it rewrites ctx.messages / swaps
+        # agent.llm under the worker thread. Refuse while a turn is in flight,
+        # and claim the stream slot for the duration so no turn starts mid-run.
+        with self._lock:
+            if self._is_streaming_locked():
+                raise RpcError(-32011, "a turn is in flight — interrupt it or wait, then rerun the command")
+            self._stream_interrupt = threading.Event()  # per-claim, like _start_stream
+            self._stream_thread = threading.current_thread()
+            self._stream_kind = "command"
+        try:
+            return self.handle.command(line)
+        finally:
+            with self._lock:
+                if threading.current_thread() is self._stream_thread:
+                    self._stream_thread = None
+                    self._stream_kind = ""
 
     def _snapshot(self, params: dict[str, Any]) -> Any:
         if params:
@@ -441,7 +466,7 @@ class JsonRpcDispatcher:
                     and self._stream_thread is not superseding
                     and self._stream_thread is not threading.current_thread()):
                 raise RpcError(-32011, "a stream is already in flight")
-            self._stream_interrupt.clear()
+            interrupt = self._stream_interrupt = threading.Event()
             self._stream_thread = threading.current_thread()
             self._stream_kind = kind
         interrupted = False
@@ -449,12 +474,12 @@ class JsonRpcDispatcher:
         try:
             events = make_events()
             for ev in events:
-                if self._stream_interrupt.is_set():
+                if interrupt.is_set():
                     interrupted = True
                     break
                 if not self._emit("event", to_dict(ev)):
                     interrupted = True
-                    self._stream_interrupt.set()
+                    interrupt.set()
                     break
                 self._observe(kind, ev)
                 if on_event is not None:
@@ -471,10 +496,13 @@ class JsonRpcDispatcher:
             self._emit("turn_end", {"kind": kind, "interrupted": interrupted})
             self._observe(kind, turn_end=True, interrupted=interrupted)
             with self._lock:
+                # Release the slot only if this turn still owns it; never touch
+                # the interrupt flag — it is per-turn, and a superseded zombie
+                # clearing the CURRENT turn's flag would swallow an interrupt
+                # aimed at that new turn.
                 if threading.current_thread() is self._stream_thread:
                     self._stream_thread = None
                     self._stream_kind = ""
-                self._stream_interrupt.clear()
         return not interrupted
 
     def _start_stream(
@@ -508,10 +536,10 @@ class JsonRpcDispatcher:
             if (self._is_streaming_locked()
                     and self._stream_thread is not superseding):
                 raise RpcError(-32011, "a stream is already in flight")
-            self._stream_interrupt.clear()
+            interrupt = self._stream_interrupt = threading.Event()
             thread = threading.Thread(
                 target=self._stream_worker,
-                args=(kind, rid, wants_response, make_events),
+                args=(kind, rid, wants_response, make_events, interrupt),
                 name=f"gateway-{kind}",
                 daemon=True,
             )
@@ -525,21 +553,22 @@ class JsonRpcDispatcher:
         rid: Any,
         wants_response: bool,
         make_events: Callable[[], Iterator[Any]],
+        interrupt: threading.Event,
     ) -> None:
         interrupted = False
         events: Iterator[Any] | None = None
         try:
             events = make_events()
             for ev in events:
-                if self._stream_interrupt.is_set():
+                if interrupt.is_set():
                     interrupted = True
                     break
                 if not self._emit("event", to_dict(ev)):
                     interrupted = True
-                    self._stream_interrupt.set()
+                    interrupt.set()
                     break
                 self._observe(kind, ev)
-                if self._stream_interrupt.is_set():
+                if interrupt.is_set():
                     interrupted = True
                     break
             if interrupted and hasattr(events, "close"):
@@ -561,10 +590,12 @@ class JsonRpcDispatcher:
             self._emit("turn_end", {"kind": kind, "interrupted": interrupted})
             self._observe(kind, turn_end=True, interrupted=interrupted)
             with self._lock:
+                # Release the slot only if this turn still owns it; the interrupt
+                # flag is per-turn and must never be cleared here (a zombie would
+                # swallow an interrupt aimed at the turn that superseded it).
                 if threading.current_thread() is self._stream_thread:
                     self._stream_thread = None
                     self._stream_kind = ""
-                self._stream_interrupt.clear()
 
     def _is_streaming_locked(self) -> bool:
         return self._stream_thread is not None and self._stream_thread.is_alive()

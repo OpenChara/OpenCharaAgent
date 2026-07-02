@@ -52,18 +52,31 @@ export interface ChatSessionDeps {
   restoreQueue: () => void;
   refreshSnapshot: () => Promise<SessionSnapshot | null>;
   runStream: (fn: () => Promise<unknown>) => Promise<void>;
+  /** Tear this session down and mount a fresh one (fresh model + attach/restore).
+   *  The recovery path when an in-place resume is impossible: no rejoin anchor, or
+   *  the server declared a replay gap — a clean re-attach restores full history. */
+  requestRestart: () => void;
 }
 
 export type ClientFactory = (name: string) => CharaClient;
 
 export const LIFE_TICK_MS = 1000;
 export const SNAP_POLL_MS = 6000;
+export const RECONNECT_BASE_MS = 1000;
+export const RECONNECT_MAX_MS = 8000;
 
 export class ChatSession {
   readonly client: CharaClient;
   private lifeTimer: ReturnType<typeof setInterval> | null = null;
   private snapTimer: ReturnType<typeof setInterval> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private reconnectBackoff = RECONNECT_BASE_MS;
   private ownDisposed = false;
+  /** true once attach() resolved — the precondition for an in-place resume. */
+  private attached = false;
+  /** live-socket flag, so a FAILED reconnect attempt's close event doesn't append
+   *  another "connection lost" line — only a real connected→down transition does. */
+  private connectedNow = false;
   // Live frames are buffered until the restored history is rendered, so a turn that
   // was already in flight when we (re)attached can't render ABOVE the history.
   private restored = false;
@@ -90,11 +103,13 @@ export class ChatSession {
     try {
       await client.connect();
       if (this.dead) return;
+      this.connectedNow = true;
       deps.setConnected(true);
       this.wireCallbacks();
 
       const info = await client.attach<AttachInfo>();
       if (this.dead) return;
+      this.attached = true;
       deps.setCharName(info.char_name || this.name);
       model.renderRestored(info.restored || []);
       deps.bump();
@@ -184,26 +199,60 @@ export class ChatSession {
       }
     };
     client.onRejoinGap = () => {
-      // We reconnected having missed events while disconnected — the live
-      // transcript is now incomplete. Surface that instead of swallowing it (a
-      // silent gap is exactly the failure the no-hidden-errors rule guards
-      // against); the restored history is intact on re-attach.
-      if (!this.dead) {
-        model.systemLine(deps.t("rejoin-gap"), "arrived");
-        deps.bump();
-      }
+      // The server's replay ring can't bridge the outage (or the child restarted):
+      // resuming in place would leave a silent hole in the live transcript. A
+      // clean remount re-attaches and restores the FULL history instead, so
+      // nothing is missing and nothing renders twice.
       client.clearRejoin();
+      if (!this.dead) deps.requestRestart();
     };
     client.onClose = () => {
-      if (!this.dead) {
+      if (this.dead) return;
+      if (this.connectedNow) {
+        this.connectedNow = false;
         deps.setConnected(false);
-        model.systemLine(deps.t("conn-lost"));
+        model.systemLine(deps.t("conn-lost")); // "…reconnecting…" — the loop below delivers on it
         deps.bump();
       }
+      this.scheduleReconnect();
     };
   }
 
-  /** Idempotent teardown: clears BOTH timers (the session owns them, so this works
+  /** Auto-reconnect with backoff (HubClient's forever-reconnect, scoped to this
+   *  session). An attached session with a rejoin anchor resumes IN PLACE: the
+   *  server replays only the frames missed while the socket was down, so nothing
+   *  renders twice. Without an anchor (attach never completed) a seamless resume
+   *  is impossible — remount for a clean attach+restore instead. */
+  private scheduleReconnect(): void {
+    if (this.dead || this.reconnectTimer) return;
+    const delay = this.reconnectBackoff;
+    this.reconnectBackoff = Math.min(this.reconnectBackoff * 2, RECONNECT_MAX_MS);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.tryReconnect();
+    }, delay);
+  }
+
+  private async tryReconnect(): Promise<void> {
+    if (this.dead) return;
+    if (!this.attached || !this.client.hasRejoinAnchor) {
+      this.deps.requestRestart();
+      return;
+    }
+    try {
+      await this.client.reconnect();
+    } catch {
+      if (!this.dead) this.scheduleReconnect();
+      return;
+    }
+    if (this.dead) return;
+    this.reconnectBackoff = RECONNECT_BASE_MS;
+    this.connectedNow = true;
+    this.deps.setConnected(true);
+    void this.deps.refreshSnapshot();
+  }
+
+  /** Idempotent teardown: clears ALL timers (the session owns them, so this works
    *  regardless of how far start() got), then detaches + closes. Never throws. */
   dispose(): void {
     this.ownDisposed = true;
@@ -214,6 +263,10 @@ export class ChatSession {
     if (this.snapTimer) {
       clearInterval(this.snapTimer);
       this.snapTimer = null;
+    }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
     // Leaving the chat is a pure presence fact — detach, never interrupt.
     void (async () => {

@@ -589,6 +589,34 @@ def test_builtin_cards_cannot_be_deleted():
     assert err["code"] == -32031
 
 
+def test_card_save_confines_on_the_resolved_path():
+    """REGRESSION: the containment check ran on the UNRESOLVED path, so a `..`
+    segment (whose literal parents still contain the deck dir) wrote outside it."""
+    deck = H.user_cards_dir()
+    deck.mkdir(parents=True, exist_ok=True)
+    card = {"spec": "chara_card_v3", "spec_version": "3.0", "data": {"name": "Evil"}}
+    err = rpc_error("card.save", {"data": card, "path": str(deck / ".." / "escape.json")})
+    assert err["code"] == -32031
+    assert not (deck.parent / "escape.json").exists()  # nothing landed outside the deck
+
+
+def test_card_delete_confines_on_the_resolved_path(tmp_path):
+    """A symlink inside the deck pointing outside must be refused (resolve-then-
+    check, the _writable_card_path pattern) — the outside file survives."""
+    deck = H.user_cards_dir()
+    deck.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}", encoding="utf-8")
+    link = deck / "evil.json"
+    link.symlink_to(outside)
+    err = rpc_error("card.delete", {"path": str(link)})
+    assert err["code"] == -32031
+    assert outside.exists()  # never moved to trash
+    # ... and the `..` shape is refused the same way.
+    err = rpc_error("card.delete", {"path": str(deck / ".." / "sessions.json")})
+    assert err["code"] == -32031
+
+
 def test_referenced_card_cannot_be_deleted():
     set_defaults()
     draft = {"name": "T", "appearance": "x", "personality": "", "scenario": "",

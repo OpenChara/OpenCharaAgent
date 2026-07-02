@@ -5,9 +5,9 @@
  *
  * The StreamModel mutates its `items` array in place (the load-bearing in-place
  * text accumulation). React can't see those mutations, so every mutating call is
- * followed by a `bump()` that increments a version counter; the hook re-exposes
- * the (same) array reference under a new version so consumers re-render. The view
- * renders `model.items` keyed by item id.
+ * followed by a `bump()` that increments a version counter, and the hook exposes a
+ * FRESH `items` array reference each render (a shallow slice) so effect/memo deps
+ * keyed on it actually fire. The view renders the items keyed by item id.
  *
  * Idle is server-side only — this hook never calls idle (rpc.ts has no idle()).
  */
@@ -99,6 +99,10 @@ export function useCharaStream(name: string): CharaStream {
 
   const [, bumpTick] = useReducer((n: number) => n + 1, 0);
   const bump = useCallback(() => bumpTick(), []);
+  // Session epoch: bumping it remounts the whole connect/attach lifecycle (fresh
+  // model + client). ChatSession requests this when an in-place reconnect can't
+  // resume seamlessly (no rejoin anchor / the server declared a replay gap).
+  const [epoch, bumpEpoch] = useReducer((n: number) => n + 1, 0);
 
   const [charName, setCharName] = useState(name);
   const [connected, setConnected] = useState(false);
@@ -213,22 +217,29 @@ export function useCharaStream(name: string): CharaStream {
   );
 
   /* ---- driving a turn (chat.js runStream) ---- */
+  // Each driven turn takes a token; the cleanup in `finally` runs only while its
+  // token is still current. Without this, force-stopping an orphaned turn and then
+  // starting a NEW one let the orphan's late-settling finally clobber the new
+  // turn's state (finalize mid-stream, streaming=false, appTurn=false).
+  const turnIdRef = useRef(0);
   const runStream = useCallback(
     async (fn: () => Promise<unknown>) => {
+      const turnId = ++turnIdRef.current;
       setStreaming(true);
       appTurnRef.current = true;
       setWorkState(true, "generate");
       try {
         await fn();
       } catch (e) {
-        if (!disposedRef.current) modelRef.current!.systemLine(errMsg(e));
+        // an orphaned (force-stopped) turn's late error is noise the user already dismissed
+        if (!disposedRef.current && turnIdRef.current === turnId) modelRef.current!.systemLine(errMsg(e));
       } finally {
-        if (!disposedRef.current) {
+        if (!disposedRef.current && turnIdRef.current === turnId) {
           finalize();
           setStreaming(false);
           void refreshSnapshot();
+          appTurnRef.current = false;
         }
-        appTurnRef.current = false;
       }
       flushQueue();
     },
@@ -346,6 +357,7 @@ export function useCharaStream(name: string): CharaStream {
     // are ignored once we're idle, and the next send re-checks the server's busy-state.
     clientRef.current?.interrupt().catch(() => {});
     if (clientRef.current) clientRef.current.streaming = false;
+    turnIdRef.current++; // orphan the in-flight runStream: its finally must not clobber a newer turn
     appTurnRef.current = false;
     setStreaming(false);
     finalize();
@@ -417,6 +429,7 @@ export function useCharaStream(name: string): CharaStream {
       restoreQueue,
       refreshSnapshot,
       runStream,
+      requestRestart: () => bumpEpoch(),
     });
     clientRef.current = session.client;
     void session.start();
@@ -426,10 +439,15 @@ export function useCharaStream(name: string): CharaStream {
       session.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name]);
+  }, [name, epoch]);
 
   return {
-    items: modelRef.current.items,
+    // A FRESH array reference every render (the model appends/mutates in place, so
+    // the raw reference is identical across bumps): consumers that key effects or
+    // memos on `items` — Chat.tsx's autoscroll, time separators, super-read flush —
+    // would otherwise never fire for live messages. Item objects keep their identity
+    // (stable React keys); only the container is re-referenced.
+    items: modelRef.current.items.slice(),
     charName,
     connected,
     streaming,

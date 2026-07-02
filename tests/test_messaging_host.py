@@ -488,3 +488,91 @@ def test_reconcile_toggles_one_platform_without_restarting_others(tmp_path, monk
         assert wx.run_count == 1        # ...and NOT restarted (no blip)
     finally:
         host.stop()
+
+
+class _CrashingAdapter(_Adapter):
+    def run(self, inbox):
+        raise RuntimeError("gateway link exploded")
+
+
+def test_adapter_crash_is_reflected_in_status_not_stale_running(tmp_path):
+    """A dead adapter thread must surface as an 'error' platform row — the host
+    used to keep reporting 'running' until the whole child restarted."""
+    handle = _Handle()
+    frames: list[dict] = []
+    dispatch = JsonRpcDispatcher(frames.append, handle=handle)
+    host = MessagingHost(dispatch, tmp_path / "messaging.json")
+
+    crashing = _CrashingAdapter("qq")
+    with host._lock:
+        host._start_one(crashing)
+    th = host._threads_by_name.get("qq")
+    if th is not None:
+        th.join(timeout=2.0)
+
+    st = host.status()
+    assert st["state"] == "error"                       # sole platform died
+    assert "gateway link exploded" in st["detail"]
+    rows = {p["platform"]: p for p in st["platforms"]}
+    assert rows["qq"]["state"] == "error"
+    assert "gateway link exploded" in rows["qq"]["detail"]
+
+    # A restart of the platform clears the crash record.
+    healthy = _BlockingAdapter("qq")
+    with host._lock:
+        host._start_one(healthy)
+        host._recompute_state()
+    try:
+        st2 = host.status()
+        assert st2["state"] == "running"
+        assert {p["platform"]: p["state"] for p in st2["platforms"]} == {"qq": "running"}
+    finally:
+        host.stop()
+
+
+def test_inbound_turn_marks_turn_active_for_the_supervisor():
+    """status().turn_active is True exactly while an inbound platform turn runs —
+    the supervisor reads it so autonomy-off never interrupts a live reply."""
+    seen: list[bool] = []
+
+    class _ProbeHandle(_Handle):
+        def stream_user(self, text):
+            seen.append(bool(host.status().get("turn_active")))
+            yield TextDelta("hi there", SAY)
+
+    handle = _ProbeHandle()
+    adapter = _Adapter()
+    frames: list[dict] = []
+    dispatch, host = _host_with_adapter(handle, adapter, frames)
+
+    assert host.status()["turn_active"] is False
+    host._process(adapter, InboundMessage("u1", "Alice", "hello"))
+    assert seen == [True]                        # active while the turn streamed
+    assert host.status()["turn_active"] is False  # cleared after the reply
+
+
+def test_stranger_never_becomes_the_speak_destination():
+    """2026-07-02 P1: a stranger's DM must not hijack the proactive-speak
+    destination. The durable peer is committed via remember_peer only AFTER the
+    sender passes the allow-list; the refusal still reaches the stranger via
+    the ephemeral reply target."""
+    handle = _Handle()
+
+    class _PeerAdapter(_Adapter):
+        def __init__(self):
+            super().__init__()
+            self.peer = ""
+
+        def remember_peer(self, message):
+            self.peer = str(message.sender_id)
+
+    adapter = _PeerAdapter()
+    frames: list[dict] = []
+    dispatch, host = _host_with_adapter(handle, adapter, frames)
+
+    host._process(adapter, InboundMessage("stranger", "Mallory", "yo"))
+    assert adapter.peer == ""            # the refused sender was never committed
+    assert len(adapter.sent) == 1        # but the refusal still went out
+
+    host._process(adapter, InboundMessage("u1", "Owner", "hi"))
+    assert adapter.peer == "u1"          # the authorized sender is the destination

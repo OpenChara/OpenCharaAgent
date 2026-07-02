@@ -1,10 +1,14 @@
 /* JSON-RPC over WebSocket — a faithful TS port of front/web/rpc.js.
  * HubClient (board-level, auto-reconnect) + CharaClient (one living chat).
  *
- * ONE behavioral change from the JS original: wsUrl derives the scheme from the
- * page protocol (wss on https) so the same build works behind a TLS reverse
- * proxy. Everything else — id-matched calls, forever-reconnect backoff, rejoin
- * seq dedup, the callback set — is 1:1 with rpc.js. */
+ * TWO behavioral changes from the JS original: (1) wsUrl derives the scheme from
+ * the page protocol (wss on https) so the same build works behind a TLS reverse
+ * proxy; (2) the rejoin seq is SESSION-scoped, not persisted — a fresh mount
+ * attaches with no replay (attach() restores history; rpc.js's cross-visit
+ * localStorage seq made the server replay turns the restore already covered,
+ * duplicating them), and `rejoin` replay is reserved for the in-place reconnect
+ * of a live session (see CharaClient.reconnect). Everything else — id-matched
+ * calls, forever-reconnect backoff, the callback set — is 1:1 with rpc.js. */
 
 import { decodeEvent, type ProtocolEvent } from "./protocol";
 import type { LifeSnapshot } from "./lib/status";
@@ -150,6 +154,12 @@ export class RpcSocket {
   nextId = 1;
   pending = new Map<number, Pending>();
   onEvent: EventHandler | null = null;
+  /** Fires for EVERY parsed frame (responses included) before dispatch. The chara
+   *  transport stamps a monotonic `seq` on all frames it forwards, and the rejoin
+   *  baseline must advance on responses too (the attach response is often the first
+   *  stamped frame a fresh session sees). Hub frames carry no seq; the hub leaves
+   *  this null. */
+  onFrame: ((frame: Record<string, unknown>) => void) | null = null;
   onOpen: (() => void) | null = null;
   onClose: ((ev: CloseEvent) => void) | null = null;
 
@@ -193,6 +203,7 @@ export class RpcSocket {
     } catch {
       return;
     }
+    if (this.onFrame) this.onFrame(frame);
     if (frame.method) {
       // notification (event / hello / permission_ask / life.state)
       if (this.onEvent) this.onEvent(String(frame.method), (frame.params as Record<string, unknown>) || {}, frame);
@@ -360,22 +371,28 @@ export class CharaClient {
   onRejoinGap: (() => void) | null = null;
   onClose: ((ev: CloseEvent) => void) | null = null;
   streaming = false;
-  lastSeq: number;
+  /** Highest server seq seen on this client's frames (responses + notifications).
+   *  -1 = no baseline yet. Deliberately NOT persisted: attach() restores the full
+   *  transcript tail on a fresh mount, so replaying ring frames from a previous
+   *  page visit would render every completed turn twice (the old localStorage
+   *  `lm-last-seq` did exactly that). Replay is only for an in-place reconnect of
+   *  THIS live session — see reconnect(). */
+  lastSeq = -1;
   rejoinGap = false;
 
   constructor(name: string) {
     this.name = name;
     this.sock = new RpcSocket(`/chara/${encodeURIComponent(name)}`);
-    this.lastSeq = Number(localStorage.getItem(`lm-last-seq:${name}`) || 0) || 0;
-    this.sock.onEvent = (method, params, frame) => {
-      if (frame && Number.isFinite(Number(frame.seq))) {
-        this.lastSeq = Math.max(this.lastSeq, Number(frame.seq));
-        try {
-          localStorage.setItem(`lm-last-seq:${this.name}`, String(this.lastSeq));
-        } catch {
-          /* private */
-        }
-      }
+    try {
+      localStorage.removeItem(`lm-last-seq:${name}`); // retired cross-visit persistence
+    } catch {
+      /* private */
+    }
+    this.sock.onFrame = (frame) => {
+      const seq = Number(frame.seq);
+      if (Number.isFinite(seq) && seq > 0) this.lastSeq = Math.max(this.lastSeq, seq);
+    };
+    this.sock.onEvent = (method, params) => {
       if (method === "event" && this.onProtocolEvent) {
         const ev = decodeEvent(params);
         if (ev) this.onProtocolEvent(ev);
@@ -391,23 +408,36 @@ export class CharaClient {
     };
   }
 
+  /** Open the socket for a FRESH session. No `rejoin` is sent: the first real
+   *  frame (attach) joins the driver with NO replay, because attach() itself
+   *  restores the transcript tail — a replay on top of that duplicates turns. */
   async connect(): Promise<void> {
     await this.sock.connect();
     this.rejoinGap = false;
     this.sock.onClose = (ev) => {
       if (this.onClose) this.onClose(ev);
     };
+  }
+
+  /** True when this client has a replay anchor: a stamped frame was seen on a
+   *  previous connection of THIS session, so `rejoin` can resume in place. */
+  get hasRejoinAnchor(): boolean {
+    return this.lastSeq >= 0;
+  }
+
+  /** In-place reconnect of a LIVE session: reopen the socket and ask the server
+   *  to replay only the frames missed since lastSeq. Requires hasRejoinAnchor —
+   *  without one, rejoin(0) would replay the child's whole ring and duplicate
+   *  history; the caller falls back to a full re-attach instead. */
+  async reconnect(): Promise<void> {
+    if (!this.hasRejoinAnchor) throw new Error("no rejoin anchor");
+    await this.connect();
     this.sock.notify("rejoin", { last_seq: this.lastSeq });
   }
 
   clearRejoin(): void {
-    this.lastSeq = 0;
+    this.lastSeq = -1;
     this.rejoinGap = false;
-    try {
-      localStorage.removeItem(`lm-last-seq:${this.name}`);
-    } catch {
-      /* private */
-    }
   }
 
   attach<T = unknown>(): Promise<T> {

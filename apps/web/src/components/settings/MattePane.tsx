@@ -26,23 +26,35 @@ export function MatteSection() {
   const [st, setSt] = useState<MatteStatus | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const poll = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const aliveRef = useRef(true);
 
   const refresh = useCallback(async () => {
     try { const s = await hub.call<MatteStatus>("matte.status", {}, 15000); setSt(s); return s; }
     catch { return null; }
   }, [hub]);
 
-  useEffect(() => {
-    let alive = true;
-    const tick = async () => {
-      const s = await refresh();
-      if (!alive) return;
-      // keep polling while a model is installing OR the shared deps are installing
-      if (s && (s.models.some(inFlight) || s.deps_progress?.state === "installing")) poll.current = setTimeout(tick, 1500);
-    };
-    void tick();
-    return () => { alive = false; if (poll.current) clearTimeout(poll.current); };
+  // SELF-RESCHEDULING poll: refresh, and keep going while a model install or the
+  // shared deps install is in flight. Both the mount effect and the action
+  // handlers kick this loop (via ensurePolling) — the old handlers scheduled a
+  // one-shot refresh() that never rescheduled, so an install's progress bar
+  // polled once and froze.
+  const tick = useCallback(async () => {
+    poll.current = null;
+    const s = await refresh();
+    if (!aliveRef.current || poll.current) return;
+    if (s && (s.models.some(inFlight) || s.deps_progress?.state === "installing"))
+      poll.current = setTimeout(() => void tick(), 1500);
   }, [refresh]);
+
+  const ensurePolling = useCallback(() => {
+    if (!poll.current) poll.current = setTimeout(() => void tick(), 1500);
+  }, [tick]);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    void tick();
+    return () => { aliveRef.current = false; if (poll.current) { clearTimeout(poll.current); poll.current = null; } };
+  }, [tick]);
 
   // Trickle a climbing percent during the deps/prepare phase. `uv sync --extra
   // visuals` (~100MB+) reports no real progress, so without this the longest step
@@ -73,7 +85,7 @@ export function MatteSection() {
     try {
       const s = await hub.call<MatteStatus>(method, { model: id }, 20000);
       setSt(s);
-      if (s.models.some(inFlight) && !poll.current) poll.current = setTimeout(() => void refresh(), 1500);
+      if (s.models.some(inFlight)) ensurePolling();
     } catch (e) { deckToast(rpcErrText(t, e as { message?: string }), true); }
     finally { setBusyId(id, false); }
   };
@@ -89,7 +101,7 @@ export function MatteSection() {
     try {
       const s = await hub.call<MatteStatus>("matte.install_deps", {}, 20000);
       setSt(s);
-      if (!poll.current) poll.current = setTimeout(() => void refresh(), 1500);
+      ensurePolling();
     } catch (e) { deckToast(rpcErrText(t, e as { message?: string }), true); }
     finally { setBusyId("__deps__", false); }
   };

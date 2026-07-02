@@ -222,12 +222,18 @@ class TelegramAdapter(Adapter):
         return self.owner
 
     def set_reply_target(self, message: InboundMessage) -> None:
+        # Ephemeral only — pre-auth. The durable last_chat_id (the unattended
+        # speak destination, persisted) moves in remember_peer, post-auth.
         self._reply_target = str(message.sender_id).strip()
-        if self._reply_target:
-            self.last_chat_id = self._reply_target
 
     def clear_reply_target(self) -> None:
         self._reply_target = ""
+
+    def remember_peer(self, message: InboundMessage) -> None:
+        peer = str(message.sender_id).strip()
+        if peer and peer != self.last_chat_id:
+            self.last_chat_id = peer
+            self._save_state()
 
     def _load_state(self) -> None:
         try:
@@ -312,9 +318,9 @@ class TelegramAdapter(Adapter):
                     dirty = True
             msg = parse_update(update)
             if msg is not None:
-                if msg.sender_id != self.last_chat_id:
-                    self.last_chat_id = msg.sender_id
-                    dirty = True
+                # last_chat_id (the persisted unattended-speak destination) is
+                # updated post-auth via remember_peer, never from the raw poll —
+                # a stranger's DM must not hijack the speak destination.
                 inbox.put(msg)
                 count += 1
         if dirty:
@@ -322,7 +328,26 @@ class TelegramAdapter(Adapter):
         return count
 
     def run(self, inbox: "queue.Queue[InboundMessage]") -> None:
-        self.startup_check()
+        # The one-shot startup check rides the same retry cadence as the poll
+        # loop: a transient API/network blip must not permanently kill inbound.
+        # Only startup_check's own RuntimeError (rejected token / malformed
+        # getMe) stays fatal — never a retry loop on a bad token.
+        while not self._closed.is_set():
+            try:
+                self.startup_check()
+                break
+            except TelegramAPIError as e:
+                if self._closed.is_set():
+                    break
+                _log.warning("Telegram getMe failed (%s); retrying in 5s", e)
+                self._sleep(5.0)
+            except RuntimeError:
+                raise
+            except Exception as e:
+                if self._closed.is_set():
+                    break
+                _log.warning("Telegram startup network error (%s: %s); retrying in 5s", type(e).__name__, e)
+                self._sleep(5.0)
         while not self._closed.is_set():
             try:
                 self.poll_once(inbox)

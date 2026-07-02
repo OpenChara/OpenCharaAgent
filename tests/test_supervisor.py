@@ -563,6 +563,55 @@ def test_gateway_start_surfaces_host_error_as_backoff(tmp_path):
     assert "nope" in gw.info.error_message
 
 
+def test_gateway_stop_survives_a_messaging_save_recompute(tmp_path):
+    """P2 (2026-07-02 audit): gateway.stop used to write only the top-level
+    `enabled`, which messaging.save re-DERIVES from the per-platform flags —
+    the next unrelated save silently un-stopped the gateway. set_enabled(False)
+    now materializes `enabled: false` into every adapter block, so the derived
+    top level stays false through any recompute."""
+    from lunamoth.server.hub.session_messaging import messaging_save
+
+    gw = _make_gateway(tmp_path, _FakeSupervisor(_FakeCharaChild()))
+    cfg = {"enabled": True,
+           "adapters": {"weixin": {}, "qq": {"url": "ws://x", "enabled": True}}}
+    (tmp_path / "messaging.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+    gw.set_enabled(False)  # the gateway.stop(persist=True) write
+    on_disk = json.loads((tmp_path / "messaging.json").read_text(encoding="utf-8"))
+    assert on_disk["enabled"] is False
+    assert all(a.get("enabled") is False for a in on_disk["adapters"].values())
+
+    # An UNRELATED messaging.save (edit the allow-list) runs the recompute...
+    messaging_save(_FakeMeta(tmp_path), {"allowed_senders": ["alice"]})
+    on_disk = json.loads((tmp_path / "messaging.json").read_text(encoding="utf-8"))
+    assert on_disk["enabled"] is False          # ...and the stop STICKS
+    assert gw.enabled() is False
+    assert on_disk["allowed_senders"] == ["alice"]
+
+    # gateway.start after a stop: every block carries an explicit false, so the
+    # per-platform flags flip back on together with the top level.
+    gw.set_enabled(True)
+    on_disk = json.loads((tmp_path / "messaging.json").read_text(encoding="utf-8"))
+    assert on_disk["enabled"] is True
+    assert all(a.get("enabled") is True for a in on_disk["adapters"].values())
+
+
+def test_gateway_set_enabled_on_respects_a_deliberate_platform_choice(tmp_path):
+    """set_enabled(True) flips the per-platform flags only when NONE would come
+    on otherwise (the post-stop state). A mixed, deliberate per-platform choice
+    (weixin on, qq off) is left exactly as the user set it."""
+    gw = _make_gateway(tmp_path, _FakeSupervisor(_FakeCharaChild()))
+    cfg = {"enabled": False,
+           "adapters": {"weixin": {"enabled": True}, "qq": {"enabled": False}}}
+    (tmp_path / "messaging.json").write_text(json.dumps(cfg), encoding="utf-8")
+
+    gw.set_enabled(True)
+    on_disk = json.loads((tmp_path / "messaging.json").read_text(encoding="utf-8"))
+    assert on_disk["enabled"] is True
+    assert on_disk["adapters"]["weixin"]["enabled"] is True
+    assert on_disk["adapters"]["qq"]["enabled"] is False  # the choice survives
+
+
 def test_autonomy_is_the_persisted_mode(tmp_path):
     """Autonomy = the chara's mode (live|chat) on disk; there is no separate
     pause flag. is_autonomous reads it, set_mode_on_disk flips it."""
@@ -667,6 +716,75 @@ def test_set_autonomy_off_interrupts_self_work_but_not_a_chat(monkeypatch):
     child._client_stream_ids = set()
     asyncio.run(sup.set_autonomy("t", True))
     assert "interrupt" not in calls
+
+
+def test_set_autonomy_off_spares_an_inbound_messaging_turn(monkeypatch):
+    """P2 (2026-07-02 audit): an inbound WeChat/QQ reply runs inside the child
+    and is invisible to _client_stream_ids, so autonomy-off used to cut a live
+    user-facing platform reply. The guard now also asks the in-child messaging
+    host (messaging.status → turn_active): an active inbound turn is a
+    conversation and is spared; self-work is still halted."""
+    import asyncio
+
+    import lunamoth.server.supervisor.core as core
+    from lunamoth.server.supervisor import CharaChild, Supervisor
+    from lunamoth.session.sessions import SessionMeta
+
+    monkeypatch.setattr(Supervisor, "set_mode_on_disk", staticmethod(lambda meta, mode: None))
+    sup = Supervisor(host="127.0.0.1", http_port=0, ws_port=0, token="t")
+    child = CharaChild(SessionMeta(name="t"), supervisor=sup)
+    monkeypatch.setattr(core.S, "load_session", lambda name: child.meta)
+
+    class _Proc:
+        returncode = None
+        pid = 4321
+
+    child.proc = _Proc()
+    child._emit_life = lambda *a, **k: None
+    child._client_stream_ids = set()
+
+    async def fake_snapshot(silent=False):
+        return {}
+
+    child.snapshot = fake_snapshot
+    sup.charas["t"] = child
+
+    turn_active = {"on": True}
+    calls: list[str] = []
+
+    async def fake_private_call(method, params=None, timeout=10.0):
+        calls.append(method)
+        if method == "messaging.status":
+            return {"state": "running", "platform": "weixin", "detail": "",
+                    "platforms": [], "turn_active": turn_active["on"]}
+        return {}
+
+    child.private_call = fake_private_call
+
+    # OFF while the host is mid-turn on an inbound message → the reply is NOT cut.
+    asyncio.run(sup.set_autonomy("t", False))
+    assert "messaging.status" in calls   # the guard consulted the host
+    assert "interrupt" not in calls
+
+    # OFF with no messaging turn in flight → self-work is still halted.
+    calls.clear()
+    turn_active["on"] = False
+    asyncio.run(sup.set_autonomy("t", False))
+    assert "interrupt" in calls
+
+    # A host that can't answer (no messaging host / slow child) reads as "no
+    # turn" — best-effort, never a hang: self-work is halted.
+    calls.clear()
+
+    async def broken_private_call(method, params=None, timeout=10.0):
+        calls.append(method)
+        if method == "messaging.status":
+            raise RuntimeError("rpc timeout")
+        return {}
+
+    child.private_call = broken_private_call
+    asyncio.run(sup.set_autonomy("t", False))
+    assert "interrupt" in calls
 
 
 # ---- #28 shutdown forensics + resource canary -------------------------------

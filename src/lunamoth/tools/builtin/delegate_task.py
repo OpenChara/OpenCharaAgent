@@ -37,11 +37,10 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeout
 
 from ..registry import TOOL_ERROR_KEY, registry, tool_error
 from ._process_registry import get_registry
@@ -81,7 +80,7 @@ DELEGATE_BLOCKED_TOOLS = frozenset([
 ])
 
 DEFAULT_MAX_ITERATIONS = 50       # hermes :593
-DEFAULT_PER_CHILD_TIMEOUT = 600   # hermes per-child timeout (advisory here)
+DEFAULT_PER_CHILD_TIMEOUT = 600   # hermes per-child timeout, enforced from each child's own start
 MAX_DEPTH = 1                     # flat: parent -> leaf child only (hermes MAX_DEPTH :133)
 MAX_CONCURRENT = 3                # hermes _DEFAULT_MAX_CONCURRENT_CHILDREN :132
 MAX_TASKS = 8                     # batch cap (workers run pooled at MAX_CONCURRENT)
@@ -379,39 +378,84 @@ def delegate_task(args: dict, ctx) -> str:
 
 def _run_fanout(task_list: list, context, toolsets, ctx, max_iter: int) -> list[dict]:
     """Run every task through its own scoped child, ENFORCING the per-child timeout
-    (hermes parity — the old code defined the timeout but never applied it, so a
-    stalled worker hung the caller). Always pooled (even one task) so the timeout
-    always applies; results re-ordered to the original task index. A timed-out worker
-    becomes a real `timed_out` result — the parent stops waiting (the leaked worker
-    thread, which Python cannot kill, runs to its own end harmlessly)."""
+    from each child's OWN start. The previous `fut.result(timeout=600)` applied the
+    budget in wait order — task N effectively got 600s × its queue position, and a
+    queued-but-never-started task was reported "timed out" (a fabricated result).
+    Daemon threads instead of a ThreadPoolExecutor: a genuinely hung child must not
+    block interpreter shutdown (the pool's atexit join would); a semaphore keeps
+    MAX_CONCURRENT running at once; results re-order to the original task index.
+    A child that exceeds its budget becomes a real `timed_out` result — the parent
+    stops waiting (the leaked thread, which Python cannot kill, runs to its own
+    end; its late result is discarded)."""
     n = len(task_list)
-    results_by_index: dict[int, dict] = {}
     workers = min(MAX_CONCURRENT, n)
-    pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="delegate")
-    try:
-        futures = {
-            pool.submit(
-                _run_single_child,
-                i, str(t["goal"]), t.get("context") or context,
-                t.get("toolsets") or toolsets, ctx, max_iter,
-            ): i
-            for i, t in enumerate(task_list)
-        }
-        for fut, i in futures.items():
+    sem = threading.Semaphore(workers)
+    done_q: "queue.Queue[tuple[int, dict]]" = queue.Queue()
+    starts: dict[int, float] = {}  # set by each worker as it actually begins
+
+    def _worker(i: int, goal: str, child_context, child_toolsets) -> None:
+        with sem:
+            starts[i] = time.monotonic()
             try:
-                results_by_index[i] = fut.result(timeout=DEFAULT_PER_CHILD_TIMEOUT)
-            except FutureTimeout:
+                res = _run_single_child(i, goal, child_context, child_toolsets, ctx, max_iter)
+            except Exception as exc:  # noqa: BLE001 - never let one worker abort the batch
+                logger.error("delegate worker %d crashed: %s", i, exc, exc_info=True)
+                res = _result(i, "failed", error=str(exc))
+            done_q.put((i, res))
+
+    for i, t in enumerate(task_list):
+        threading.Thread(
+            target=_worker,
+            args=(i, str(t["goal"]), t.get("context") or context, t.get("toolsets") or toolsets),
+            name=f"delegate-worker-{i}", daemon=True,
+        ).start()
+
+    results_by_index: dict[int, dict] = {}
+    remaining = set(range(n))
+    # Hung children keep their slots wedged, so a queued task may never start;
+    # past this whole-batch bound the leftovers are reported honestly instead of
+    # waiting forever. (per-child budget × queue rounds + slack)
+    batch_deadline = (time.monotonic()
+                      + DEFAULT_PER_CHILD_TIMEOUT * ((n + workers - 1) // workers)
+                      + min(30.0, DEFAULT_PER_CHILD_TIMEOUT / 2))
+    while remaining:
+        # Sleep only until the NEAREST per-child (or batch) deadline, so a
+        # sub-second budget is honored on time rather than at poll granularity.
+        now = time.monotonic()
+        wait = batch_deadline - now
+        for i in remaining:
+            started = starts.get(i)
+            if started is not None:
+                wait = min(wait, started + DEFAULT_PER_CHILD_TIMEOUT - now)
+        wait = max(0.02, min(wait, 1.0))
+        item = None
+        try:
+            item = done_q.get(timeout=wait)
+        except queue.Empty:
+            pass
+        if item is not None:
+            i, res = item
+            if i in remaining:  # a late result from an already-timed-out child is discarded
+                remaining.discard(i)
+                results_by_index[i] = res
+            continue
+        now = time.monotonic()
+        for i in list(remaining):
+            started = starts.get(i)
+            if started is not None and now - started > DEFAULT_PER_CHILD_TIMEOUT:
+                remaining.discard(i)
                 results_by_index[i] = _result(
                     i, "timed_out",
                     error=f"subtask exceeded the {DEFAULT_PER_CHILD_TIMEOUT}s per-child limit",
                 )
-            except Exception as exc:  # noqa: BLE001 - never let one worker abort the batch
-                logger.error("delegate worker %d crashed: %s", i, exc, exc_info=True)
-                results_by_index[i] = _result(i, "failed", error=str(exc))
-    finally:
-        # wait=False: a hung worker thread must not re-block the return (the whole
-        # point of the timeout above). It's daemon-pool work; it finishes on its own.
-        pool.shutdown(wait=False)
+        if now > batch_deadline:
+            for i in remaining:
+                results_by_index[i] = _result(
+                    i, "timed_out",
+                    error="subtask never started — every worker slot stayed wedged "
+                          "past the batch deadline",
+                )
+            remaining.clear()
     return [results_by_index[i] for i in range(n)]
 
 

@@ -178,9 +178,11 @@ class Supervisor:
             else:
                 child._emit_life(LifeState("waiting"))
                 # Halt a running self-work turn now (interrupt is a no-op if idle
-                # between cycles). Skip when a client stream is live so toggling
-                # off mid-conversation never cuts the chara's reply to the operator.
-                if not child._client_stream_ids:
+                # between cycles). Skip when a CONVERSATION is live — a client
+                # stream (operator chat) OR an inbound messaging turn (a WeChat/
+                # QQ reply runs inside the child, invisible to _client_stream_ids)
+                # — so toggling off never cuts the chara's reply to a human.
+                if not child._client_stream_ids and not await child.messaging_turn_active():
                     with contextlib.suppress(Exception):
                         await child.private_call("interrupt", {}, timeout=10.0)
         elif on:

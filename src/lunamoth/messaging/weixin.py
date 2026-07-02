@@ -430,12 +430,17 @@ class WeixinAdapter(Adapter):
         return self.ilink_user_id
 
     def set_reply_target(self, message: InboundMessage) -> None:
+        # Ephemeral only — pre-auth. The durable _last_sender (the unattended
+        # speak destination) moves in remember_peer, post-auth.
         self._reply_target = str(message.sender_id).strip()
-        if self._reply_target:
-            self._last_sender = self._reply_target
 
     def clear_reply_target(self) -> None:
         self._reply_target = ""
+
+    def remember_peer(self, message: InboundMessage) -> None:
+        peer = str(message.sender_id).strip()
+        if peer:
+            self._last_sender = peer
 
     def needs_login(self) -> bool:
         # A valid iLink session is a saved token that hasn't been flagged for
@@ -692,7 +697,9 @@ class WeixinAdapter(Adapter):
         # `text`) and/or attachments — deliver it so the chara isn't left blind
         # to a photo/file/sticker. Only a truly empty item_list is skipped.
         if text or attachments:
-            self._last_sender = sender_id
+            # _last_sender (the unattended-speak destination) is updated
+            # post-auth via remember_peer, never from the raw poll — a
+            # stranger's DM must not hijack the speak destination.
             inbox.put(
                 InboundMessage(
                     sender_id=sender_id,
@@ -736,8 +743,15 @@ class WeixinAdapter(Adapter):
         while not self._closed.is_set():
             try:
                 self.poll_once(inbox)
-            except RuntimeError:
-                raise
+            except RuntimeError as e:
+                # Only a session timeout is fatal here (it needs the interactive
+                # QR re-login; _handle_session_timeout set needs_relogin). Any
+                # other non-ok getupdates payload is a server-side blip — it
+                # used to kill inbound permanently; retry like a network error.
+                if self.needs_relogin:
+                    raise
+                _log.warning("WeChat iLink getupdates error: %s; retrying in 5s", e)
+                self._sleep(5.0)
             except Exception as e:
                 _log.warning("WeChat iLink getupdates error: %s", e)
                 self._sleep(5.0)

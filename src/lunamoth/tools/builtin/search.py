@@ -188,8 +188,20 @@ _cmd_cache: dict = {}
 def _has_command(ctx, cmd: str) -> bool:
     if cmd not in _cmd_cache:
         res = run_capturing_rc(ctx, f"command -v {cmd} >/dev/null 2>&1 && echo yes")
+        if not res.completed:
+            # Terminal timed out / refused: fall back to the pure-Python path
+            # this probe gates, but DON'T cache — the next call re-probes.
+            return False
         _cmd_cache[cmd] = res.stdout.strip().endswith("yes")
     return _cmd_cache[cmd]
+
+
+def _incomplete(res) -> "SearchResult | None":
+    """A run whose RC sentinel never came back must surface as an ERROR — an
+    empty stdout from a timed-out/refused command is not '0 matches'."""
+    if res.completed:
+        return None
+    return SearchResult(error=f"Search did not complete: {res.note}", total_count=0)
 
 
 # ---------------------------------------------------------------------------
@@ -246,12 +258,16 @@ def _search_files(ctx, pattern, path, limit, offset) -> SearchResult:
         f"-printf '%T@ %p\\n' 2>/dev/null | sort -rn | head -n {fetch_limit}"
     )
     res = run_capturing_rc(ctx, cmd, timeout=60)
+    if (bad := _incomplete(res)) is not None:
+        return bad
     if not res.stdout.strip():
         cmd_simple = (
             f"find {escape_shell_arg(path)} -type f -name {escape_shell_arg(glob)} "
             f"2>/dev/null | sort -rn | head -n {fetch_limit}"
         )
         res = run_capturing_rc(ctx, cmd_simple, timeout=60)
+        if (bad := _incomplete(res)) is not None:
+            return bad
     files = []
     for line in res.stdout.strip().split("\n"):
         if not line:
@@ -278,6 +294,8 @@ def _search_files_rg(ctx, pattern, path, limit, offset) -> SearchResult:
         f"{escape_shell_arg(path)} 2>/dev/null | head -n {fetch_limit}"
     )
     res = run_capturing_rc(ctx, cmd_sorted, timeout=60)
+    if (bad := _incomplete(res)) is not None:
+        return bad
     all_files = [f for f in res.stdout.strip().split("\n") if f]
     if not all_files:
         cmd_plain = (
@@ -285,6 +303,8 @@ def _search_files_rg(ctx, pattern, path, limit, offset) -> SearchResult:
             f"{escape_shell_arg(path)} 2>/dev/null | head -n {fetch_limit}"
         )
         res = run_capturing_rc(ctx, cmd_plain, timeout=60)
+        if (bad := _incomplete(res)) is not None:
+            return bad
         all_files = [f for f in res.stdout.strip().split("\n") if f]
     page = all_files[offset:offset + limit]
     return SearchResult(files=page, total_count=len(all_files),
@@ -369,6 +389,8 @@ def _search_with_tool(ctx, tool, pattern, path, file_glob, limit, offset,
     cmd_parts += ["|", "head", "-n", str(fetch_limit)]
     cmd = "set -o pipefail; " + " ".join(cmd_parts)
     res = run_capturing_rc(ctx, cmd, timeout=60)
+    if (bad := _incomplete(res)) is not None:
+        return bad
 
     diagnostics, payload = split_tool_diagnostics(res.stdout)
     # rg/grep exit 2 == error. Surface an error ONLY when exit==2 AND no usable

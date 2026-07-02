@@ -149,3 +149,30 @@ def test_error_null_is_not_a_failure():
     assert _is_error_json(json.dumps({TOOL_ERROR_KEY: True, "error": ""})) is True
     # A success result is never misread, even if it carries the key set falsy.
     assert _is_error_json(json.dumps({TOOL_ERROR_KEY: False, "data": 1})) is False
+
+
+def test_cross_thread_tool_rpc_does_not_deadlock(gw):
+    """The execute_code shape (2026-07-02 P1): while one tool RUNS, its child
+    script calls another tool back through the gateway from a DIFFERENT thread.
+    ``_dispatch_lock`` must guard only the guard counters + audit, never the
+    tool body — holding it across the body deadlocks the callback (RLock
+    re-entrancy is same-thread only) and serializes delegate_task workers."""
+    import threading
+
+    inner: dict = {}
+
+    def outer_handler(args, ctx):
+        def rpc():
+            inner["result"] = gw.call("write_log")
+
+        t = threading.Thread(target=rpc, daemon=True)
+        t.start()
+        t.join(timeout=3.0)
+        inner["done"] = not t.is_alive()
+        return tool_result(ok=True)
+
+    _register("terminal", outer_handler)
+    res = gw.call("terminal")
+    assert res["ok"] is True
+    assert inner.get("done") is True, "cross-thread tool RPC deadlocked against _dispatch_lock"
+    assert inner["result"]["ok"] is True

@@ -6,6 +6,7 @@ import base64
 import mimetypes
 import os
 import shutil
+import time
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
@@ -205,6 +206,7 @@ class LunaMothAgent:
         self.settings.model = model.strip()
         self.llm = LLMClient(self.settings.to_llm_config())
         self._strip_reasoning_continuity(session)  # a cross-family model can't replay the old blocks
+        self.sync_context_window(session)  # the new model's REAL window, not the old one's
         self.audit.write("model_swap", model=self.settings.model)
 
     def swap_provider(self, *, provider: str, base_url: str, api_key: str,
@@ -220,6 +222,7 @@ class LunaMothAgent:
             self.settings.model = model.strip()
         self.llm = LLMClient(self.settings.to_llm_config())
         self._strip_reasoning_continuity(session)  # the new route never produced the old blocks
+        self.sync_context_window(session)  # the new route's REAL window, not the old one's
         self.audit.write("provider_swap", provider=self.settings.provider,
                          model=self.settings.model)
 
@@ -435,6 +438,19 @@ class LunaMothAgent:
             self._ctx_window = win
         return self._ctx_window
 
+    def sync_context_window(self, session: "Session | None") -> None:
+        """Resize the live session to the ACTIVE model's real window — max_tokens
+        AND the trim buffer together, always. This is the ONE sizing rule
+        (make_session, /model, /provider, reconfigure all land here): setting
+        max_tokens without rescaling trim_buffer_tokens can yield a trim target
+        of 0 after a wide→narrow swap (100k buffer vs a 64k window), which would
+        silently pop the entire live context on the next add_message."""
+        if session is None:
+            return
+        ctx = self.context_limit()
+        session.context.max_tokens = ctx
+        session.context.trim_buffer_tokens = min(100_000, max(4096, ctx // 8))
+
     def make_session(self) -> "Session":
         """Build a Session whose context window honors the active limits layer.
 
@@ -446,9 +462,8 @@ class LunaMothAgent:
         self._freeze_memory()  # a new session = a fresh prompt → reload the memory snapshot
         self._freeze_skills()
         self._invalidate_stable_prefix()
-        ctx = self.context_limit()
-        session.context.max_tokens = ctx
-        session.context.trim_buffer_tokens = min(100_000, max(4096, ctx // 8))
+        self.sync_context_window(session)
+        ctx = session.context.max_tokens
         # Durable conversation: restore the TAIL of the current transcript epoch
         # (a long-lived chara's full history would be loaded only to be trimmed),
         # then persist every new message back — conversations survive restarts.
@@ -488,6 +503,7 @@ class LunaMothAgent:
         speech — it is audited as a world event, never as a user message.
         """
         self.audit.write("world_event", text=event_text[:300])
+        self._last_turn_wall = time.time()  # a real exchange — no spurious gap note later
         # Commit the event line BEFORE streaming (interrupt-safe).
         scan_text = self._scan_text(session, event_text)
         session.context.add("system", event_text)
@@ -532,6 +548,7 @@ class LunaMothAgent:
         self.state.clear_rest()  # a finished job wakes it, like a user word
         self.tools.reset_guardrails()
         self.audit.write("background_reaction", text=injected[:300])
+        self._last_turn_wall = time.time()  # a real exchange — no spurious gap note later
         scan_text = self._scan_text(session, injected)
         stable = self._stable_prefix()
         volatile = self._volatile_tail(scan_text, session)
@@ -941,6 +958,13 @@ class LunaMothAgent:
             sp = str(meta.get("screenshot_path") or "")
             if meta.get("vision_native") and sp:
                 fp = Path(sp)
+                if not fp.is_absolute():
+                    # The tool reports a workspace-relative path (screenshots live
+                    # under workspace/ so the jail can write and MEDIA can deliver).
+                    try:
+                        fp = self.sandbox.resolve_readable(sp)
+                    except Exception:  # noqa: BLE001 — unresolvable → keep the honest note
+                        fp = Path(sp)
                 inj = (self._vision_followup_for_path(fp, fp.name, str(meta.get("question") or ""))
                        if fp.is_file() else None)
                 if inj is not None:

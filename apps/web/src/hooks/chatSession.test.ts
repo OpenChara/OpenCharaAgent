@@ -10,6 +10,8 @@ import { StreamModel } from "../components/chat/streamModel";
 type Cb = ((p?: unknown) => void) | null;
 interface FakeClient {
   connect: ReturnType<typeof vi.fn>;
+  reconnect: ReturnType<typeof vi.fn>;
+  hasRejoinAnchor: boolean;
   attach: ReturnType<typeof vi.fn>;
   detach: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
@@ -28,6 +30,8 @@ interface FakeClient {
 function makeFakeClient(over: Partial<FakeClient> = {}): FakeClient {
   return {
     connect: vi.fn().mockResolvedValue(undefined),
+    reconnect: vi.fn().mockResolvedValue(undefined),
+    hasRejoinAnchor: true,
     attach: vi.fn().mockResolvedValue({ char_name: "Quinn", restored: [], opening: "none" }),
     detach: vi.fn().mockResolvedValue(undefined),
     close: vi.fn(),
@@ -65,6 +69,7 @@ function makeDeps(model: StreamModel, over: Partial<ChatSessionDeps> = {}): Chat
     restoreQueue: vi.fn(),
     refreshSnapshot: vi.fn().mockResolvedValue(null),
     runStream: vi.fn().mockResolvedValue(undefined),
+    requestRestart: vi.fn(),
     ...over,
   };
 }
@@ -175,15 +180,18 @@ describe("ChatSession", () => {
     expect(deps.renderLifeState).not.toHaveBeenCalled();
   });
 
-  it("onRejoinGap surfaces a notice and clears the gap", async () => {
+  it("onRejoinGap clears the anchor and requests a clean restart (full re-attach)", async () => {
+    // A declared replay gap means the live transcript can't be resumed in place —
+    // the recovery is a remount (fresh attach restores the FULL history), not a
+    // "some messages may be missing" note over a hole.
     const model = new StreamModel();
     const deps = makeDeps(model);
     const fake = makeFakeClient();
     await session("quinn", fake, deps).start();
 
     fake.onRejoinGap!();
-    expect(model.items.some((i) => i.kind === "system")).toBe(true);
     expect(fake.clearRejoin).toHaveBeenCalled();
+    expect(deps.requestRestart).toHaveBeenCalled();
   });
 
   it("onClose marks disconnected + drops a system line", async () => {
@@ -196,6 +204,91 @@ describe("ChatSession", () => {
     fake.onClose!();
     expect(deps.setConnected).toHaveBeenCalledWith(false);
     expect(model.items.some((i) => i.kind === "system")).toBe(true);
+  });
+
+  it("fresh start uses connect() (no rejoin replay), never reconnect()", async () => {
+    const model = new StreamModel();
+    const deps = makeDeps(model);
+    const fake = makeFakeClient();
+    await session("quinn", fake, deps).start();
+    expect(fake.connect).toHaveBeenCalledTimes(1);
+    expect(fake.reconnect).not.toHaveBeenCalled();
+  });
+
+  it("auto-reconnects in place after a drop (rejoin path) and restores connected state", async () => {
+    const model = new StreamModel();
+    const deps = makeDeps(model);
+    const fake = makeFakeClient();
+    await session("quinn", fake, deps).start();
+    (deps.setConnected as ReturnType<typeof vi.fn>).mockClear();
+
+    fake.onClose!(); // the socket died (sleep / network blip)
+    expect(deps.setConnected).toHaveBeenCalledWith(false);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fake.reconnect).toHaveBeenCalledTimes(1);
+    expect(deps.setConnected).toHaveBeenCalledWith(true);
+    // resumed IN PLACE: no re-attach (which would re-render history), no restart
+    expect(fake.attach).toHaveBeenCalledTimes(1);
+    expect(deps.requestRestart).not.toHaveBeenCalled();
+  });
+
+  it("retries reconnect with backoff while the server is down", async () => {
+    const model = new StreamModel();
+    const deps = makeDeps(model);
+    const fake = makeFakeClient();
+    fake.reconnect.mockRejectedValueOnce(new Error("down")).mockResolvedValueOnce(undefined);
+    await session("quinn", fake, deps).start();
+
+    fake.onClose!();
+    await vi.advanceTimersByTimeAsync(1000); // attempt 1 fails
+    expect(fake.reconnect).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2000); // backoff doubled → attempt 2 succeeds
+    expect(fake.reconnect).toHaveBeenCalledTimes(2);
+    expect(deps.setConnected).toHaveBeenCalledWith(true);
+  });
+
+  it("drops only ONE conn-lost line across repeated failed attempts", async () => {
+    const model = new StreamModel();
+    const deps = makeDeps(model);
+    const fake = makeFakeClient();
+    fake.reconnect.mockImplementation(async () => {
+      // a failed attempt also fires the socket's close event (browser semantics)
+      fake.onClose!();
+      throw new Error("down");
+    });
+    await session("quinn", fake, deps).start();
+
+    fake.onClose!();
+    await vi.advanceTimersByTimeAsync(30000); // several failed attempts
+    expect(fake.reconnect.mock.calls.length).toBeGreaterThan(2);
+    const lostLines = model.items.filter((i) => i.kind === "system" && i.text === "conn-lost");
+    expect(lostLines).toHaveLength(1);
+  });
+
+  it("falls back to a full restart when there is no rejoin anchor", async () => {
+    const model = new StreamModel();
+    const deps = makeDeps(model);
+    const fake = makeFakeClient({ hasRejoinAnchor: false });
+    await session("quinn", fake, deps).start();
+
+    fake.onClose!();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(fake.reconnect).not.toHaveBeenCalled();
+    expect(deps.requestRestart).toHaveBeenCalled();
+  });
+
+  it("dispose() cancels a pending reconnect", async () => {
+    const model = new StreamModel();
+    const deps = makeDeps(model);
+    const fake = makeFakeClient();
+    const s = session("quinn", fake, deps);
+    await s.start();
+
+    fake.onClose!();
+    s.dispose();
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(fake.reconnect).not.toHaveBeenCalled();
+    expect(deps.requestRestart).not.toHaveBeenCalled();
   });
 
   it("dispose() detaches + closes the client", async () => {

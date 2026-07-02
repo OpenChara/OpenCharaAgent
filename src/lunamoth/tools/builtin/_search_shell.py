@@ -26,6 +26,12 @@ _SEARCH_OUTPUT_RE = re.compile(r'^([A-Za-z]:)?[^\s:][^\n]*?[:\-]\d|^[^\s:][^\s]*
 class ExecResult:
     stdout: str
     exit_code: int
+    # False when the RC sentinel never came back — the command did not run to
+    # completion (runner timeout, jail refusal, runner error). exit_code is
+    # meaningless then; `note` carries the runner's own explanation. Callers
+    # MUST surface this instead of reading empty stdout as "0 matches".
+    completed: bool = True
+    note: str = ""
 
 
 def escape_shell_arg(arg: str) -> str:
@@ -82,6 +88,7 @@ def run_capturing_rc(ctx, command: str, *, timeout: int = 60) -> ExecResult:
     out_section, err_section = _parse_runner_output(raw)
     merged = out_section
     exit_code = 0
+    completed = False
     # The sentinel was emitted on stdout; find the LAST occurrence.
     idx = merged.rfind(_RC_SENTINEL)
     if idx != -1:
@@ -89,11 +96,21 @@ def run_capturing_rc(ctx, command: str, *, timeout: int = 60) -> ExecResult:
         m = re.match(r"\s*(-?\d+)", tail)
         if m:
             exit_code = int(m.group(1))
+            completed = True
         merged = merged[:idx].rstrip("\n")
     # Merge stderr (rg/grep diagnostics) after stdout, like stderr=STDOUT.
     if err_section.strip():
         merged = (merged + "\n" + err_section).strip("\n") if merged else err_section
-    return ExecResult(stdout=merged, exit_code=exit_code)
+    if completed:
+        return ExecResult(stdout=merged, exit_code=exit_code)
+    # No sentinel = the command never finished: a runner timeout, a jail
+    # refusal, or a runner error. Reading this as exit=0/empty-stdout turned
+    # every such failure into a clean "0 matches" — a false negative that sent
+    # the model down the wrong path. Carry the runner's own note out instead.
+    note = next((ln.strip() for ln in raw.split("\n")
+                 if ln.startswith(("[timed out", "[lunamoth:", "[runner error"))),
+                "the command did not run to completion")
+    return ExecResult(stdout=merged, exit_code=-1, completed=False, note=note)
 
 
 def split_tool_diagnostics(output: str) -> tuple[str, str]:

@@ -36,8 +36,14 @@ DEFAULT_MAX_OUTPUT = 8192
 
 _OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 _DISK_TTL_SECONDS = 86400  # refetch the OpenRouter catalogue at most once a day
+# A FAILED fetch is retried after this cooldown, never memoized for process life:
+# a transient offline moment at first resolve used to pin a 200K model to the
+# 32K default window until restart. The cooldown just keeps a dead network from
+# paying a 6 s timeout on every turn.
+_FETCH_RETRY_SECONDS = 120
 
 _memo: dict[str, dict[str, int]] = {}  # in-process cache: {"openrouter": {model_id: ctx}}
+_fetch_failed_at = 0.0  # monotonic-ish wall clock of the last failed fetch (0 = none)
 
 
 def _home() -> Path:
@@ -49,7 +55,11 @@ def _openrouter_catalogue(api_key: str = "") -> dict[str, int]:
 
     Also populates the PARALLEL output-token map ``_memo['openrouter_out']``
     ({model_id: max_completion_tokens}) from the SAME payload, so the max-output
-    resolver below needs no second fetch. The two are always set together."""
+    resolver below needs no second fetch. The two are always set together.
+
+    Only a SUCCESSFUL fetch is memoized; a failure returns {} and is retried
+    after ``_FETCH_RETRY_SECONDS`` (never pinned for the life of the process)."""
+    global _fetch_failed_at
     if "openrouter" in _memo:
         return _memo["openrouter"]
     cache = _home() / "openrouter_models.json"
@@ -67,6 +77,12 @@ def _openrouter_catalogue(api_key: str = "") -> dict[str, int]:
             return data
     except (OSError, ValueError, json.JSONDecodeError):
         pass
+
+    # Failure cooldown: don't hammer a dead network with a 6 s timeout per call,
+    # but DO retry once the window lapses — the failure is transient, the memo
+    # would have made it permanent.
+    if _fetch_failed_at and time.time() - _fetch_failed_at < _FETCH_RETRY_SECONDS:
+        return {}
 
     catalogue: dict[str, int] = {}
     out_catalogue: dict[str, int] = {}
@@ -98,9 +114,19 @@ def _openrouter_catalogue(api_key: str = "") -> dict[str, int]:
             except OSError:
                 pass
     except Exception:
-        catalogue = {}  # offline / rate-limited: degrade to the default, never raise
-        out_catalogue = {}
+        # Offline / rate-limited: degrade to the default THIS call, never raise —
+        # but never memoize the failure (a 200K model would run on the 32K
+        # default for the rest of the process). Retry after the cooldown.
+        _fetch_failed_at = time.time()
+        return {}
 
+    if not catalogue:
+        # A response with no usable rows is a failure in success clothing —
+        # treat it the same: no memo, retry after the cooldown.
+        _fetch_failed_at = time.time()
+        return {}
+
+    _fetch_failed_at = 0.0
     _memo["openrouter"] = catalogue
     _memo["openrouter_out"] = out_catalogue
     return catalogue

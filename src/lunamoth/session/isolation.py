@@ -490,15 +490,19 @@ def runtime_permissions(sandbox_dir: Path) -> tuple[bool, list[str]]:
     """allow_network + writable paths exactly as activation persisted them.
 
     Reads the session's ``env_status.json`` (written by the runtime's EnvState;
-    ``/net on`` and ``/allow-dir`` mutate it). Missing/garbled file = the
-    defaults: network off, no extra writable paths.
+    ``/net on`` and ``/allow-dir`` mutate it). Missing key / missing / garbled
+    file = the DEFAULT_STATUS defaults (core/state.py): network ON — network is
+    on by default (owner 2026-06-15) and defaulting False here silently flipped
+    a chara's PTY offline while its tools were online — and no extra writable
+    paths. (Hardcoded True rather than imported: core imports session, so this
+    stdlib-only leaf can't reach back into core/state without a cycle.)
     """
     try:
         data = json.loads((sandbox_dir / "env_status.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return False, []
+        return True, []
     if not isinstance(data, dict):
-        return False, []
+        return True, []
     paths = data.get("writable_paths")
     writable = [str(p) for p in paths] if isinstance(paths, list) else []
-    return bool(data.get("network_access", False)), writable
+    return bool(data.get("network_access", True)), writable

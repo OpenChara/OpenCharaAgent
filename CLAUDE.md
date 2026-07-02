@@ -77,22 +77,23 @@ with, not a clone on disk.)
   the SKILLS guidance) are migrated into `content/rules.py` the same way:
   port the wording, strip the brand.
 - **AstrBot** — the maturity bar for the messaging gateway layer and adjacent
-  infra (the `Adapter` seam, `obs/broker.py` LogBroker, `tools/goals.py`
-  awakener all cite it).
+  infra (the `Adapter` seam, `obs/broker.py` LogBroker, `netsec.py`/`authpw.py`
+  auth, the updater all cite it).
 - **openclaw** — the "strip-the-persona → plain workhorse" reference (cards,
   packs, MCP, skills, headless run).
 - **SillyTavern/SillyTavern** — character cards / world books / prompt layering.
   ST is the card/world-book FORMAT we stay compatible with (our OWN cards ARE
-  ST-format); it is NOT a UI import path. The dedicated card-import feature was
-  REMOVED 2026-06-18 (deferred — re-adding it must also handle asset import, since
-  a chara is a card PLUS assets). To start from a foreign card, paste its JSON into
-  the create box (the AI drafts from it as inspiration — no structured ST adapter).
+  ST-format). Card IMPORT is BACK (re-added with the Market, 2026-06-27):
+  `cards.import_foreign` (`server/hub/cards.py`) does a faithful, no-model import
+  of ST V2/V3/V1 JSON, character-tavern API cards, or ST PNG (embedded portrait →
+  avatar), surfaced in the create flow AND via the card Market (see server/hub).
 - **farion1231/cc-switch** — session/roster ergonomics, remote access.
 
 (The default card is Quinn 小Q, the owner-authored digital intern — selected via the
 card-tag `"default"` convention (no character name in src/; without the tag,
-sorted order wins). The two bundled cards are LunaMoth 月蛾 (the flagship
-example) and Quinn 小Q (the default).)
+sorted order wins). `cards/` bundles EIGHT cards (Hoshi, K-9, LunaMoth 月蛾 the
+flagship example, Mars, Quinn 小Q, Vale, Vesper, Yan); only Quinn carries the
+`"default"` tag.)
 
 ## Design principles (binding)
 
@@ -153,8 +154,16 @@ uv run python -m pytest -q # tests live in tests/, confined via pyproject testpa
 uvx ruff check --select F src/lunamoth tests   # lint (unused imports, undefined names)
 ```
 
-- Installed copy lives in `~/.lunamoth/app`; `lunamoth update` = git pull + uv sync.
-- `install.sh` is the `curl | bash` installer (macOS/Linux only; uv-based).
+- Install is CHANNEL-AWARE (`install.sh`, `curl | bash`, macOS/Linux only, uv-based):
+  default `user` channel = the release WHEEL via `uv tool install` (the wheel bundles
+  the built webui + cards + toolpacks — `scripts/build-wheel.sh` self-asserts this);
+  `--dev` channel = the git checkout at `~/.lunamoth/app`. `src/lunamoth/updater.py`
+  (flat module) is the ONE self-update implementation (GitHub-Releases-driven; wheel =
+  reinstall from the latest release URL since `uv tool upgrade` no-ops on URL pins),
+  shared by CLI `lunamoth update` and the `update.status/apply/restart` RPCs
+  (`server/hub/updates.py`; after apply the instance relaunches into the new code).
+- Extras: `--extra server` (hub/ws), `--extra messaging` (IM adapters — install.sh
+  syncs both), `--extra visuals` (rembg/onnxruntime matte stack), `--extra dev`.
 - The TUI is Textual; headless-test with `app.run_test()` pilots (see tests/test_panel.py).
 - GOTCHA: config paths (SANDBOX_ROOT/CONFIG_DIR) are pinned from env at IMPORT
   time — one process = one chara; tests must set env before importing runtime
@@ -175,9 +184,12 @@ uvx ruff check --select F src/lunamoth tests   # lint (unused imports, undefined
 - **No chord shortcuts in the TUI** — everything is a `/command`; Ctrl+C is the
   only key (safety quit).
 - README is split EN (`README.md`) / zh (`README.zh-CN.md`) — update BOTH.
-- docs/ holds ONE file: `docs/OPEN-WORK.md` (Part 1 = the hermes-parity
-  hardening backlog; Part 2 = deferred product ideas). The settled design specs
-  and historical research were deleted 2026-06-13 — their conclusions live in
+- docs/ holds TWO files: `docs/OPEN-WORK.md` (Parts 1–4 = open hardening /
+  deferred product ideas / loop backlog / test-feedback triage, + Appendix A
+  client-and-deploy architecture) and `docs/AGENT-FIELD-NOTES.md` (owner-sanctioned
+  2026-06-18: reusable agent METHODOLOGY — headless-Chrome UI verification, cloud
+  deploy/cleanup, multi-agent etiquette; secret-free by rule). The settled design
+  specs and historical research were deleted 2026-06-13 — their conclusions live in
   this file, the code, and git history. Work logs belong in git history and
   agent memory, never in docs.
 
@@ -191,11 +203,14 @@ zero internal deps; `obs/` imports only `config`.
 - `config.py` — root constants (ROOT, SANDBOX_ROOT, LLMConfig) + `openrouter_attribution_headers()`
   (the `HTTP-Referer`=lunamoth.ai + `X-Title`=LunaMoth app-attribution headers sent on every
   OpenRouter request — chat/llm.py, hub/models.py and image/_image_gen.py all use it; env-overridable).
-  The only flat module.
+  `updater.py` is the other deliberately-flat module (self-update; see Run/dev above).
 - `core/` — the agent backend:
   - `agent.py` — `LunaMothAgent`: three-zone prompt assembly (`_stable_prefix`
     cached per session / `_volatile_tail` per turn), streaming loop, tool exec,
-    time sense (timestamp idle ticks, gap notes), card goal seeding.
+    time sense (timestamp idle ticks — the tick text itself says no one is
+    present, don't greet — and gap notes), card task seeding
+    (`extensions.lunamoth.task` → one starter task), `stream_react` (drains a
+    pending background-job notice as a synthetic user turn — the react wake).
   - `llm.py` — OpenAI-compatible streaming client + tool-calling loop. **Yields
     protocol events** (TextDelta say|muse /ThinkDelta/ToolStart/ToolEnd/Notice),
     takes explicit (stable, volatile) zone lists. Retry 5s×5. **Reasoning =
@@ -205,7 +220,10 @@ zero internal deps; `obs/` imports only `config`.
     per-provider echo tiers + cross-provider poison guard, and the unified
     `reasoning` request param. `cache.py` carries the `system_and_3`
     cache_control breakpoint placement (system + last 3 non-system), ported
-    verbatim.
+    verbatim. `_stream_util.py` (extracted from llm.py) — surrogate scrub,
+    tool-arg repair, retry backoff, SSE stall watchdog. `attachments.py` —
+    user-sent image/file ingest, hermes-shaped inline-vs-workspace split
+    (vision-capable model → inline; otherwise land in the workspace).
   - `commands.py` — THE /command registry (one implementation for every frontend;
     Reply.verbose marks panel-worthy output; legacy aliases live here too).
   - `context.py` — `ContextBuffer` (full OpenAI message dicts; length-bounded
@@ -221,24 +239,34 @@ zero internal deps; `obs/` imports only `config`.
     latest summary + tail (no re-LLM). De-branded: zero "hermes" strings.
   - `transcript.py` — per-chara SQLite log (WAL+fallback, epochs for /reset);
     `export_jsonl` writes the full epoch (prompts/tool calls/results/reasoning)
-    hermes-style. `agent.py` also writes `sandbox/logs/requests.jsonl` — the
-    faithful request log (last 200 turns: exact system+messages+tools sent).
+    hermes-style. `request_log.py` writes `sandbox/logs/requests.jsonl` — the
+    faithful request log (last 200 turns: exact system+messages+tools sent),
+    credential-redacted via `redact.py` (the regex backstop that also scrubs
+    compaction summaries).
   - `providers.py` — model's REAL context window. `state.py` — `EnvState`
     (env_status.json: network/writable/rest_until) + `Permissions`, the ONE typed
     snapshot (`EnvState.permissions()`) every tool runner reads via
     `ctx.permissions()` so fg/bg/PTY can't resolve env facts differently.
-    ISOLATION is NOT stored in env_status (2026-06-21): it's the ONE authority
-    `session.isolation.backend()` (← `LUNAMOTH_PY_BACKEND` ← session config), which
-    `permissions().isolation` + the snapshot + the prompt tail all read. A stale
-    env_status copy used to silently sandbox an `admin` chara; the key is now dropped
-    on load.
+    ISOLATION is NOT stored in env_status (2026-06-21): session.json's `isolation`
+    field is the ONE authority — `SessionMeta.env()` derives `LUNAMOTH_PY_BACKEND`
+    from it at launch, and config.json holds NO derived py_backend copy (dropped
+    2026-06-26); `permissions().isolation` + the snapshot + the prompt tail all read
+    the env. A stale env_status copy used to silently sandbox an `admin` chara; the
+    key is now dropped on load.
 - `protocol/` — **the contract layer**; frontends import this and nothing deeper:
   - `events.py` — frozen dataclasses; `TextDelta.channel` say|muse (muse = the
     chara's own life; messaging frontends deliver say only).
   - `codec.py` — JSON wire format (stream-json, the server, the web renderer).
   - `api.py` — `CharaHandle` (attach/streams/command/snapshot/permission hook)
-    + Reply/AttachInfo/StateSnapshot. The ONLY backend surface frontends see.
-- `messaging/` — external chat gateways: personal WeChat (iLink/ClawBot, and also via WeChatPadPro — user-run docker, iPad protocol, any account), QQ OneBot, and Telegram adapters behind the sync `Adapter` seam. A gateway is NOT a separate agent: the adapters run INSIDE the chara's `serve --stdio` child via `server/messaging_host.py` (`MessagingHost` + `dispatch.run_stream_sync`), sharing its ONE handle — a WeChat turn streams into the desktop window live AND replies to WeChat. The host has no idle loop (the supervisor owns self-work). `MessagingGateway` (own handle + idle) remains the standalone `lunamoth gateway NAME` path for headless use/tests. Per-chara toggle = `messaging.start/stop` RPC to the child (`GatewayChild` is now a thin controller, not a process). Shared seams: `access.py` (the allow-list + refusal throttle — ONE copy gating BOTH the standalone gateway and the in-child host, so "empty allow-list = open" can't drift between them), `text.py` (`split_text`, sentence-aware splitting for platform length caps), and `filters.py` (`is_silence_narration` — the outbound silence-token drop both send paths apply).
+    + Reply/AttachInfo/StateSnapshot (incl. `pending_notices`, the cheap
+    non-destructive peek that drives the background-job react wake). The ONLY
+    backend surface frontends see.
+  - `media.py` — the ONE home of the `MEDIA:<path>` parsing rule (extract_media/
+    extract_images/extract_local_files, hermes-shaped). There is NO Attachment
+    protocol event: each delivery edge extracts MEDIA lines itself — this module
+    for Python surfaces, its TS mirror `apps/web/src/lib/media.ts` for the SPA,
+    and `messaging/media.py` for gateway upload (honest-note fallback).
+- `messaging/` — external chat gateways: personal WeChat (iLink/ClawBot — the WeChatPadPro adapter was DROPPED 2026-06-17, iLink is the one WeChat path), QQ OneBot, Telegram, and native Discord + Slack (2026-06-25: `discord.py` = raw Gateway WS, no discord.py dep; `slack.py` = Socket Mode WS + Web API) adapters behind the sync `Adapter` seam; `media.py` = outbound MEDIA upload per platform (honest-note fallback, `DeliveryDeferred`). A gateway is NOT a separate agent: the adapters run INSIDE the chara's `serve --stdio` child via `server/messaging_host.py` (`MessagingHost` + `dispatch.run_stream_sync`), sharing its ONE handle — a WeChat turn streams into the desktop window live AND replies to WeChat. The host has no idle loop (the supervisor owns self-work). `MessagingGateway` (own handle + idle) remains the standalone `lunamoth gateway NAME` path for headless use/tests. Per-chara toggle = `messaging.start/stop` RPC to the child (`GatewayChild` is now a thin controller, not a process). Shared seams: `access.py` (the allow-list + refusal throttle — ONE copy gating BOTH the standalone gateway and the in-child host, so "empty allow-list = open" can't drift between them), `text.py` (`split_text`, sentence-aware splitting for platform length caps), and `filters.py` (`is_silence_narration` — the outbound silence-token drop both send paths apply).
 - `content/` — SillyTavern compat, pure data: `cards.py` (V2/V3 PNG/JSON; PHI
   exposed for the post-history slot, never folded into the persona;
   `merge_world_into_card` = the world-book IMPORT path), `worldinfo.py`
@@ -279,14 +307,22 @@ zero internal deps; `obs/` imports only `config`.
     skill_manage), `todo.py`, `session_search.py`, `execute_code.py`,
     `delegate_task.py`, `browser.py` (12 browser_*, check_fn-gated on the
     agent-browser driver). LunaMoth's OWN chara-life tools: `chara_life.py` —
-    speak, rest. (The chara-mutable `wish`/goal tool was REMOVED 2026-06-21 —
-    replaced by the USER-owned read-only ideal in `tools/polaris.py` + the
-    `/aspiration` command (`/polaris`/`/goal`/`/wish` alias it); the chara can no
-    longer add or complete goals. CODENAME vs DISPLAY: code keeps the stable
-    codename `polaris` everywhere — the store, `polaris.json`, the card field
+    speak, rest — and `task.py` (the `task` tool). THE THREE-LAYER GOAL MODEL
+    (settled 2026-06-30): **aspiration** (codename `polaris`, `tools/polaris.py`
+    store + `polaris.json` — USER-owned, read-only to the chara, never
+    "completed"; `/aspiration` command, `/polaris`/`/goal`/`/wish` alias it) →
+    **task** (`tools/task.py` TaskStore + `task.json` — the chara's OWN
+    persistent life-threads advanced toward its aspiration: chara-editable and
+    chara-completable, max 12 active / 280 chars each, completing SEALS a task
+    immutable; seeded once from card `extensions.lunamoth.task`; rendered into
+    the volatile tail after the aspiration block) → **todo** (ephemeral,
+    in-session only). The old chara-mutable `wish`/goal tool stays gone
+    (removed 2026-06-21). CODENAME vs DISPLAY: code keeps the stable codename
+    `polaris` everywhere — the store, `polaris.json`, the card field
     `extensions.lunamoth.polaris`, the data key — but the USER-FACING term is
     理想 / "Aspiration" (2026-06-22); all model/UI text says aspiration, never the
-    codename.)
+    codename. `media.py` (builtin) = the `generate_image` tool (check_fn-gated on
+    an image key; non-blocking background job → completion notice → react wake).
     SHELVED, NOT DELETED (owner, 2026-06-18; revised 2026-06-19): **web_search /
     web_extract are kept in `web.py` but NOT registered** (`_WEB_TOOLS_ENABLED =
     False`, and the `registry.register` calls sit inside that `if`, so the AST
@@ -302,20 +338,20 @@ zero internal deps; `obs/` imports only `config`.
     one hard requirement when re-enabled: a failed web call must surface a real
     `tool_error`, never the silent empty-`{}` fallback the old path had. **The
     standalone `send_file` tool is gone too** — like hermes, the chara surfaces
-    a file by writing a line `MEDIA:<workspace path>` in its reply; the agent's
-    streaming `_media_filter` (core/agent.py) extracts that line, strips it from
-    the visible text, and emits the `Attachment` protocol event the frontends and
-    messaging adapters already render (inline image / download / honest note). The
-    filter is streaming-safe (it withholds only a still-live `MEDIA:` candidate
-    line, never whole prose) and code-fence aware; rules.py + the file/image tool
-    descriptions teach the convention. (The older inspect_env/write_log/request_permission/clarify tools
+    a file by writing a line `MEDIA:<workspace path>` in its reply; there is NO
+    Attachment protocol event — each delivery edge extracts MEDIA lines itself:
+    `protocol/media.py` is the ONE parsing-rule home (Python surfaces), mirrored
+    by `apps/web/src/lib/media.ts` (the SPA renders inline image / download) and
+    `messaging/media.py` (gateway upload / honest-note fallback); rules.py + the
+    file/image tool descriptions teach the convention. (The older inspect_env/write_log/request_permission/clarify tools
     were already retired: env facts ride the volatile tail, the chara has memory
     for notes, network is on by default.) Helpers are `_underscore.py` modules
     (not discovered).
   - Supporting infra: `runner.py` (terminal under admin/sandbox — shared by
     terminal/process/search/execute_code via ctx.run_terminal), `sandbox.py` (ONE
     working dir `workspace/`), `mcp.py` (stdio JSON-RPC; `schema_sanitizer.py`),
-    `memory.py`/`skills.py`/`goals.py` stores (hermes-shaped, per-chara), `toolpacks.py`.
+    `memory.py`/`skills.py`/`polaris.py`/`task.py` stores (hermes-shaped, per-chara;
+    `_atomic.py` = the shared atomic-write helper), `toolpacks.py`.
     Network is ON by default (`/net off` to disable). Browser tools need the
     installed driver (agent-browser CLI + Chromium; check_fn-gated; a deploy
     requirement now — install.sh / Dockerfile / `lunamoth setup browser`) and run
@@ -370,7 +406,8 @@ zero internal deps; `obs/` imports only `config`.
   `LUNAMOTH_PY_BACKEND` itself via the ONE `isolation_to_backend` map, so callers
   never re-derive the jail), `settings.py`, `cleanup.py`,
   `isolation.py` (stdlib-only OS jail builders — shared by tools/runner and the
-  supervisor's PTY shell; `interactive_shell_argv` never degrades to dir trust).
+  supervisor's PTY shell; `interactive_shell_argv` never degrades to dir trust),
+  `landlock.py` (the Landlock ctypes tier, split out of isolation.py).
 - `presence/` — JUST the `/mode live|chat` normalizer now (`prompts.py:
   normalize_mode`; `state.py`/`PresenceState`/`marker_text` were DELETED
   2026-06-18). The chara's context is INDEPENDENT of whether a human is
@@ -380,13 +417,28 @@ zero internal deps; `obs/` imports only `config`.
   returns (so it survives a dropped socket); `/reset` re-seeds it. The first
   meeting and detach handoff are gone.
 - `server/` — the remote/desktop gateway (imports protocol+session+content, never
-  core/tools directly): `dispatch.py` (per-session JSON-RPC over CharaHandle),
-  `stdio.py`/`ws.py` (transports for `lunamoth serve <name>`), `hub/` — a PACKAGE
+  core/tools directly): `dispatch.py` (per-session JSON-RPC over CharaHandle; incl.
+  the `react` RPC — the background-job wake, low-priority like `idle`: a real send
+  supersedes it, it never supersedes a real turn), `stdio.py`/`ws.py` (transports
+  for `lunamoth serve <name>`), `netsec.py` (Host/Origin allowlist, the `lm_auth`
+  cookie minted by the `?token=` handshake, loopback classification — AstrBot-shaped),
+  `authpw.py` (optional PBKDF2 password login for public binds, per-IP rate limit),
+  `sshconnect.py` (`lunamoth connect ssh://[user@]host` — reads the remote daemon
+  token/ports, opens an `ssh -L` tunnel), `hub/` — a PACKAGE
   since 2026-06-20 (split from the old 2844-line `hub.py` god-module): `config.py`
-  (defaults/keys), `models.py` (provider HTTP/test_key/_complete), `cards.py`
-  (card CRUD/listing/sanitize), `card_draft.py` (LLM draft/rewrite/transcribe/
-  draft_to_card), `avatars.py` (avatar + art-asset I/O), `sessions.py` (lifecycle/
-  transcript/messaging/wake/export), `dispatch.py` (`HubDispatcher` with a
+  (defaults/keys — the KEYRING is the ONLY api_key store since 2026-06-26: `keys`
+  map + `active_key_label`, config.json can never persist a top-level secret;
+  `keys.list/save/delete` + `defaults.apply_key/use_key` RPCs), `models.py`
+  (provider HTTP/test_key/_complete), `cards.py`
+  (card CRUD/listing/sanitize + `cards.import_foreign` — faithful no-model import
+  of ST V2/V3/V1 JSON / character-tavern cards / ST PNG), `card_market.py` (the
+  card Market: `market.search/detail/import`, a proxy to character-tavern.com's
+  public catalog + tag vocabulary), `card_draft.py` (LLM draft/rewrite/transcribe/
+  draft_to_card), `avatars.py` (avatar + art-asset I/O incl. `stickers_save` with
+  name slugs, `card.sticker_rename/reslice/remove`, 参考图 reference-image
+  persistence), `sessions.py` (lifecycle/transcript/wake/export),
+  `session_messaging.py` (messaging config + WeChat QR, split from sessions.py),
+  `updates.py` (`update.status/apply/restart`), `dispatch.py` (`HubDispatcher` with a
   `{method: handler}` table, NOT an if-ladder), `_common.py` (leaf helpers),
   `__init__.py` (re-exports the full public API, so `from ..server import hub as H` is unchanged)
   (board-level RPC: roster/cards/wake/export/defaults/key-test/transcribe plus
@@ -418,9 +470,10 @@ zero internal deps; `obs/` imports only `config`.
   chara's jail behind a pty, streamed as binary WS frames), `desktop.py` (thin
   foreground/daemon entry for static HTTP + WS routing).
 - `front/` — ALL frontends; the only textual/rich importers:
-  - `cli.py` — the `lunamoth` command (roster default; new/ls/attach/start/stop/rm/
-    setup/update/doctor/run/serve/desktop/daemon; `start` delegates to a live
-    lunamothd).
+  - `cli.py` — the `lunamoth` command (bare = webui desktop; `tui` = the terminal
+    roster; new/ls/attach/start/start-all/stop/rm/setup/update/doctor/run/serve/
+    gateway/desktop/daemon/connect/version; `start` delegates to a live
+    lunamothd; `connect ssh://…` = the remote tunnel).
   - `tui/` — FROZEN (owner decision 2026-06-12: crash fixes only, no new
     features; web(=Electron) is the product face, terminal.py stays as the
     daemon driver). The split TUI (app.py + welcome.py): character stream /
@@ -434,35 +487,43 @@ zero internal deps; `obs/` imports only `config`.
   - `wizard.py` — plain-terminal first-run setup. `art.py` — the blue wordmark.
   - `webui/` — the BUILT desktop renderer (gitignored; emitted by `apps/web`'s
     Vite build, bundled into the wheel via package-data, served by `lunamoth
-    desktop` and loaded by the Electron shell). The SOURCE is the React+TS SPA at
-    repo-root `apps/web/` (NOT under src/): `src/rpc.ts`+`protocol.ts` (the ported
-    transport + event union), `i18n/` (~555 keys; `i18n.test.ts` pins the count —
-    update it when you add/remove keys), `lib/` (pure helpers), `state/`
-    (hub/overlay context), `hooks/useCharaStream.ts` (the stream accumulator),
-    `views/` (Board/Deck/Gateways/Settings/Chat), `components/{chat,deck,gateways,
-    settings,overlays,ui}`. SETTINGS · 模型/提供商 (rebuilt 2026-06-18 after Hermes,
+    desktop` and loaded by the Electron shell at `apps/desktop/` — a THIN shell,
+    `electron/main.cjs`, no SPA-side Electron APIs). The SOURCE is the React+TS SPA
+    at repo-root `apps/web/` (NOT under src/): `src/rpc.ts`+`protocol.ts` (the ported
+    transport + event union), `i18n/` (`i18n.test.ts` pins the exact key count —
+    update it when you add/remove keys), `lib/` (pure helpers incl. `media.ts`, the
+    TS mirror of protocol/media.py), `state/` (hub/overlay context),
+    `hooks/useCharaStream.ts` (the stream accumulator) + `hooks/chatSession.ts`
+    (persisted send-queue + stream ordering, 2026-06-30),
+    `views/` (Board/Deck/Market/Gateways/Settings/Chat), `components/{chat,deck,
+    market,gateways,settings,overlays,ui}`, `styles/` (global.css + `mobile.css`,
+    the 2026-06-24 responsive first pass: bottom tab bar, full-screen sheets).
+    Chat renders full webui history with a display-only compaction-boundary
+    divider. SETTINGS · 模型/提供商 (rebuilt 2026-06-18 after Hermes,
     旧 ModelPane/KeysPane 整组替换): `settings/Select.tsx` (the flat white/light-blue
     square-cornered dropdown — provider + model are two such boxes), `ModelPane.tsx`
     (provider box + model box + Test + Reasoning[OpenRouter-only] + 上下文长度 +
-    the per-function `TaskModels.tsx` rows), `KeysPane.tsx` (NOW the 提供商 pane:
+    the per-function `TaskModels.tsx` rows), `KeysPane.tsx` (the 提供商 pane:
     one row per provider, one key per provider — OpenRouter + self-registered
-    Local/Custom OpenAI-compatible endpoints (name+base_url+key, for relays/self-host)
-    + the image-gen key row). Card import overlay (`Import.tsx`/`importCard.ts`) was
-    deleted. Dev: `cd apps/web && npm run dev` (proxies /rpc+ws to a
+    Local/Custom OpenAI-compatible endpoints (name+base_url+key, for relays/
+    self-host); the image key rides the same keyring, no separate row). Card
+    import = the create flow (`CreateFlow.tsx` → `cards.import_foreign`) + the
+    Market view. Dev: `cd apps/web && npm run dev` (proxies /rpc+ws to a
     running `lunamoth desktop`); build: `npm run build` → `front/webui/`. Hash
-    routing (no server SPA-fallback needed). NOTE: the gateway deck UI currently
-    exposes only WeChat (weixin); QQ/Telegram/WeChatPadPro adapters exist in
-    `messaging/` but aren't surfaced yet. UI chrome bilingual zh/en + light/dark; a
+    routing (no server SPA-fallback needed). The gateway deck surfaces all FIVE
+    platforms (weixin/qq/telegram/discord/slack — one row per chara×platform,
+    independent switches). UI chrome bilingual zh/en + light/dark; a
     chara's words stay in the card's language. Idle driving is SERVER-SIDE only
-    (supervisor.py) — web clients render life.state and must never drive idle.
+    (supervisor) — web clients render life.state and must never drive idle.
     (The pre-2026-06-16 vanilla no-build renderer at `front/web/` was replaced by
     this SPA; the protocol/codec contract it speaks is unchanged.)
 
 Content (gitignore-allowlisted): `cards/` `toolpacks/`. The card is the ONE
-content file (world embedded as `character_book`). The `card.merge_world` /
-`_card_json_from_png` / `/upload` card-import backers still exist in the backend
-but are UI-orphaned (the import feature was removed 2026-06-18, deferred); a
-standalone ST world book is never a runtime source.
+content file (world embedded as `character_book`); a standalone ST world book is
+never a runtime source (`card.merge_world` = the world-book IMPORT path folds one
+into the card). Repo-root siblings: `apps/desktop/` (Electron shell), `deploy/`
+(Dockerfile/compose.yml/entrypoint.sh), `scripts/` (build-wheel.sh — self-asserts
+the wheel bundles webui+cards+toolpacks), `install.sh`.
 
 ## The prompt stack (the machine that runs a chara)
 
@@ -482,14 +543,15 @@ Every API request is assembled as **three zones**:
 3. **Volatile tail** — recomputed per turn, never persisted: live env facts
    (isolation/network/date — NO operator token; context is attach-independent),
    shallow-scanned keyword world info (last ~4 messages, sticky 4 turns, ≤25% of
-   the window), the read-only Polaris block, then exactly one **post-history slot**
+   the window), the read-only aspiration block, the active-task block (the chara's
+   own life-threads), then exactly one **post-history slot**
    as the final message: card `post_history_instructions` >
    card `extensions.lunamoth.rules_closer` > bundled rules closer (the latter
    two only when tools are enabled).
 
 Card override hooks: `extensions.lunamoth.{rules,practice,tool_use,rules_closer,
-force_roleplay,embodiment_bridge,polaris}`; global
-`~/.lunamoth/rules.md` overrides `rules`. (The `on_attach`/`on_detach` hooks were
+force_roleplay,embodiment_bridge,polaris,task,website,website_prompt,patience}`;
+global `~/.lunamoth/rules.md` overrides `rules`. (The `on_attach`/`on_detach` hooks were
 REMOVED 2026-06-18 along with the rest of presence — there is no enter/leave
 marker to override.) (The old `world` path pointer is retired — it
 violated one-file; the embedded `character_book` replaced it, and a session
@@ -526,7 +588,9 @@ into the session's card, key stripped.)
   (connection events only — they do NOT enter the chara's context; presence was
   deleted 2026-06-18).
 - **Its own pace**: `patience` (seconds between spontaneous cycles —
-  `Settings.patience`, default 600, card hook `extensions.lunamoth.patience`,
+  `Settings.patience`, default 3600 (`knobs.DEFAULT_PATIENCE`, the ONE source;
+  `agent.patience_resolved` owns precedence), card hook
+  `extensions.lunamoth.patience`,
   `/patience`; precedence operator > card > default. NEVER reintroduce tiny
   defaults: a 2 s daemon default once burned a real key's daily limit),
   `/quiet` (engagement:
@@ -597,9 +661,10 @@ into the session's card, key stripped.)
 1. Card studio / deck UX iteration (the webui redesign shipped; the card-lock model
    + 2-step wake-as-editor + per-field AI rewrite + unified loading + avatar
    no-autogen landed 2026-06-14; further polish tracked in `docs/OPEN-WORK.md` Part 2).
-2. Card/persona market: `lunamoth-pack.json` + git-repo index (Claude Code
-   marketplace model). Card IMPORT (ST PNG/JSON + asset import) is DEFERRED
-   (the UI import feature was removed 2026-06-18) — re-add it here, with assets.
+2. Card/persona market: SHIPPED as a character-tavern.com catalog proxy (Market
+   v2: browse/sort/filter/preview + faithful import, 2026-06-27..07-01). OPEN
+   remainder: our OWN pack format + index (`lunamoth-pack.json` + git-repo index,
+   Claude Code marketplace model) so creators can publish card+assets packs.
 
 **B. For the charas (the biggest design effort: the chara curriculum)**
 1. **The neutral prompt curriculum** — iterate rules.py + tool descriptions so
@@ -614,11 +679,13 @@ into the session's card, key stripped.)
    existing `stream_event` channel to make charas aware of a living world.
 
 **C. For developers / agent users**
-1. Messaging: live-test WeChat/QQ with real credentials (budget a fix
-   round — iLink endpoints shifted once already); then Telegram (long-poll,
-   trivial after qq.py). (Enterprise WeChat/WeCom was dropped 2026-06-14 —
-   the deck never surfaced it; personal WeChat is the WeChat path we keep.)
-2. Remote TUI client over the gateway (`--connect`).
+1. Messaging: all five adapters are BUILT (WeChat iLink, QQ OneBot, Telegram,
+   Discord, Slack) and surfaced in the gateway deck; what remains is LIVE-testing
+   with real credentials (budget a fix round — iLink endpoints shifted once
+   already). (Enterprise WeChat/WeCom was dropped 2026-06-14; WeChatPadPro was
+   dropped 2026-06-17 — iLink is the WeChat path we keep.)
+2. Remote access: `lunamoth connect ssh://` (tunnel → browser) + password login
+   SHIPPED; a remote TUI client stays deferred (the browser is the remote face).
 
 (SHIPPED, moved out of the roadmap per "OPEN work only": the hermes apple-to-apple
 parity — the four context subsystems are IDENTICAL and the full P1–P3 hardening

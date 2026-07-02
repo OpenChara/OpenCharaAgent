@@ -49,10 +49,20 @@ export function GatewayPane({ name, platform: plat }: { name: string; platform: 
   const [enabled, setEnabled] = useState(false);
   const [switching, setSwitching] = useState(false);
 
-  // Live field inputs + their render-time initials, for the field-level merge save.
+  // Live field inputs + their persisted-value initials, for the field-level merge
+  // save. Seeded once per field (seedField) and reset SYNCHRONOUSLY on a platform
+  // switch — the old post-render wipe effect emptied initialRef right after render
+  // had seeded it, so clearing a field compared "" against "" ("unchanged") and the
+  // explicit-null delete was never sent.
   const inputsRef = useRef<Record<string, string>>({});
   const initialRef = useRef<Record<string, string>>({});
   const allowedRef = useRef<string>("");
+  const platRef = useRef(plat);
+  if (platRef.current !== plat) {
+    platRef.current = plat;
+    inputsRef.current = {};
+    initialRef.current = {};
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -82,13 +92,11 @@ export function GatewayPane({ name, platform: plat }: { name: string; platform: 
     void load();
   }, [load]);
 
-  // Reset the live field maps whenever the rendered platform / config changes; the
-  // <FieldRow> initial values are seeded from cfg on each render.
+  // Keep the allowed-senders ref in step with the loaded/saved config (its input is
+  // uncontrolled; a live edit overwrites this via onChange before any save reads it).
   useEffect(() => {
-    inputsRef.current = {};
-    initialRef.current = {};
     allowedRef.current = cfg ? allowedToString(cfg) : "";
-  }, [cfg, plat]);
+  }, [cfg]);
 
   // Field auto-save: persists edited fields and re-asserts THIS platform's current
   // enabled flag (so a blur never clobbers the on/off the switch set), with the
@@ -104,6 +112,9 @@ export function GatewayPane({ name, platform: plat }: { name: string; platform: 
     });
     const r = await hub.call<{ config?: MessagingConfig }>("messaging.save", { name, config }, 20000);
     if (r && r.config) setCfg(r.config);
+    // The edits are persisted now: adopt them as the new initials so the next blur
+    // doesn't resend the same diffs (a cleared field then compares "" === "").
+    initialRef.current = { ...inputsRef.current };
   }, [hub, name, plat, enabled, cfg]);
 
   const saveOnBlur = useCallback(() => {
@@ -132,6 +143,7 @@ export function GatewayPane({ name, platform: plat }: { name: string; platform: 
         initial: initialRef.current,
       });
       if (r.config) setCfg(r.config);
+      initialRef.current = { ...inputsRef.current }; // in-flight edits rode along and are persisted
       setStatus(r.status || { state: turnOn ? "needs_login" : "stopped" });
     } catch (e) {
       setEnabled(!turnOn); // revert
@@ -155,6 +167,10 @@ export function GatewayPane({ name, platform: plat }: { name: string; platform: 
   const filled = requiredFilled(conf, plat);
 
   const seedField = (fd: GwField, value: string) => {
+    // Seed ONCE per field: a later re-render (e.g. after a save updates cfg) must
+    // neither clobber a live uncontrolled edit nor reset the persisted-value
+    // initial — that reset is what made a cleared field look "unchanged".
+    if (fd.key in initialRef.current) return;
     inputsRef.current[fd.key] = value;
     initialRef.current[fd.key] = value;
   };
@@ -189,7 +205,7 @@ export function GatewayPane({ name, platform: plat }: { name: string; platform: 
         <div className="gw-sec">
           <h4>{t("gw-required")}</h4>
           {spec.required.map((fd) => (
-            <FieldRow key={fd.key} fd={fd} conf={conf} plat={plat} onSeed={seedField} onSave={saveOnBlur} inputs={inputsRef} />
+            <FieldRow key={`${plat}:${fd.key}`} fd={fd} conf={conf} plat={plat} onSeed={seedField} onSave={saveOnBlur} inputs={inputsRef} />
           ))}
         </div>
       )}
@@ -197,7 +213,7 @@ export function GatewayPane({ name, platform: plat }: { name: string; platform: 
       <div className="gw-sec">
         <h4>{t("gw-recommended")}</h4>
         {spec.recommended.map((fd) => (
-          <FieldRow key={fd.key} fd={fd} conf={conf} plat={plat} onSeed={seedField} onSave={saveOnBlur} inputs={inputsRef} />
+          <FieldRow key={`${plat}:${fd.key}`} fd={fd} conf={conf} plat={plat} onSeed={seedField} onSave={saveOnBlur} inputs={inputsRef} />
         ))}
         {/* allowed_senders — a shared top-level field, with the security reason. */}
         <div className="gw-field">
@@ -219,7 +235,7 @@ export function GatewayPane({ name, platform: plat }: { name: string; platform: 
             {t("gw-advanced")} ({spec.advanced.length})
           </summary>
           {spec.advanced.map((fd) => (
-            <FieldRow key={fd.key} fd={fd} conf={conf} plat={plat} onSeed={seedField} onSave={saveOnBlur} inputs={inputsRef} />
+            <FieldRow key={`${plat}:${fd.key}`} fd={fd} conf={conf} plat={plat} onSeed={seedField} onSave={saveOnBlur} inputs={inputsRef} />
           ))}
         </details>
       )}

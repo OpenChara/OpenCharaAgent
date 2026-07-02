@@ -558,3 +558,61 @@ def test_compaction_without_todo_injects_nothing(agent):
     before = len(session.context.messages)
     agent._reinject_todo(session)  # no todo used → no-op
     assert len(session.context.messages) == before
+
+
+def test_compaction_tail_reappend_does_not_duplicate_display_or_export(tmp_path):
+    # The persisted tail re-append (kind='replay') exists ONLY so load() can
+    # rebuild "latest summary + tail". Display and export read the full epoch —
+    # they must skip replay rows, or the tail shows twice after every compaction.
+    from lunamoth.core.transcript import TranscriptStore
+
+    store = TranscriptStore(tmp_path / "transcript.db")
+    ctx = ContextBuffer(max_tokens=10_000_000)
+    ctx.persist = store.append_message
+    llm = FakeLLM(summary="CHECKPOINT")
+    _fill(ctx, 40, 500)  # add_message persists through ctx.persist, like the live agent
+    n_display_before = len(store.load_display())
+    assert _cp(ctx, 4000, llm) is True
+    tail = [m for m in ctx.messages if m.get("kind") != "summary"]
+
+    # Restore path: latest summary + the tail, exactly the live window.
+    restored = store.load()
+    assert restored[0].get("kind") == "summary"
+    assert [m["content"] for m in restored[1:]] == [m["content"] for m in tail]
+
+    # Display: one summary row added, NOTHING duplicated.
+    display = store.load_display()
+    assert len(display) == n_display_before + 1
+    assert sum(1 for m in display if m.get("kind") == "summary") == 1
+
+    # Export: no replay rows leak.
+    out = tmp_path / "export.jsonl"
+    lines = store.export_jsonl(out)
+    assert lines == n_display_before + 1
+    assert "replay" not in {__import__("json").loads(l)["kind"] for l in out.read_text().splitlines()}
+
+
+def test_replay_rows_survive_a_second_compaction(tmp_path):
+    # Re-compacting a restored window must keep working: the replay rows load
+    # as ordinary dicts and fold/re-append again without growing the display.
+    from lunamoth.core.transcript import TranscriptStore
+
+    store = TranscriptStore(tmp_path / "transcript.db")
+    ctx = ContextBuffer(max_tokens=10_000_000)
+    ctx.persist = store.append_message
+    llm = FakeLLM(summary="CHECKPOINT")
+    _fill(ctx, 40, 500)
+    assert _cp(ctx, 4000, llm) is True
+    display_after_first = len(store.load_display())
+
+    # Simulate restart: rebuild the live window from disk, keep talking, compact again.
+    ctx2 = ContextBuffer(max_tokens=10_000_000)
+    ctx2.restore(store.load())
+    ctx2.persist = store.append_message
+    for i in range(20):
+        ctx2.add("user" if i % 2 == 0 else "assistant", "y" * 500)
+    assert _cp(ctx2, 4000, llm) is True
+    display = store.load_display()
+    # first compaction display + 20 new rows + 1 new summary row, no tail dupes
+    assert len(display) == display_after_first + 21
+    assert sum(1 for m in display if m.get("kind") == "summary") == 2

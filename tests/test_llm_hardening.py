@@ -3,6 +3,8 @@ tool-args JSON repair, lone-surrogate scrubbing, real usage capture, and the
 announced step-budget exhaustion. All offline — fake streams, no sleeps."""
 import json
 
+import pytest
+
 from lunamoth.config import LLMConfig
 from lunamoth.core.llm import LLMClient, _repair_tool_args
 
@@ -318,3 +320,115 @@ def test_completed_turn_emits_no_budget_notice(monkeypatch):
     ))
     assert not any(isinstance(e, Notice) and e.kind == "budget" for e in events)
     assert all("tool-step budget" not in str(m.get("content")) for m in recorded)
+
+
+# ---- 2026-07-02 P1: an abandoned generator must answer its tool_calls -------------------
+
+
+def _two_call_turn(monkeypatch):
+    def one_tool_turn(self, messages, tools, text_out, reasoning=None, channel="say"):
+        return ([
+            {"id": "a1", "type": "function", "function": {"name": "terminal", "arguments": "{}"}},
+            {"id": "a2", "type": "function", "function": {"name": "terminal", "arguments": "{}"}},
+        ], "", "tool_calls", [])
+        yield  # pragma: no cover — generator for `yield from`
+
+    monkeypatch.setattr(LLMClient, "_stream_turn", one_tool_turn)
+
+
+def test_interrupt_mid_tools_synthesizes_missing_tool_results(monkeypatch):
+    """Closing the generator at a tool-boundary yield (interrupt/supersede) must
+    leave every recorded tool_call answered — unanswered ids poison the durable
+    context and strict endpoints 400 on every later turn."""
+    from lunamoth.protocol import ToolEnd
+
+    _two_call_turn(monkeypatch)
+    recorded: list = []
+    gen = _client().stream_agent(
+        "go", [], ["sys"], [], tools=[{"type": "function"}],
+        execute=lambda tc: {"display": "", "content": "ok", "ok": True},
+        record=recorded.append, max_steps=3,
+    )
+    for ev in gen:
+        if isinstance(ev, ToolEnd):
+            break  # first tool ran, its result not yet recorded; second never starts
+    gen.close()  # the operator interrupt closes the generator here
+
+    calls = [m for m in recorded if m.get("tool_calls")]
+    assert len(calls) == 1
+    want = {tc["id"] for tc in calls[0]["tool_calls"]}
+    got = {m.get("tool_call_id") for m in recorded if m.get("role") == "tool"}
+    assert got == want  # every tool_call has a tool result
+    assert [m["content"] for m in recorded if m.get("role") == "tool"] == ["[interrupted]", "[interrupted]"]
+
+
+def test_completed_tool_round_records_no_synthetic_results(monkeypatch):
+    """A tool round that runs to completion keeps its real results — the
+    synthetic [interrupted] answer only fills genuinely missing ids."""
+    calls = {"n": 0}
+
+    def turns(self, messages, tools, text_out, reasoning=None, channel="say"):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return ([{"id": "a1", "type": "function",
+                      "function": {"name": "terminal", "arguments": "{}"}}], "", "tool_calls", [])
+        text_out.append("done.")
+        return ([], "", "stop", [])
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(LLMClient, "_stream_turn", turns)
+    recorded: list = []
+    list(_client().stream_agent(
+        "go", [], ["sys"], [], tools=[{"type": "function"}],
+        execute=lambda tc: {"display": "", "content": "real result", "ok": True},
+        record=recorded.append, max_steps=3,
+    ))
+    tool_msgs = [m for m in recorded if m.get("role") == "tool"]
+    assert [m["content"] for m in tool_msgs] == ["real result"]
+    assert all(m["content"] != "[interrupted]" for m in tool_msgs)
+
+
+# ---- 2026-07-02 P3: honest cut marks -----------------------------------------------------
+# A generator CLOSED mid-turn (operator interrupt) keeps the "[cut off … by the
+# operator's next message]" mark; a stream/HTTP EXCEPTION must NOT — that would
+# fabricate a context fact. It gets the error mark instead.
+
+
+def _partial_then(monkeypatch, *, exc=None):
+    def one_turn(self, messages, tools, text_out, reasoning=None, channel="say"):
+        from lunamoth.protocol import TextDelta
+
+        text_out.append("halfway ")
+        yield TextDelta("halfway ", channel)
+        if exc is not None:
+            raise exc
+        text_out.append("more")
+        yield TextDelta("more", channel)
+        return ([], "", "stop", [])
+
+    monkeypatch.setattr(LLMClient, "_stream_turn", one_turn)
+
+
+def test_generator_close_gets_operator_interrupt_mark(monkeypatch):
+    _partial_then(monkeypatch)
+    recorded: list = []
+    gen = _client().stream_agent("go", [], ["sys"], [], tools=None,
+                                 execute=lambda tc: {}, record=recorded.append)
+    next(gen)
+    gen.close()
+    partials = [m for m in recorded if m.get("role") == "assistant"]
+    assert len(partials) == 1
+    assert partials[0]["content"].endswith(LLMClient.INTERRUPT_MARK)
+
+
+def test_stream_exception_gets_error_mark_not_operator_mark(monkeypatch):
+    _partial_then(monkeypatch, exc=RuntimeError("stream stalled"))
+    recorded: list = []
+    gen = _client().stream_agent("go", [], ["sys"], [], tools=None,
+                                 execute=lambda tc: {}, record=recorded.append)
+    with pytest.raises(RuntimeError):
+        list(gen)
+    partials = [m for m in recorded if m.get("role") == "assistant"]
+    assert len(partials) == 1
+    assert partials[0]["content"].endswith(LLMClient.ERROR_CUT_MARK)
+    assert "operator" not in partials[0]["content"]

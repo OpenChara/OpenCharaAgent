@@ -275,8 +275,11 @@ def save_card(data: dict[str, Any], path: str = "") -> dict[str, Any]:
         raise RpcError(-32602, "the card needs a name")
     target: Path
     if path:
-        target = Path(path)
-        if user_cards_dir() not in target.parents:
+        # Confine on the RESOLVED path (the _writable_card_path pattern): the
+        # unresolved check let a `..` segment or symlink pass — its literal
+        # parents contain the deck dir while the real write lands outside it.
+        target = Path(path).resolve()
+        if user_cards_dir().resolve() not in target.parents:
             raise RpcError(-32031, "only cards in the user deck can be written")
     else:
         base = user_cards_dir()
@@ -679,10 +682,15 @@ def delete_card(path: str) -> dict[str, Any]:
     """SOFT delete: move the card file into ~/.lunamoth/.trash/cards/<id>/ (with an
     origin manifest) instead of unlinking, so it's recoverable via card.restore.
     Returns the trash_id the UI uses for an Undo affordance."""
-    p = Path(path)
-    if user_cards_dir() not in p.parents:
+    # Confine on the RESOLVED path (the _writable_card_path pattern) so a
+    # symlink / `..` shape can't walk the delete outside the user deck.
+    p = Path(path).resolve()
+    if user_cards_dir().resolve() not in p.parents:
         raise RpcError(-32031, "built-in cards cannot be deleted")
-    if _card_sources().get(str(p)):
+    sources = _card_sources()
+    # Check the reference guard under BOTH spellings: sessions store the path as
+    # given at wake time, which may be the unresolved form.
+    if sources.get(str(p)) or sources.get(str(path)):
         raise RpcError(-32032, "this card is referenced by a living chara")
     if not p.exists():
         return {"ok": True, "trash_id": None}

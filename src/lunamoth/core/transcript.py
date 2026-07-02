@@ -150,9 +150,16 @@ class TranscriptStore:
         """Start a new epoch. Old messages stay on disk but are no longer loaded."""
         if not self.available:
             return 0
-        new = self.epoch() + 1
         try:
             with self._connect() as conn:
+                # Derive the new epoch from the SAME connection that writes it.
+                # Deriving from a separate epoch() call meant a transient read
+                # failure there (which returns 0) computed 0+1 and REWOUND a
+                # long-lived chara to epoch 1 — resurrecting every old message.
+                # Here a failed read raises into the except below and nothing
+                # is written: the epoch can only ever move forward.
+                row = conn.execute("SELECT value FROM meta WHERE key='epoch'").fetchone()
+                new = (int(row[0]) if row else 0) + 1
                 conn.execute(
                     "INSERT INTO meta(key, value) VALUES('epoch', ?) "
                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -160,12 +167,12 @@ class TranscriptStore:
                 )
             self._epoch_cache = new  # the one epoch-mutation point keeps the cache live
             return new
-        except (sqlite3.Error, OSError):
-            # Write failed → the on-disk epoch is unchanged. Invalidate the cache
-            # so the next epoch() re-reads the true value rather than trusting a
-            # value we never managed to persist.
+        except (sqlite3.Error, OSError, ValueError):
+            # Read or write failed → the on-disk epoch is unchanged. Invalidate
+            # the cache so the next epoch() re-reads the true value, and report
+            # the CURRENT epoch — never a bump we didn't persist.
             self._epoch_cache = None
-            return new
+            return self.epoch()
 
     # ---- messages -------------------------------------------------------------------
     # Row kinds:
@@ -174,6 +181,11 @@ class TranscriptStore:
     #   struct  full message dict serialized as JSON in content (assistant
     #           tool_calls, tool results, reasoning_content — hermes-style)
     #   tool    legacy forensic rows from older builds; never reloaded
+    #   replay  compaction's re-append of the protected tail (JSON dict, like
+    #           struct). load() rebuilds the live window from it (it sits after
+    #           the summary checkpoint); display/export SKIP it — the same rows
+    #           already sit earlier in the epoch, so carrying it would show the
+    #           tail twice after every compaction
 
     def append(self, role: str, content: str, kind: str = "chat") -> None:
         if not self.available or not content:
@@ -198,6 +210,15 @@ class TranscriptStore:
         )
         if msg.get("kind") == "summary":
             self.append(role, str(msg.get("content") or ""), kind="summary")
+            return
+        if msg.get("kind") == "replay":
+            # Compaction tail re-append: stored whole as JSON (any shape — plain
+            # chat or structured) under the one 'replay' row kind.
+            body = {k: v for k, v in msg.items() if k != "kind"}
+            try:
+                self.append(role, json.dumps(_strip_inline_images(body), ensure_ascii=False), kind="replay")
+            except (TypeError, ValueError):
+                self.append(role, str(body.get("content") or ""), kind="replay")
             return
         if structured:
             try:
@@ -226,7 +247,7 @@ class TranscriptStore:
                 summary_id = int(row[0]) if row and row[0] else None
                 sql = (
                     "SELECT role, content, kind FROM messages "
-                    "WHERE epoch=? AND kind IN ('chat','think','struct','summary')"
+                    "WHERE epoch=? AND kind IN ('chat','think','struct','summary','replay')"
                 )
                 params: tuple[int, ...] | tuple[int, int] = (epoch,)
                 if summary_id is not None:
@@ -243,7 +264,7 @@ class TranscriptStore:
                 rows = rows[-max_messages:]
         out: list[dict] = []
         for role, content, kind in rows:
-            if kind == "struct":
+            if kind in ("struct", "replay"):
                 try:
                     msg = json.loads(content)
                     if isinstance(msg, dict) and msg.get("role"):
@@ -331,7 +352,9 @@ class TranscriptStore:
             except (sqlite3.Error, ValueError):
                 epoch = 0
             rows = conn.execute(
-                "SELECT id, ts, role, content, kind FROM messages WHERE epoch=? ORDER BY id",
+                # kind='replay' is compaction's tail re-append — the same rows sit
+                # earlier in the epoch, so exporting them would duplicate the tail.
+                "SELECT id, ts, role, content, kind FROM messages WHERE epoch=? AND kind != 'replay' ORDER BY id",
                 (epoch,),
             ).fetchall()
         finally:

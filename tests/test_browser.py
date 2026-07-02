@@ -66,8 +66,14 @@ class DriverStub:
 
 
 @pytest.fixture
-def ctx():
-    return FakeCtx()
+def ctx(tmp_path):
+    c = FakeCtx()
+    # browser_vision saves screenshots under the workspace (jail-writable +
+    # MEDIA-deliverable), so the ctx carries a real Sandbox like ToolContext does.
+    from lunamoth.tools.sandbox import Sandbox
+
+    c.sandbox = Sandbox(tmp_path / "sb")
+    return c
 
 
 @pytest.fixture(autouse=True)
@@ -595,3 +601,54 @@ def test_session_name_reused_across_calls(ctx):
 def test_socket_safe_tmpdir_darwin(monkeypatch):
     monkeypatch.setattr(drv.sys, "platform", "darwin")
     assert drv._socket_safe_tmpdir() == "/tmp"
+
+
+# ---------------------------------------------------------------------------
+# browser_vision screenshot location (2026-07-02 audit P2)
+# ---------------------------------------------------------------------------
+# Screenshots must land INSIDE the workspace: every browser jail denies
+# ~/.lunamoth/cache writes (the old target errored for sandboxed charas), and
+# the advertised MEDIA:<path> resolves workspace-relative only — an absolute
+# path silently dropped the attachment at every delivery edge.
+
+
+def _vision_ctx(ctx, tmp_path):
+    from lunamoth.tools.sandbox import Sandbox
+
+    ctx.sandbox = Sandbox(tmp_path)
+    return ctx
+
+
+def _screenshot_stub():
+    from pathlib import Path
+
+    def shot(args):
+        p = args[args.index("--full") + 1]
+        Path(p).write_bytes(b"\x89PNG-fake")
+        return {"success": True, "data": {"path": p}}
+
+    return DriverStub({"screenshot": shot})
+
+
+def test_vision_screenshot_saved_under_workspace(ctx, monkeypatch, tmp_path):
+    ctx = _vision_ctx(ctx, tmp_path)
+    monkeypatch.setattr(drv, "run_browser_command", _screenshot_stub())
+    monkeypatch.setattr(browser, "_model_has_native_vision", lambda c: True)
+    out = json.loads(browser.browser_vision({"question": "what is shown?"}, ctx))
+    assert out["success"] is True
+    sp = out["screenshot_path"]
+    assert not sp.startswith("/"), "must be workspace-relative for MEDIA delivery"
+    assert sp.startswith("screenshots/")
+    assert (ctx.sandbox.workspace_dir / sp).is_file()
+    assert ("MEDIA:" + sp) in out["note"]
+
+
+def test_vision_aux_fallback_reports_relative_path(ctx, monkeypatch, tmp_path):
+    ctx = _vision_ctx(ctx, tmp_path)
+    monkeypatch.setattr(drv, "run_browser_command", _screenshot_stub())
+    monkeypatch.setattr(browser, "_model_has_native_vision", lambda c: False)
+    monkeypatch.setattr(browser, "_vision_analyze", lambda c, p, q: None)
+    out = json.loads(browser.browser_vision({"question": "describe"}, ctx))
+    assert out["success"] is True
+    assert out["screenshot_path"].startswith("screenshots/")
+    assert ("MEDIA:" + out["screenshot_path"]) in out["note"]

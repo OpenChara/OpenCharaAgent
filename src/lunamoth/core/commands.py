@@ -362,6 +362,33 @@ def infos() -> "tuple[CommandInfo, ...]":
     return tuple(c.info for c in _REGISTRY.values())
 
 
+# Commands that rewrite state a streaming turn is using: /compact rewrites
+# ctx.messages; /model //provider//reasoning (with an argument) swap agent.llm
+# and resize the window. The server refuses to run these concurrently with an
+# in-flight turn (transport thread vs worker thread on the ONE ContextBuffer).
+_EXCLUSIVE = {"compact", "model", "provider", "reasoning"}
+
+
+def is_exclusive(line: str) -> bool:
+    """True when `line` is a command that must not interleave with a turn.
+
+    The bare "show current" forms of /model //provider//reasoning are reads and
+    stay allowed; /compact always mutates."""
+    spelled = line.strip().lstrip("/").lower()
+    spelled = _LINE_ALIASES.get(spelled, spelled)
+    parts = spelled.split(maxsplit=1)
+    if not parts or not parts[0]:
+        return False
+    name = _ALIASES.get(parts[0], parts[0])
+    if name not in _EXCLUSIVE:
+        return False
+    arg = parts[1].strip() if len(parts) > 1 else ""
+    if name == "reasoning":
+        # An invalid level is a no-op read (shows current) — only a real level swaps.
+        return arg.lower() in {"off", "low", "medium", "high"}
+    return name == "compact" or bool(arg)
+
+
 def execute(agent, session, line: str) -> Reply:
     spelled = line.strip().lstrip("/").lower()
     if spelled in _LINE_ALIASES:

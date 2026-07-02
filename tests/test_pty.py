@@ -140,13 +140,22 @@ def test_jail_unavailable_raises_no_degrade(tmp_path, monkeypatch):
 def test_runtime_permissions_reads_env_status(tmp_path):
     sandbox = tmp_path / "sandbox"
     sandbox.mkdir()
-    assert I.runtime_permissions(sandbox) == (False, [])  # missing file = defaults
+    # Missing file = the DEFAULT_STATUS defaults: network ON (owner 2026-06-15).
+    assert I.runtime_permissions(sandbox) == (True, [])
     (sandbox / "env_status.json").write_text(
-        json.dumps({"network_access": True, "writable_paths": ["/tmp/extra"]}), encoding="utf-8"
+        json.dumps({"network_access": False, "writable_paths": ["/tmp/extra"]}), encoding="utf-8"
     )
-    assert I.runtime_permissions(sandbox) == (True, ["/tmp/extra"])
+    # An explicit /net off is respected.
+    assert I.runtime_permissions(sandbox) == (False, ["/tmp/extra"])
+    # An old file MISSING the key (pre network-on-by-default) must default ON —
+    # the False default here silently flipped the PTY offline while the chara's
+    # own tools ran with the network up (core/state.py drift).
+    (sandbox / "env_status.json").write_text(
+        json.dumps({"writable_paths": []}), encoding="utf-8"
+    )
+    assert I.runtime_permissions(sandbox) == (True, [])
     (sandbox / "env_status.json").write_text("not json", encoding="utf-8")
-    assert I.runtime_permissions(sandbox) == (False, [])
+    assert I.runtime_permissions(sandbox) == (True, [])
 
 
 @pytest.mark.skipif(sys.platform != "darwin" or not I.os_sandbox_available(), reason="needs macOS sandbox-exec")

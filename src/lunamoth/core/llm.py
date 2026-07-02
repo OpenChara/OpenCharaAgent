@@ -4,6 +4,7 @@ import base64
 import json
 import mimetypes
 import random
+import sys
 import time
 from typing import Any, Iterator
 
@@ -678,6 +679,9 @@ class LLMClient:
         "break the work into several smaller tool calls (e.g. write the file in pieces).]"
     )
     INTERRUPT_MARK = "\n[cut off mid-reply by the operator's next message]"
+    # A stream/HTTP failure mid-turn is NOT an operator interrupt; the partial
+    # gets an honest error mark instead of a fabricated "the operator cut me off".
+    ERROR_CUT_MARK = "\n[reply cut short by a connection/stream error]"
     # Step-budget exhaustion (audit #9, hermes turn_finalizer._handle_max_iterations):
     # a turn the loop limit cuts mid-work must say so — to the UI AND in
     # context — or the next turn treats the stop as completion ("started
@@ -726,6 +730,11 @@ class LLMClient:
         acc: list[str] = []  # text of the in-flight turn, readable by `finally`
         finished = False
         empty_retries = 0
+        # tool_call ids committed to the durable context but not yet answered by
+        # a recorded tool result — `finally` answers any leftovers so an
+        # abandoned generator can never leave unanswered tool_calls behind
+        # (strict endpoints 400 on every later turn otherwise).
+        pending_tools: list[str] = []
         try:
             step = 0
             while step < max_steps:
@@ -807,6 +816,8 @@ class LLMClient:
                     # Opaque continuity blocks (signature / encrypted thinking);
                     # replayed unmodified on BOTH echo and non-echo paths.
                     a_msg["reasoning_details"] = reasoning_details
+                if tool_calls:
+                    pending_tools = [tc.get("id") or "" for tc in tool_calls]
                 record(a_msg)
                 if echo:
                     replay = dict(a_msg)
@@ -847,6 +858,8 @@ class LLMClient:
                         # in its reply, which the agent extracts (see agent._media_filter).
                         t_msg = {"role": "tool", "tool_call_id": tc.get("id") or "", "content": res.get("content", "")}
                         record(t_msg)
+                        if t_msg["tool_call_id"] in pending_tools:
+                            pending_tools.remove(t_msg["tool_call_id"])
                         messages.append(t_msg)
                         follow = res.get("follow_up")
                         if isinstance(follow, dict) and follow.get("content"):
@@ -890,12 +903,28 @@ class LLMClient:
             finished = True
         finally:
             if not finished:
+                if pending_tools:
+                    # The generator was abandoned (or died) inside the tool loop
+                    # AFTER the assistant tool_calls message was committed. Answer
+                    # every unanswered id with a synthetic result — otherwise the
+                    # durable context holds N tool_calls with <N results and
+                    # strict endpoints reject every later turn until /reset.
+                    _log.info("stream abandoned mid-tools; answering %d unfinished tool call(s)", len(pending_tools))
+                    for tc_id in pending_tools:
+                        record({"role": "tool", "tool_call_id": tc_id, "content": "[interrupted]"})
                 partial = "".join(acc).strip()
                 if partial:
-                    # Operator interrupt mid-stream: keep the partial turn so the
-                    # model remembers it was halfway through something.
+                    # Keep the partial turn so the model remembers it was halfway
+                    # through something — but mark it truthfully: a generator
+                    # CLOSED (GeneratorExit / clean abandon) was the operator's
+                    # interrupt; an EXCEPTION propagating through here is a
+                    # stream/HTTP failure, and stamping that "cut off by the
+                    # operator" fabricates a context fact.
+                    exc = sys.exc_info()[1]
+                    mark = (self.INTERRUPT_MARK if exc is None or isinstance(exc, GeneratorExit)
+                            else self.ERROR_CUT_MARK)
                     _log.info("stream abandoned mid-turn; committed %d partial chars", len(partial))
-                    record({"role": "assistant", "content": partial + self.INTERRUPT_MARK})
+                    record({"role": "assistant", "content": partial + mark})
 
     def _stream_turn(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None, text_out: list[str], reasoning: "str | None" = None, channel: str = "say"):
         """Stream one assistant turn. Yields protocol events; accumulates visible

@@ -42,6 +42,16 @@ def agent_factory(tmp_path, monkeypatch):
     monkeypatch.setattr(agent_mod, "SANDBOX_ROOT", sandbox)
     monkeypatch.setattr(skills_mod, "SANDBOX_ROOT", sandbox)
 
+    # The stable prefix probes the host for ffmpeg (agent._stable_prefix →
+    # shutil.which); pin it absent so prefix-sequence asserts don't depend on
+    # what happens to be installed on the machine running the tests.
+    _real_which = agent_mod.shutil.which
+    monkeypatch.setattr(
+        agent_mod.shutil,
+        "which",
+        lambda cmd, *a, **k: None if cmd == "ffmpeg" else _real_which(cmd, *a, **k),
+    )
+
     from lunamoth.core.agent import LunaMothAgent
 
     def make(*, card: Path | None = None, toolpack: str = "sandbox", **kw):

@@ -432,8 +432,11 @@ export class StreamModel {
           if (fn.name === "speak") continue;
           this.restoreToolCall(fn, tc.id, restoreChips);
         }
+        // Restored speak texts render as super DIRECTLY (isSuper arg) — do NOT set
+        // pendingSuper here: nothing in the restore path consumes it (only live
+        // pushText does), so it would leak past restore and mis-render the chara's
+        // FIRST live reply as a ⚡super-chat.
         for (const speak of speakTextsFromMessage(m)) {
-          this.pendingSuper = true;
           this.appendSay(speak, true, m.ts);
           this.closeCurrent();
         }

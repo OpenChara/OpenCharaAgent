@@ -38,6 +38,21 @@ def test_permissions_is_an_immutable_snapshot(tmp_path):
     assert raised
 
 
+def test_missing_network_key_defaults_on_not_off(tmp_path):
+    """REGRESSION: an env_status.json from a build predating network-on-by-default
+    (owner 2026-06-15) carries no network_access key; it must default to
+    DEFAULT_STATUS's True — the old False default silently flipped a chara offline."""
+    (tmp_path / "env.json").write_text(
+        '{"writable_paths": [], "rest_until": 0.0}', encoding="utf-8"
+    )
+    st = EnvState(tmp_path / "env.json")
+    assert st.load()["network_access"] is True   # backfilled from DEFAULT_STATUS
+    assert st.permissions().network_on is True
+    # An EXPLICIT off is still respected — the default never overrides a choice.
+    st.set_network(False)
+    assert st.permissions().network_on is False
+
+
 def test_isolation_follows_the_backend_authority_not_a_stored_copy(tmp_path, monkeypatch):
     """REGRESSION: isolation must come from the ONE authority (LUNAMOTH_PY_BACKEND),
     never a per-sandbox env_status.json copy. An `admin` chara whose env file was

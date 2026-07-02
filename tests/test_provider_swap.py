@@ -67,3 +67,49 @@ def test_swap_model_strips_reasoning_continuity(agent):
     _seed_continuity(session)
     agent.swap_model("another-model", session=session)
     _assert_stripped(session)
+
+
+# ---- window resync on swap (2026-07-02 audit P2) ---------------------------------
+# Swapping a wide-window model for a narrow one must resize the LIVE session:
+# max_tokens AND the trim buffer together. A stale 1M window overflows a 128K
+# endpoint with 400s; a stale 100k trim buffer against a 64k window yields a
+# trim target of max(0, 64000-100000)=0 — the next add_message pops the ENTIRE
+# live context, silently.
+
+
+def _pin_windows(monkeypatch, windows: dict[str, int]) -> None:
+    from lunamoth.core import providers
+
+    def fake_resolved(provider, base_url, model, api_key, override=0):
+        return windows.get(model, 200_000), True
+
+    monkeypatch.setattr(providers, "context_window_resolved", fake_resolved)
+
+
+def test_swap_model_resyncs_context_window(agent, monkeypatch):
+    _pin_windows(monkeypatch, {"big-model": 1_000_000, "small-model": 64_000})
+    agent.settings.model = "big-model"
+    session = agent.make_session()
+    assert session.context.max_tokens == 1_000_000
+    assert session.context.trim_buffer_tokens == 100_000
+    agent.swap_model("small-model", session=session)
+    assert session.context.max_tokens == 64_000
+    assert session.context.trim_buffer_tokens == 8_000
+    assert session.context.max_tokens - session.context.trim_buffer_tokens > 0
+
+
+def test_swap_provider_resyncs_context_window(agent, monkeypatch):
+    _pin_windows(monkeypatch, {"big-model": 1_000_000, "small-model": 64_000})
+    agent.settings.model = "big-model"
+    session = agent.make_session()
+    assert session.context.max_tokens == 1_000_000
+    agent.swap_provider(provider="openai_compatible",
+                        base_url="https://api.example/v1", api_key="sk-x",
+                        model="small-model", session=session)
+    assert session.context.max_tokens == 64_000
+    assert session.context.trim_buffer_tokens == 8_000
+
+
+def test_swap_with_no_session_is_a_noop(agent, monkeypatch):
+    _pin_windows(monkeypatch, {"small-model": 64_000})
+    agent.swap_model("small-model", session=None)  # must not raise

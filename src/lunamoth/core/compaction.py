@@ -716,9 +716,12 @@ def compact(ctx: ContextBuffer, llm, *, force: bool = False) -> bool:
             # The transcript is append-only. Re-append the protected tail after
             # the summary checkpoint so restore can load "latest summary + rows
             # after it" without losing recent verbatim context; the older raw
-            # rows remain on disk for the full historical record.
+            # rows remain on disk for the full historical record. Marked
+            # kind="replay" so display/export skip them — the SAME rows already
+            # sit earlier in the epoch, and re-appending them as plain rows
+            # duplicated the whole tail in every chat reopen and export.
             for msg in tail:
-                ctx.persist(msg)
+                ctx.persist({**msg, "kind": "replay"})
         except Exception:
             pass
     return True

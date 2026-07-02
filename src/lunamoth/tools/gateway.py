@@ -99,6 +99,10 @@ class ToolGateway:
         self._ctx_obj = None  # rebuild ctx with the new refs
 
     def _ctx(self) -> ToolContext:
+        with self._dispatch_lock:
+            return self._ctx_locked()
+
+    def _ctx_locked(self) -> ToolContext:
         if self._ctx_obj is None:
             self._ctx_obj = ToolContext(
                 sandbox=self.sandbox, state=self.state, audit=self.audit,
@@ -204,10 +208,12 @@ class ToolGateway:
         """Run one tool: loop-guard refusal → dispatch → audit → guard record.
         Returns {"ok": bool, "data": <json str>} or {"ok": False, "error": str}.
 
-        The whole sequence holds ``_dispatch_lock`` so that, when delegate_task
-        workers dispatch concurrently, the parent's guardrail counters and the
-        audit trail are never interleaved. The lock is re-entrant: a tool whose
-        handler calls back into the gateway on the same thread won't deadlock."""
+        ``_dispatch_lock`` guards only the shared MUTABLE state (guardrail
+        counters + the audit trail), never the tool body: an execute_code child
+        script's tool RPC arrives on a DIFFERENT thread and dispatches back
+        through this gateway, so holding the lock across the whole run would
+        deadlock it against its own turn (RLock re-entrancy is same-thread
+        only) — and would serialize delegate_task's "parallel" workers."""
         with self._dispatch_lock:
             signature = self._guard_signature(name, kwargs)
             refusal = self._guard_refusal(name, signature)
@@ -215,10 +221,11 @@ class ToolGateway:
                 self.audit.write("tool_loop_refused", tool=name, args=self._safe_args(kwargs), result=refusal)
                 _log.warning("%s refused by loop guard: %s", name, refusal["error"])
                 return refusal
-            if name.startswith("mcp__"):
-                result = self._call_mcp(name, kwargs)
-            else:
-                result = self._dispatch(name, kwargs)
+        if name.startswith("mcp__"):
+            result = self._call_mcp(name, kwargs)
+        else:
+            result = self._dispatch(name, kwargs)
+        with self._dispatch_lock:
             return self._guard_record(name, signature, result)
 
     # ---- delegate_task worker isolation ----------------------------------------------
@@ -234,8 +241,9 @@ class ToolGateway:
         turn. Why still go through this gateway: the worker shares the chara's
         ONE sandbox/state/registry, so the gate (registered ∩ pack), the audit
         trail, and tool bodies must be the chara's. Concurrent workers each get
-        a fresh scope; the shared registry.dispatch + audit are serialized by
-        ``_dispatch_lock`` inside ``_dispatch``/``_call_mcp``."""
+        a fresh scope; guard counters + audit writes are serialized by
+        ``_dispatch_lock``, while tool bodies run unlocked and genuinely in
+        parallel (the registry has its own lock for its tables)."""
         exact: dict[str, int] = {}
         streaks: dict[str, int] = {}
 
@@ -259,10 +267,13 @@ class ToolGateway:
                     self.audit.write("tool_loop_refused", tool=name,
                                      args=self._safe_args(kwargs), result=refusal)
                     return json.dumps({"error": refusal["error"]}, ensure_ascii=False)
-                if name.startswith("mcp__"):
-                    result = self._call_mcp(name, kwargs)
-                else:
-                    result = self._dispatch(name, kwargs)
+            # The tool body runs UNLOCKED (see call()): workers really do run in
+            # parallel, and a worker's own child-script RPC can dispatch back in.
+            if name.startswith("mcp__"):
+                result = self._call_mcp(name, kwargs)
+            else:
+                result = self._dispatch(name, kwargs)
+            with self._dispatch_lock:
                 # Record into the worker-local scope, not the parent's.
                 if result.get("ok"):
                     exact.pop(signature, None)
@@ -281,17 +292,20 @@ class ToolGateway:
         turn — this layer adds the audit + the ok/failed split for the guard."""
         if name not in self._effective():
             result = {"ok": False, "error": f"tool denied: {name}"}
-            self.audit.write("tool_denied", tool=name, args=self._safe_args(kwargs), result=result)
+            with self._dispatch_lock:
+                self.audit.write("tool_denied", tool=name, args=self._safe_args(kwargs), result=result)
             return result
         if registry.get_entry(name) is None:
             result = {"ok": False, "error": f"unknown tool: {name}"}
-            self.audit.write("tool_unknown", tool=name, args=self._safe_args(kwargs), result=result)
+            with self._dispatch_lock:
+                self.audit.write("tool_unknown", tool=name, args=self._safe_args(kwargs), result=result)
             return result
         t0 = time.monotonic()
         payload = registry.dispatch(name, dict(kwargs), self._ctx())
         ok = not _is_error_json(payload)
         result = {"ok": ok, "data": payload} if ok else {"ok": False, "error": _error_text(payload)}
-        self.audit.write("tool_call", tool=name, args=self._safe_args(kwargs), result={"ok": ok})
+        with self._dispatch_lock:
+            self.audit.write("tool_call", tool=name, args=self._safe_args(kwargs), result={"ok": ok})
         if ok:
             _log.debug("%s ok in %.2fs", name, time.monotonic() - t0)
         else:
@@ -311,9 +325,11 @@ class ToolGateway:
             _log.warning("%s failed: %s", name, e)
         except Exception as e:  # noqa: BLE001 - a dead server's pipe must not kill the turn
             result = {"ok": False, "error": f"{type(e).__name__}: {e}"}
-            self.audit.write("tool_crash", tool=name, args=self._safe_args(kwargs), result=result)
+            with self._dispatch_lock:
+                self.audit.write("tool_crash", tool=name, args=self._safe_args(kwargs), result=result)
             _log.exception("tool %s crashed", name)
-        self.audit.write("tool_call", tool=name, args=self._safe_args(kwargs), result={"ok": result["ok"]})
+        with self._dispatch_lock:
+            self.audit.write("tool_call", tool=name, args=self._safe_args(kwargs), result={"ok": result["ok"]})
         return result
 
     def _safe_args(self, kwargs: dict[str, Any]) -> dict[str, Any]:

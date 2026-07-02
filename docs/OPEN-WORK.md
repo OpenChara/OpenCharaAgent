@@ -1,9 +1,10 @@
 # LunaMoth — open work
 
-This is the ONE doc under `docs/` (owner rule, re-affirmed 2026-06-17: everything
-condenses here; settled plans/specs/build-logs get deleted once their conclusions
-live in `CLAUDE.md`, the code, and git history). What's kept is only what's still
-*open* or worth remembering:
+This is the open-work doc under `docs/` (owner rule, re-affirmed 2026-06-17:
+everything condenses here; settled plans/specs/build-logs get deleted once their
+conclusions live in `CLAUDE.md`, the code, and git history; the one sibling file
+is `AGENT-FIELD-NOTES.md`, the owner-sanctioned agent-methodology playbook).
+What's kept is only what's still *open* or worth remembering:
 
 - **Part 1** — engineering hardening (hermes-parity): the 33-item backlog has
   LANDED; only the genuine remainder is kept.
@@ -64,7 +65,8 @@ remainder — **`patience` precedence** — collapsed 2026-06-22: `agent.patienc
 is the ONE precedence owner (commands delegates to it; the TUI consumes the already
 resolved `StateSnapshot.patience = effective_patience()`), and the default value + the
 explicit-source rule are single-sourced in `knobs.{DEFAULT_PATIENCE,patience_is_explicit}`
-(read by both `agent` and `settings.load` — no more duplicated `abs(x-600)` literal).
+(read by both `agent` and `settings.load` — no more duplicated default literal;
+DEFAULT_PATIENCE is 3600 today).
 
 ---
 
@@ -96,14 +98,18 @@ product backlog behind it.
 - **Remote VPS residence** — over the existing `serve` WS+token: the desktop
   connects to a backend on an always-on server; the chara lives there, the
   desktop is just a window. (Same as the roadmap's remote-TUI-client item.)
-- **Card / pack marketplace** — one-click package (card + embedded world book) +
-  a shareable index. (Same as the roadmap's card-market item.)
+- **Card / pack marketplace** — SHIPPED as the Market view (character-tavern.com
+  catalog proxy: browse/sort/filter/preview + faithful import, 2026-06-27..07-01).
+  Remaining: our OWN pack format + shareable index (`lunamoth-pack.json`, git-repo
+  index) so creators can publish card+asset packs.
 - **Multi-chara visiting** — charas on one machine visiting each other; the
   `say|muse` protocol already supports multiple audiences. Far-future.
 - **Voice (STT/TTS)** — hermes has the full chain to port; a big "aliveness"
   boost, but only after the core stabilizes.
-- **Multimodal output** — image UNDERSTANDING (read_file → vision route) shipped;
-  richer multimodal output is still deferred (skeleton left in place).
+- **Multimodal output** — image UNDERSTANDING (read_file → vision route) AND image
+  GENERATION (`generate_image`, non-blocking background job → MEDIA: delivery on
+  every surface) shipped; richer output (audio/video beyond ffmpeg-in-terminal)
+  is still deferred.
 - **Panel polish leftovers** — memory entry-level editing in the chat drawer is
   still read-only; a board-level context ring + ⚡ high-load chip needs `serve` to
   expose a lightweight last-activity / resource sample.
@@ -136,10 +142,12 @@ product backlog behind it.
   3. **Sign + notarize** (Apple Developer ID) — otherwise Gatekeeper blocks the
      .app on any other Mac. Linux: AppImage has the same bundling shape, no
      signing.
-  - **Bug to fix regardless** (independent of the DMG work): `main.cjs`
-    `installedLauncher()` looks for `~/.lunamoth/bin/lunamoth`, but `install.sh`
-    puts the shim at `~/.local/bin/lunamoth`. Fix the path (check
-    `~/.local/bin/lunamoth` too).
+  - **Bug to fix regardless** (independent of the DMG work; still open 2026-07-02):
+    `apps/desktop/electron/main.cjs` `installedLauncher()` looks for
+    `~/.lunamoth/bin/lunamoth`, but `install.sh` links the shim at
+    `~/.local/bin/lunamoth` (and the default `user` channel is now a uv tool
+    install, whose bin dir is uv's). Fix the discovery to check
+    `~/.local/bin/lunamoth` + `uv tool` bin.
   - Icon assets already exist (`apps/desktop/assets/icon.png` + the menu-bar
     `trayTemplate*`). The menu-bar-resident idea (above) composes with this.
 
@@ -220,6 +228,121 @@ parity with `reference/hermes-agent` for commodity surfaces), confirms
 delete), then **removes the item from this list**. Anyone (incl. subagents) may
 add a diagnosed problem here with a priority. Independent items run in parallel.
 
+## 2026-07-02 audit sweep — RESOLVED 2026-07-03 (P1+P2+P3 all fixed)
+
+Every finding from the six-agent audit was fixed, tested, and adversarially
+re-audited (a read-only review agent tried to refute each core fix; no
+high/critical issues survived). Full original findings live in git history.
+Concise resolved record:
+
+### P1 — correctness/security (all 5 fixed)
+1. FIXED — `core/llm.py` tracks unanswered `tool_call` ids (`pending_tools`);
+   the `finally` synthesizes `[interrupted]` tool results for leftovers, so an
+   abandoned generator can't leave N tool_calls with <N results. Also: a
+   stream/HTTP EXCEPTION now gets an honest `ERROR_CUT_MARK` instead of the
+   fabricated "cut off by the operator" mark. Test: `test_llm_hardening.py`.
+2. FIXED — per-turn interrupt Event in `server/dispatch.py` (+ messaging host);
+   a join-timeout zombie can't un-interrupt or swallow the new turn's flag.
+   Tests: `test_server.py`, `test_messaging_host.py`.
+3. FIXED — gateway `_dispatch_lock` narrowed to guard-record + audit; execute_code
+   child RPCs no longer deadlock; delegate workers truly parallel.
+   Test: `test_gateway_boundary.py`.
+4. FIXED — durable proactive-speak destination (`remember_peer`) moves only
+   AFTER the allow-list passes (host + standalone gateway + all adapters).
+   Tests: `test_messaging.py`, `test_discord_slack.py`, `test_messaging_host.py`.
+5. FIXED — `browser_console`/`browser_cdp` (eval + navigate-shaped CDP methods)
+   screen through the same scheme+SSRF+secret guard as `browser_navigate`.
+   Test: `test_browser_url_guard.py`.
+
+### P2 — wrong behavior (all 13 fixed)
+1. FIXED — `/model`//`provider`/reconfigure resync the live window via the ONE
+   `agent.sync_context_window()` (max_tokens + trim buffer together; the zero
+   trim-target wipe is impossible). Test: `test_provider_swap.py`.
+2. FIXED — mutating commands (`/compact`, `/model <id>`, `/provider <label>`,
+   `/reasoning <level>`) refuse while a turn is in flight and hold the stream
+   slot while running (`commands.is_exclusive` + dispatch claim). Read-only
+   forms stay concurrent; `interrupt` during a command honestly reports
+   `interrupted:false`. Test: `test_server.py`.
+3. FIXED — compaction's tail re-append persists as `kind='replay'`: `load()`
+   restores from it, display/export skip it — no more duplicated history on
+   every reopen/export. Tests: `test_compaction.py`, `test_transcript.py`.
+4. FIXED — delegate fan-out rewritten: per-child timeout from each child's OWN
+   start (daemon threads + semaphore), late results discarded, never-started
+   tasks reported honestly, no executor shutdown wedge.
+   Test: `test_execute_delegate.py`.
+5. FIXED — `browser_vision` screenshots land under `workspace/screenshots/`
+   (jail-writable) and the response advertises the workspace-RELATIVE path so
+   MEDIA delivery works; agent resolves it for the vision follow-up.
+   Test: `test_browser.py`.
+6. FIXED — `search_files` surfaces "Search did not complete: <runner note>"
+   when the RC sentinel is missing (timeout/jail refusal/runner error) instead
+   of a clean false "0 matches"; incomplete probes aren't cached.
+   Test: `test_search.py`.
+7. FIXED — QQ send correlates OneBot action responses by `echo`; non-zero
+   retcode → DeliveryDeferred; ack timeout → visible warning.
+   Test: `test_messaging.py`.
+8. FIXED — adapter crash flips the host status to per-platform `error` (no more
+   stale "running"); weixin/telegram/slack one-shot startup checks moved into
+   retry loops (auth-shaped failures stay fatal). Tests: `test_messaging_host.py`,
+   `test_messaging.py`.
+9. FIXED — Discord/Slack outbound: bounded retries honoring Retry-After on 429
+   and backoff on 5xx/network; permanent errors defer immediately; a failed
+   middle part stops the message with a "parts dropped" log, never a silent
+   hole. Test: `test_discord_slack.py`.
+10. FIXED — `gateway.stop` materializes `enabled:false` into every adapter
+    block, so `session_messaging`'s recompute can't flip the kill-switch back.
+    Test: `test_supervisor.py`.
+11. FIXED — `set_autonomy(off)` treats an active messaging turn as a
+    conversation (host `_turn_active` → supervisor guard); it still halts
+    idle/self-work. Tests: `test_supervisor.py`, `test_messaging_host.py`.
+12. FIXED — web: fresh attach syncs `lastSeq` and never replays (no duplicated
+    turns on re-enter); `lastSeq` no longer persisted across visits.
+    Tests: `apps/web/src/rpc.test.ts`.
+13. FIXED — web: chara WS auto-reconnects forever with backoff; in-place rejoin
+    resumes the stream, a declared gap or missing anchor triggers a clean
+    re-attach epoch instead of a silent hole.
+    Tests: `apps/web/src/hooks/chatSession.test.ts`.
+
+### P3 — polish / defense-in-depth (all fixed)
+- `core/llm.py` honest cut marks (see P1.1). `core/agent.py`
+  `stream_react`/`stream_event` refresh `_last_turn_wall` — no spurious
+  time-gap note after a react turn.
+- `core/request_log.py` elides inline base64 image bytes (placeholder keeps the
+  shape) and trims byte-aware (4 MiB cap, seek-based tail, no whole-file
+  readlines). Test: `test_request_log.py`.
+- `core/providers.py`: a failed OpenRouter catalogue fetch is never memoized —
+  120 s cooldown then retry. Test: `test_max_output.py`.
+- `core/transcript.py` `reset()` derives the new epoch inside the write
+  connection — a transient read failure can no longer rewind the epoch.
+  Test: `test_transcript.py`.
+- `server/hub/cards.py` `card.save`/`card.delete` confine on the RESOLVED path.
+  Test: `test_desktop_hub.py`.
+- Network default drift fixed: a missing `network_access` key defaults ON in
+  both `core/state.py` (backfilled via the migration path) and
+  `session/isolation.py`. Tests: `test_state.py`, `test_pty.py`.
+- `tools/mcp.py` `_save_media` sanitizes name/mime components and confines the
+  resolved path under the media dir. Test: `test_mcp.py`.
+- Web: stale `pendingSuper` after restore; force-stop orphan `finally`
+  clobbering a newer turn; time separators/autoscroll on a mutated array;
+  gateway clear-a-field not persisting; matte-install poll freeze; slack
+  `allow_bot` wired; `split_text` counts UTF-16 units + avoids cutting inside
+  code fences. Tests: `apps/web` vitest suite + `test_messaging.py`.
+
+### Remaining OPEN residue (small, non-blocking)
+- Web UX (from the audit's last sweep, still open): chat backdrop/sprite prefs
+  have NO UI (nothing writes the localStorage keys); can't stop a turn with a
+  draft typed; Market has zero mobile CSS; keyboard/AT access missing on
+  board/deck/tabs/rows + DeckModal has no dialog role/focus trap; superchat
+  read-state fails closed to "all unread forever" on a failed `superchat.read`.
+- `sandbox.resolve_readable` compares the resolved target against the
+  UNRESOLVED workspace/assets bases — under a symlinked prefix (macOS
+  /tmp→/private/tmp) a legitimate workspace file can be refused (degrades to
+  the honest note; pre-existing pattern shared with resolve_inside).
+- Latent (inherent to the join-timeout takeover model): a superseded zombie
+  past the 10 s join can still overlap a freshly-claimed slot for its last
+  in-flight tool; its interrupt flag is set so the window is minimal.
+
+
 ## Landlock ergonomics (LOW — clarity/ergonomics, NOT jail escape)
 From the 2026-06-17 security review (generate_image is now non-blocking — runs in a
 background thread, so a flapping endpoint can't freeze a turn). Remaining LOW:
@@ -237,10 +360,11 @@ background thread, so a flapping endpoint can't freeze a turn). Remaining LOW:
 R5 shipped the multi-page card view (display + 设定/世界 editing). DONE (2026-06-22 visuals
 pass): per-asset generate + save for 立绘/主视觉/头像/表情/背景 — the 视觉 tab now generates
 all five kinds (async), `card.asset_save` + the new `card.stickers_save`, so 表情 is a
-generatable + saveable set. STILL DEFERRED: the labeled-expression data model
-(`assets.stickers` → `[{label,file}]`, back-compat with the current bare-string list) so
-表情 becomes a NAMED set; and the per-entry world editor for EDITABLE cards (read-only
-cards already show per-entry cards; editable still uses the text editor).
+generatable + saveable set. NAMED stickers effectively shipped since (filename slugs via
+`stickers_save(names=…)` + `card.sticker_rename`/`sticker_reslice` — the `[{label,file}]`
+data model was not adopted and isn't needed). Also since: 参考图 reference images persist
+in the asset library (a82ad67). STILL DEFERRED: the per-entry world editor for EDITABLE
+cards (read-only cards already show per-entry cards; editable still uses the text editor).
 
 ## R6 (P3) — Blank card → auto-generate a visual set via the image key (opt-in)
 Largely BUILT (2026-06-22): the 视觉 tab generates the full set — keyvisual ANCHOR first,
@@ -266,11 +390,12 @@ the keyless `cut_white_bg` fallback runs). Same shape as the WeChat/QQ messaging
 live-test (roadmap C.1). Budget one verification round with real keys.
 
 ## (2)(5)(6)(7) — deferred to the UI/feel refactor
-- **(2) send_file UX**: file cards don't re-render on chat reopen; unclear where a
-  download lands; html should open in the browser; other files should open in the
-  sandbox Finder. (React file-card render + open-with.)
-- **(5) interrupt / insert-message feel**: jank when interrupting or injecting a
-  message mid-stream. (Streaming preemption semantics.)
+- **(2) send_file UX**: LARGELY ADDRESSED since (6b718b6 files preview/download in
+  the browser; afecbdb full webui history → cards re-render on reopen). Re-test on
+  the current build; close if it holds.
+- **(5) interrupt / insert-message feel**: fffbee0 (double-stop force-reset) +
+  bf65487 (persisted send-queue + stream ordering) landed in this area; re-test the
+  feel, then close or narrow. (Streaming preemption semantics.)
 - **(6) tool-call compression**: fold consecutive tool calls with no assistant text
   into one group + one reasoning. NOTE: the React `streamModel.ts` already folds
   tool-groups — owner tested the OLD client; RE-TEST on the new SPA before doing work.

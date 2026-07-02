@@ -129,6 +129,62 @@ def test_request_log_stays_bounded_after_many_appends(agent):
     assert nums == sorted(nums)
 
 
+def test_request_log_elides_inline_image_bytes(agent):
+    """Inline base64 image data URIs must be replaced by a short placeholder —
+    the same image sits in context (and would be re-logged) EVERY turn, so the
+    pixels are pure disk churn. The record's shape stays faithful and the input
+    messages are never mutated."""
+    from lunamoth.core import request_log as agent_mod
+
+    path = _requests_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.unlink()
+    payload = "data:image/png;base64," + "A" * 100_000
+    messages = [{"role": "user", "content": [
+        {"type": "text", "text": "look at this"},
+        {"type": "image_url", "image_url": {"url": payload}},
+    ]}]
+    agent_mod._append_request_log("send", ["sys"], messages, [], "m")
+    raw = path.read_text(encoding="utf-8")
+    assert "A" * 1000 not in raw  # the pixels never land on disk
+    rec = json.loads(raw.splitlines()[-1])
+    parts = rec["messages"][0]["content"]
+    assert parts[0] == {"type": "text", "text": "look at this"}  # text intact
+    assert parts[1]["type"] == "image_url"                       # shape intact
+    assert parts[1]["image_url"]["url"].startswith("data:[inline image elided")
+    # The caller's message list was NOT mutated (the context still needs the pixels).
+    assert messages[0]["content"][1]["image_url"]["url"] == payload
+    # A remote http(s) image URL is tiny and kept verbatim.
+    agent_mod._append_request_log("send", ["sys"], [{"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": "https://example.test/x.png"}}]}], [], "m")
+    rec2 = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+    assert rec2["messages"][0]["content"][0]["image_url"]["url"] == "https://example.test/x.png"
+
+
+def test_request_log_trim_is_byte_bounded(agent, monkeypatch):
+    """Oversized records are capped by BYTES, not just lines: the trim keeps a
+    bounded tail (never reading the whole file), and every kept line is a
+    complete, parseable record with the newest one intact."""
+    from lunamoth.core import request_log as agent_mod
+
+    path = _requests_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.unlink()
+    monkeypatch.setattr(agent_mod, "_REQUEST_LOG_MAX_BYTES", 50_000)
+    agent_mod._request_log_appends = 0
+    big = "x" * 5_000  # ~5KB per record → one trim interval is well over the byte cap
+    for i in range(agent_mod._REQUEST_LOG_TRIM_EVERY):
+        agent_mod._append_request_log("send", [big], [{"role": "user", "content": str(i)}], [], "m")
+    assert path.stat().st_size <= 50_000  # byte cap enforced even under 200 lines
+    lines = path.read_text(encoding="utf-8").splitlines()
+    parsed = [json.loads(ln) for ln in lines]  # no half-line at the window edge
+    assert parsed[-1]["messages"][0]["content"] == str(agent_mod._REQUEST_LOG_TRIM_EVERY - 1)
+    nums = [int(p["messages"][0]["content"]) for p in parsed]
+    assert nums == sorted(nums)  # a contiguous newest tail, oldest dropped
+
+
 def test_request_log_no_temp_files_left_behind(agent):
     """The atomic trim must not leave .tmp scratch files in the logs dir."""
     from lunamoth.core import request_log as agent_mod

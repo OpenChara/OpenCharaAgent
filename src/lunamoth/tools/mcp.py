@@ -27,6 +27,7 @@ import base64
 import json
 import os
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -73,6 +74,18 @@ def _safe_env(declared: "dict[str, str] | None") -> dict[str, str]:
     for k, v in (declared or {}).items():
         env[str(k)] = str(v)
     return env
+
+
+_UNSAFE_COMPONENT_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _safe_component(value: str, fallback: str, cap: int = 64) -> str:
+    """One filename component from untrusted input (a model-supplied tool name,
+    a server-declared mime subtype): allowlist [A-Za-z0-9._-] (everything else —
+    path separators included — collapses to '_'), strip leading/trailing dots so
+    no '..'/hidden-file shape survives at the edges, and bound the length."""
+    cleaned = _UNSAFE_COMPONENT_CHARS.sub("_", str(value or ""))[:cap].strip(".")
+    return cleaned or fallback
 
 
 class McpError(RuntimeError):
@@ -278,16 +291,25 @@ class _Client:
 
     def _save_media(self, block: dict[str, Any], tool: str, idx: int) -> str | None:
         """Decode a base64 image/audio result block to the workspace; return a
-        MEDIA: note (workspace-relative) the chara can echo, or None on failure."""
+        MEDIA: note (workspace-relative) the chara can echo, or None on failure.
+
+        The tool name is MODEL-supplied and the mime type SERVER-supplied — both
+        untrusted, both interpolated into the write path, so each component is
+        sanitized (allowlist, no separators/'..', bounded) and the resolved path
+        is verified to stay under the media dir before a byte lands."""
         try:
             data = base64.b64decode(block.get("data", ""), validate=True)
         except (ValueError, TypeError):
             return None
         mime = str(block.get("mimeType") or "")
-        ext = mime.split("/")[-1].split(";")[0].strip() or ("png" if block.get("type") == "image" else "bin")
-        rel = f"mcp/{self.name}-{tool}-{idx}.{ext}"
+        ext = _safe_component(mime.split("/")[-1].split(";")[0].strip(),
+                              "png" if block.get("type") == "image" else "bin", cap=16)
+        rel = f"mcp/{_safe_component(self.name, 'server')}-{_safe_component(tool, 'tool')}-{int(idx)}.{ext}"
         try:
-            out = self.media_dir / rel
+            base = self.media_dir.resolve()
+            out = (self.media_dir / rel).resolve()
+            if base not in out.parents:  # belt-and-braces after sanitizing
+                return None
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_bytes(data)
         except OSError:

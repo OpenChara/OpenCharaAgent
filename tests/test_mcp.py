@@ -110,6 +110,46 @@ def test_mcp_image_result_saved_as_media_and_text_redacted(tmp_path):
     assert "sk-or-v1-abcdef0123456789abcdef" not in out
 
 
+def test_mcp_save_media_confines_hostile_names(tmp_path):
+    """The tool name is MODEL-supplied and the mime type SERVER-supplied — both
+    are interpolated into the write path, so a traversal shape in either must be
+    sanitized and the write confined to the media dir."""
+    import base64
+
+    from lunamoth.tools.mcp import _Client
+
+    c = _Client.__new__(_Client)  # no server spawn — exercise the write path only
+    c.name = "vis"
+    c.media_dir = tmp_path / "ws"
+    payload = base64.b64encode(b"\x89PNG\r\n\x1a\nFAKE").decode()
+
+    note = c._save_media({"type": "image", "data": payload, "mimeType": "image/png"},
+                         "../../../../etc/cron.d/evil", 0)
+    assert note is not None  # sanitized, not dropped — the content still surfaces
+    note2 = c._save_media({"type": "image", "data": payload, "mimeType": "image/../../png"},
+                          "shot", 1)
+    assert note2 is not None
+    files = [p for p in (tmp_path / "ws").rglob("*") if p.is_file()]
+    assert len(files) == 2
+    base = (tmp_path / "ws").resolve()
+    for p in files:
+        assert base in p.resolve().parents  # every write stayed under the media dir
+        assert "/" not in p.name and not p.name.startswith(".")
+    assert not (tmp_path / "etc").exists()  # nothing escaped alongside the workspace
+
+
+def test_mcp_safe_component():
+    from lunamoth.tools.mcp import _safe_component
+
+    assert _safe_component("shot", "t") == "shot"
+    assert _safe_component("a tool/name", "t") == "a_tool_name"
+    s = _safe_component("../../../etc/passwd", "t")
+    assert "/" not in s and not s.startswith(".")
+    assert _safe_component("", "fallback") == "fallback"
+    assert _safe_component("..", "fallback") == "fallback"  # nothing safe survives
+    assert len(_safe_component("x" * 500, "t")) <= 64
+
+
 # A server that answers the handshake but hangs forever on tools/call —
 # the audit-#19 wedge: without a real RPC timeout this blocked the turn forever.
 _HANGING_SERVER = textwrap.dedent("""

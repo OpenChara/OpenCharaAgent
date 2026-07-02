@@ -53,6 +53,11 @@ class DummyHandle:
     def command(self, line: str):
         return Reply(True, f"ran {line}", {"line": line}, verbose=False)
 
+    def command_is_exclusive(self, line: str) -> bool:
+        from lunamoth.core import commands
+
+        return commands.is_exclusive(line)
+
     def snapshot(self, fresh: bool = False):
         return StateSnapshot(
             char_name="test",
@@ -476,3 +481,151 @@ def test_wssink_stalled_client_does_not_block_writer_and_evicts():
             WS._SINK_BUFFER_MAX, WS._SINK_OVERFLOW_STRIKES = old_max, old_strikes
 
     asyncio.run(asyncio.wait_for(go(), timeout=10.0))
+
+
+# ---- 2026-07-02 P1: a timed-out takeover must not leave a live zombie turn -----
+
+
+def test_forced_takeover_zombie_stays_interrupted(monkeypatch):
+    """When the supersede join times out (>10 s tool), the new turn claims the
+    slot with a FRESH per-turn interrupt flag. The superseded idle worker's own
+    flag stays set, so it breaks at its next event boundary instead of streaming
+    into the shared context alongside the new turn (the old shared-Event
+    clear() un-interrupted the zombie)."""
+    dispatch, frames = make_dispatcher()
+
+    in_tool = threading.Event()   # the idle turn reached its long "tool"
+    gate = threading.Event()      # releases that tool
+    closed = threading.Event()    # the idle generator was wound down
+
+    def idle_events():
+        try:
+            yield TextDelta("idle-1", "muse")
+            in_tool.set()
+            gate.wait(5.0)
+            yield TextDelta("idle-2", "muse")  # the zombie boundary: must never emit
+        finally:
+            closed.set()
+
+    dispatch._start_stream("idle", rid=None, wants_response=False, make_events=lambda: idle_events())
+    assert in_tool.wait(2.0)
+    zombie = dispatch._stream_thread
+
+    # Simulate the 10 s supersede join expiring while the tool still runs.
+    real_join = threading.Thread.join
+
+    def fake_join(self, timeout=None):
+        if timeout == 10.0:
+            return None
+        return real_join(self, timeout)
+
+    monkeypatch.setattr(threading.Thread, "join", fake_join)
+
+    def send_events():
+        yield TextDelta("send-1")
+
+    assert dispatch.run_stream_sync("send", make_events=send_events) is True
+    new_flag = dispatch._stream_interrupt
+
+    gate.set()  # the zombie's tool finally returns
+    zombie.join(timeout=5.0)
+    assert not zombie.is_alive()
+    assert closed.wait(1.0)  # its generator was closed (interrupt bookkeeping ran)
+
+    texts = [f["params"].get("text") for f in frames if f.get("method") == "event"]
+    assert "send-1" in texts
+    assert "idle-2" not in texts  # the zombie stopped at the boundary
+    # The zombie never touched the new turn's flag (the old code cleared it).
+    assert not new_flag.is_set()
+
+
+# ---- command RPC vs in-flight turn (2026-07-02 audit P2) --------------------------
+# A context/route-mutating command (/compact, /model <id>, /provider <label>,
+# /reasoning <level>) runs on the transport thread; letting it interleave with a
+# worker turn mutates ctx.messages / swaps agent.llm under the stream. The
+# dispatcher must refuse it while a turn is in flight — and hold the stream slot
+# while it runs so a turn can't start mid-command.
+
+
+class SlowTurnHandle(DummyHandle):
+    def __init__(self):
+        super().__init__()
+        self.release = threading.Event()
+
+    def stream_user(self, text: str):
+        yield TextDelta("first")
+        self.release.wait(2.0)
+        yield TextDelta("second")
+
+
+def test_mutating_command_refused_while_turn_in_flight():
+    handle = SlowTurnHandle()
+    dispatch, frames = make_dispatcher(handle)
+    dispatch.dispatch({"jsonrpc": "2.0", "id": 1, "method": "attach", "params": {}})
+    assert dispatch.dispatch({"jsonrpc": "2.0", "id": 2, "method": "send", "params": {"text": "hi"}}) is None
+    deadline = time.time() + 2.0
+    while time.time() < deadline and not [f for f in frames if f.get("method") == "event"]:
+        time.sleep(0.01)
+    try:
+        # Mutating forms refuse; read-only forms (and read-only commands) pass.
+        err = dispatch.dispatch({"jsonrpc": "2.0", "id": 3, "method": "command", "params": {"line": "/compact"}})
+        assert err["error"]["code"] == -32011
+        err = dispatch.dispatch({"jsonrpc": "2.0", "id": 4, "method": "command", "params": {"line": "/model gpt-x"}})
+        assert err["error"]["code"] == -32011
+        ok = dispatch.dispatch({"jsonrpc": "2.0", "id": 5, "method": "command", "params": {"line": "/model"}})
+        assert ok["result"]["ok"] is True
+        ok = dispatch.dispatch({"jsonrpc": "2.0", "id": 6, "method": "command", "params": {"line": "/status"}})
+        assert ok["result"]["ok"] is True
+    finally:
+        handle.release.set()
+    wait_response(frames, 2, timeout=2.0)
+    # Turn over: the mutating command now runs.
+    ok = dispatch.dispatch({"jsonrpc": "2.0", "id": 7, "method": "command", "params": {"line": "/compact"}})
+    assert ok["result"]["ok"] is True
+
+
+class SlowCommandHandle(DummyHandle):
+    def __init__(self):
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def command(self, line: str):
+        self.started.set()
+        self.release.wait(2.0)
+        return Reply(True, f"ran {line}", {"line": line}, verbose=False)
+
+
+def test_mutating_command_holds_the_stream_slot():
+    handle = SlowCommandHandle()
+    dispatch, frames = make_dispatcher(handle)
+    dispatch.dispatch({"jsonrpc": "2.0", "id": 1, "method": "attach", "params": {}})
+    result: list = []
+    t = threading.Thread(target=lambda: result.append(
+        dispatch.dispatch({"jsonrpc": "2.0", "id": 2, "method": "command", "params": {"line": "/compact"}})))
+    t.start()
+    assert handle.started.wait(2.0)
+    try:
+        err = dispatch.dispatch({"jsonrpc": "2.0", "id": 3, "method": "send", "params": {"text": "hi"}})
+        assert err["error"]["code"] == -32011
+    finally:
+        handle.release.set()
+    t.join(timeout=2.0)
+    assert result and result[0]["result"]["ok"] is True
+    # Slot released: a turn runs normally afterwards.
+    assert dispatch.dispatch({"jsonrpc": "2.0", "id": 4, "method": "send", "params": {"text": "hi"}}) is None
+    wait_response(frames, 4, timeout=2.0)
+
+
+def test_is_exclusive_classifier():
+    from lunamoth.core import commands
+
+    assert commands.is_exclusive("/compact")
+    assert commands.is_exclusive("/model gpt-x")
+    assert commands.is_exclusive("/provider mykey")
+    assert commands.is_exclusive("/reasoning high")
+    assert not commands.is_exclusive("/model")        # bare = show current
+    assert not commands.is_exclusive("/provider")
+    assert not commands.is_exclusive("/reasoning")
+    assert not commands.is_exclusive("/status")
+    assert not commands.is_exclusive("/quiet 60")

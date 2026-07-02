@@ -194,6 +194,97 @@ def test_cdp_non_navigation_method_unaffected(ctx, monkeypatch, _safe_url_true):
     assert stub.calls[0][0] == "cdp"
 
 
+def test_cdp_create_target_rejects_file_scheme(ctx, monkeypatch, _safe_url_true):
+    """2026-07-02 P1: Target.createTarget also navigates → same guard as Page.navigate."""
+    stub = DriverStub(responses={"cdp": {"success": True, "data": {"result": {}}}})
+    monkeypatch.setattr(drv, "run_browser_command", stub)
+    out = json.loads(browser.browser_cdp(
+        {"method": "Target.createTarget", "params": {"url": "file:///etc/passwd"}}, ctx))
+    assert "error" in out and "scheme" in out["error"].lower()
+    assert stub.calls == []  # CDP call never forwarded
+
+
+def test_cdp_create_target_rejects_metadata(ctx, monkeypatch, _safe_url_true):
+    stub = DriverStub(responses={"cdp": {"success": True, "data": {"result": {}}}})
+    monkeypatch.setattr(drv, "run_browser_command", stub)
+    out = json.loads(browser.browser_cdp(
+        {"method": "Target.createTarget", "params": {"url": "http://169.254.169.254/latest/"}}, ctx))
+    assert "error" in out
+    assert stub.calls == []
+
+
+# ---------------------------------------------------------------------------
+# P1 (2026-07-02): browser_console JS-eval can navigate around the guard
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("expr", [
+    "location.href='file:///etc/passwd'",
+    "window.location = 'file:///Users/x/.ssh/id_rsa'",
+    "fetch('http://169.254.169.254/latest/meta-data/')",
+    "document.location.assign('ftp://internal/x')",
+])
+def test_console_eval_blocks_navigation_escape(ctx, monkeypatch, _safe_url_true, expr):
+    stub = DriverStub(responses={"eval": {"success": True, "data": {"result": "ok"}}})
+    monkeypatch.setattr(drv, "run_browser_command", stub)
+    out = json.loads(browser.browser_console({"expression": expr}, ctx))
+    assert out["success"] is False
+    assert stub.calls == []  # eval never forwarded to the driver
+
+
+def test_console_eval_blocks_private_fetch(ctx, monkeypatch):
+    monkeypatch.setattr(browser, "is_safe_url", lambda url: False)
+    stub = DriverStub(responses={"eval": {"success": True, "data": {"result": "ok"}}})
+    monkeypatch.setattr(drv, "run_browser_command", stub)
+    out = json.loads(browser.browser_console(
+        {"expression": "fetch('http://10.0.0.1/secret')"}, ctx))
+    assert out["success"] is False
+    assert stub.calls == []
+
+
+def test_console_eval_allows_benign_dom_read(ctx, monkeypatch, _safe_url_true):
+    stub = DriverStub(responses={"eval": {"success": True, "data": {"result": "\"Title\""}}})
+    monkeypatch.setattr(drv, "run_browser_command", stub)
+    out = json.loads(browser.browser_console({"expression": "document.title"}, ctx))
+    assert out["success"] is True
+    assert stub.calls[0][0] == "eval"
+
+
+def test_console_eval_allows_public_fetch(ctx, monkeypatch, _safe_url_true):
+    stub = DriverStub(responses={"eval": {"success": True, "data": {"result": "\"ok\""}}})
+    monkeypatch.setattr(drv, "run_browser_command", stub)
+    out = json.loads(browser.browser_console(
+        {"expression": "fetch('https://api.example.com/v1')"}, ctx))
+    assert out["success"] is True
+    assert stub.calls[0][0] == "eval"
+
+
+# ---------------------------------------------------------------------------
+# P1 (2026-07-02): CDP Runtime.evaluate/callFunctionOn is the SAME JS-eval
+# escape as browser_console — its expression is screened too.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("method,params", [
+    ("Runtime.evaluate", {"expression": "location.href='file:///etc/passwd'"}),
+    ("Runtime.callFunctionOn",
+     {"functionDeclaration": "function(){location.href='file:///etc/passwd'}"}),
+])
+def test_cdp_runtime_eval_blocks_navigation_escape(ctx, monkeypatch, _safe_url_true, method, params):
+    stub = DriverStub(responses={"cdp": {"success": True, "data": {"result": {}}}})
+    monkeypatch.setattr(drv, "run_browser_command", stub)
+    out = json.loads(browser.browser_cdp({"method": method, "params": params}, ctx))
+    assert "error" in out and "scheme" in out["error"].lower()
+    assert stub.calls == []  # CDP call never forwarded
+
+
+def test_cdp_runtime_eval_allows_benign(ctx, monkeypatch, _safe_url_true):
+    stub = DriverStub(responses={"cdp": {"success": True, "data": {"result": {"value": "ok"}}}})
+    monkeypatch.setattr(drv, "run_browser_command", stub)
+    out = json.loads(browser.browser_cdp(
+        {"method": "Runtime.evaluate", "params": {"expression": "document.title"}}, ctx))
+    assert out["success"] is True
+    assert stub.calls[0][0] == "cdp"
+
+
 # ---------------------------------------------------------------------------
 # FIX 2: background image worker re-checks the network
 # ---------------------------------------------------------------------------

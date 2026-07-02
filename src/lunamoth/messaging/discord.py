@@ -38,6 +38,13 @@ DISCORD_TEXT_MAX = 2000
 API_TIMEOUT_S = 15
 _USER_AGENT = "DiscordBot (https://lunamoth.ai, 1.0)"
 
+# Bounded in-adapter retries for TRANSIENT outbound failures (429 honors
+# Retry-After, 5xx/network back off briefly). Anything else — auth, bad
+# channel — is permanent for this message and defers immediately; the relay
+# treats DeliveryDeferred as final, so retrying here is the only retry.
+_SEND_TRANSIENT_RETRIES = 2
+_RETRY_AFTER_CAP_S = 15.0
+
 # Gateway opcodes (https://discord.com/developers/docs/topics/gateway).
 _OP_DISPATCH = 0
 _OP_HEARTBEAT = 1
@@ -61,7 +68,7 @@ class DiscordAPIError(RuntimeError):
     """A REST call that came back non-2xx. Carries the route + status + Discord's
     message — never the Authorization header (which holds the bot token)."""
 
-    def __init__(self, route: str, status: int, description: str) -> None:
+    def __init__(self, route: str, status: int, description: str, *, retry_after: float | None = None) -> None:
         detail = f"Discord {route} failed: HTTP {status}"
         if description:
             detail = f"{detail} {description}"
@@ -69,6 +76,20 @@ class DiscordAPIError(RuntimeError):
         self.route = route
         self.status = status
         self.description = description
+        self.retry_after = retry_after
+
+
+def _retry_after_of(body: Any, headers: Any) -> float | None:
+    """Discord's 429 wait, from the JSON body (`retry_after`, seconds) or the
+    Retry-After header."""
+    try:
+        return float(body["retry_after"])
+    except (KeyError, TypeError, ValueError):
+        pass
+    try:
+        return float((headers or {}).get("Retry-After") or "")
+    except (TypeError, ValueError, AttributeError):
+        return None
 
 
 class DiscordAPI:
@@ -93,7 +114,10 @@ class DiscordAPI:
                 body = {}
             description = str((body or {}).get("message") or getattr(e, "reason", "") or "")
             # `from None`: never chain the original (its request carries the token header).
-            raise DiscordAPIError(route, int(e.code), description) from None
+            raise DiscordAPIError(
+                route, int(e.code), description,
+                retry_after=_retry_after_of(body, getattr(e, "headers", None)),
+            ) from None
         if not raw:
             return {}
         try:
@@ -193,7 +217,7 @@ class DiscordAdapter(Adapter):
 
     max_message_length = DISCORD_TEXT_MAX
 
-    def __init__(self, config: dict[str, Any], *, opener=None) -> None:
+    def __init__(self, config: dict[str, Any], *, opener=None, sleep=None) -> None:
         self.config = dict(config)
         self.bot_token = str(self.config.get("bot_token") or "").strip()
         if not self.bot_token:
@@ -208,6 +232,8 @@ class DiscordAdapter(Adapter):
         self._api = DiscordAPI(self.bot_token, api_base=self.api_base, opener=opener)
 
         self._closed = threading.Event()
+        # Retry backoff wait — interruptible by close(); injectable for tests.
+        self._sleep = sleep or (lambda s: self._closed.wait(s))
         self._reply_channel = ""
         self._last_channel = ""
         # Gateway session state (in-memory; RESUME replays missed events on reconnect).
@@ -226,20 +252,57 @@ class DiscordAdapter(Adapter):
         return self.owner
 
     def set_reply_target(self, message: InboundMessage) -> None:
+        # Ephemeral only — pre-auth. The durable _last_channel (the unattended
+        # speak destination) moves in remember_peer, post-auth.
         channel = ""
         if isinstance(message.reply, dict):
             channel = str(message.reply.get("channel_id") or "").strip()
         self._reply_channel = channel
-        if channel:
-            self._last_channel = channel
 
     def clear_reply_target(self) -> None:
         self._reply_channel = ""
+
+    def remember_peer(self, message: InboundMessage) -> None:
+        channel = ""
+        if isinstance(message.reply, dict):
+            channel = str(message.reply.get("channel_id") or "").strip()
+        if channel:
+            self._last_channel = channel
 
     def _target_channel(self) -> str:
         return self._reply_channel or self._last_channel or self.default_channel
 
     # ---- outbound (REST) ----------------------------------------------------------
+
+    def _rest_with_retry(self, call, what: str) -> Any:
+        """Run one outbound REST call: retry 429 (honoring Retry-After, capped)
+        and 5xx/network a bounded number of times, then raise DeliveryDeferred.
+        Permanent rejections (auth, bad channel — any other 4xx) defer at once."""
+        for attempt in range(_SEND_TRANSIENT_RETRIES + 1):
+            try:
+                return call()
+            except DiscordAPIError as e:
+                transient = e.status == 429 or 500 <= e.status < 600
+                if not transient or attempt == _SEND_TRANSIENT_RETRIES or self._closed.is_set():
+                    raise DeliveryDeferred(
+                        f"Discord {what} failed (HTTP {e.status} {e.description}); this message was dropped"
+                    ) from None
+                if e.status == 429 and e.retry_after is not None:
+                    wait = min(e.retry_after, _RETRY_AFTER_CAP_S)
+                else:
+                    wait = float(attempt + 1)
+                _log.warning("Discord %s got HTTP %s; retry %d/%d in %.1fs",
+                             what, e.status, attempt + 1, _SEND_TRANSIENT_RETRIES, wait)
+                self._sleep(wait)
+            except OSError as e:
+                if attempt == _SEND_TRANSIENT_RETRIES or self._closed.is_set():
+                    raise DeliveryDeferred(
+                        f"Discord {what} network failure ({type(e).__name__}: {e}); this message was dropped"
+                    ) from None
+                _log.warning("Discord %s network failure (%s); retry %d/%d in %.1fs",
+                             what, type(e).__name__, attempt + 1, _SEND_TRANSIENT_RETRIES, float(attempt + 1))
+                self._sleep(float(attempt + 1))
+        return None  # unreachable: the last attempt raised or returned
 
     def send(self, text: str) -> None:
         target = self._target_channel()
@@ -248,16 +311,7 @@ class DiscordAdapter(Adapter):
                 "Discord has no channel to send to yet (no inbound message and no "
                 "configured channel_id); this message was dropped, not queued"
             )
-        try:
-            self._api.post_message(target, text)
-        except DiscordAPIError as e:
-            raise DeliveryDeferred(
-                f"Discord send failed (HTTP {e.status} {e.description}); this message was dropped"
-            ) from None
-        except OSError as e:
-            raise DeliveryDeferred(
-                f"Discord send network failure ({type(e).__name__}: {e}); this message was dropped"
-            ) from None
+        self._rest_with_retry(lambda: self._api.post_message(target, text), "send")
 
     def send_media(self, source: str, mime: str = "", caption: str = "") -> None:
         target = self._target_channel()
@@ -270,12 +324,12 @@ class DiscordAdapter(Adapter):
             data = p.read_bytes()
         except OSError as e:
             raise DeliveryDeferred(f"Discord could not read the file {source}: {e}") from None
-        try:
-            self._api.upload_file(target, p.name, data, mime=mime or "application/octet-stream", content=caption or "")
-        except DiscordAPIError as e:
-            raise DeliveryDeferred(f"Discord file upload failed (HTTP {e.status} {e.description})") from None
-        except OSError as e:
-            raise DeliveryDeferred(f"Discord file upload network failure ({type(e).__name__}: {e})") from None
+        self._rest_with_retry(
+            lambda: self._api.upload_file(
+                target, p.name, data, mime=mime or "application/octet-stream", content=caption or ""
+            ),
+            "file upload",
+        )
 
     def send_image(self, url: str, caption: str = "") -> None:
         # Discord auto-embeds a bare image URL posted as content — deliver the link
@@ -366,7 +420,8 @@ class DiscordAdapter(Adapter):
             elif t == "MESSAGE_CREATE":
                 inbound = parse_message_create(d, self._bot_user_id, allow_bot=self.allow_bot_messages)
                 if inbound is not None:
-                    self._last_channel = str((inbound.reply or {}).get("channel_id") or "") or self._last_channel
+                    # _last_channel is updated post-auth via remember_peer, never
+                    # here — an unauthorized sender must not become the speak target.
                     inbox.put(inbound)
             return True
         if op == _OP_HEARTBEAT:

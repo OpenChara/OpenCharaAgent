@@ -256,6 +256,25 @@ describe("StreamModel — restored history", () => {
     ]);
     expect(m.items.filter((i) => i.kind === "system" && i.cls === "compacted").length).toBe(1);
   });
+
+  it("does NOT leak pendingSuper past restore — the first live say stays a plain say", () => {
+    // Regression: restoring a speak tool_call set the live pendingSuper flag (which
+    // nothing in the restore path consumes — the restored super renders via the
+    // isSuper arg), so the chara's FIRST live reply after re-entering the chat
+    // mis-rendered as a ⚡super-chat.
+    const m = new StreamModel();
+    m.renderRestored([
+      { role: "user", content: "hi" },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [{ id: "s1", function: { name: "speak", arguments: '{"text":"restored super"}' } }],
+      },
+    ]);
+    expect((m.items.find((i) => i.kind === "super") as TextItem).raw).toBe("restored super");
+    m.pushText("a normal live reply", "say");
+    expect(m.items[m.items.length - 1].kind).toBe("say");
+  });
 });
 
 describe("tool tally helpers", () => {

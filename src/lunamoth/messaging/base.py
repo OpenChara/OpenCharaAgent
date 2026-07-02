@@ -87,10 +87,21 @@ class Adapter(abc.ABC):
         Most adapters can ignore this and keep their own current recipient.
         Direct chat adapters use it so replies go to the inbound sender while
         unattended speak output can still use their configured default peer.
+
+        EPHEMERAL and set BEFORE the allow-list check (the refusal to an
+        unauthorized sender must still reach that sender): it must NEVER update
+        the adapter's durable default peer — that is :meth:`remember_peer`,
+        which hosts call only after the sender passes the allow-list.
         """
 
     def clear_reply_target(self) -> None:
         """Clear the per-inbound destination selected by :meth:`set_reply_target`."""
+
+    def remember_peer(self, message: InboundMessage) -> None:
+        """Commit this message's origin as the durable default destination for
+        unattended sends (the chara's proactive `speak`). Called by the host
+        only AFTER the sender passed the allow-list — an unauthorized sender
+        must never become the speak destination (destination hijack)."""
 
     def close(self) -> None:
         """Stop platform I/O. Adapters with background servers override this."""

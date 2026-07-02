@@ -644,7 +644,11 @@ def browser_vision(args: dict, ctx) -> str:
         return _dumps({"success": False, "error": "'question' is required"})
 
     import uuid as _uuid
-    screenshots_dir = drv.Path.home() / ".lunamoth" / "cache" / "screenshots"
+    # Under the WORKSPACE, not ~/.lunamoth/cache: every browser jail confines
+    # writes to workspace+temp (the old cache target errored for sandboxed
+    # charas), and MEDIA:<path> delivery resolves workspace-relative paths only
+    # (an absolute ~/.lunamoth path silently dropped the attachment).
+    screenshots_dir = ctx.sandbox.workspace_dir / "screenshots"
     try:
         screenshots_dir.mkdir(parents=True, exist_ok=True)
         _prune_old_screenshots(screenshots_dir)
@@ -672,6 +676,14 @@ def browser_vision(args: dict, ctx) -> str:
             "('agent-browser install'), or a stale daemon process."
         )})
 
+    # Workspace-RELATIVE path in the response: MEDIA:<path> lines resolve inside
+    # the workspace, so the advertised path must be the relative one. (Absolute
+    # kept only if the driver wrote somewhere unexpected outside it.)
+    try:
+        media_path = str(screenshot_path.relative_to(ctx.sandbox.workspace_dir))
+    except ValueError:
+        media_path = str(screenshot_path)
+
     # hermes fast-path: when the ACTIVE model has native vision, don't spend an aux
     # call — set vision_native and let the agent inline the screenshot pixels on the
     # next turn (core/agent._vision_followup_for_path). Only a non-vision model falls
@@ -679,11 +691,11 @@ def browser_vision(args: dict, ctx) -> str:
     if _model_has_native_vision(ctx):
         return _dumps({
             "success": True,
-            "screenshot_path": str(screenshot_path),
+            "screenshot_path": media_path,
             "vision_native": True,
             "question": question,
             "note": ("Screenshot captured and attached for you to view on the next "
-                     "turn. Share it with the user via MEDIA:" + str(screenshot_path)),
+                     "turn. Share it with the user via MEDIA:" + media_path),
         })
 
     # Auxiliary vision-model analysis (hermes falls back to AUXILIARY_VISION_MODEL
@@ -691,7 +703,7 @@ def browser_vision(args: dict, ctx) -> str:
     analysis = _vision_analyze(ctx, screenshot_path, question)
     response = {
         "success": True,
-        "screenshot_path": str(screenshot_path),
+        "screenshot_path": media_path,
     }
     if analysis is not None:
         response["analysis"] = analysis or "Vision analysis returned no content."
@@ -700,7 +712,7 @@ def browser_vision(args: dict, ctx) -> str:
         # surface it to the user via MEDIA:<path> (no fabricated analysis).
         response["note"] = (
             "Screenshot captured. No auxiliary vision model is configured to "
-            "analyze it; share it with the user via MEDIA:" + str(screenshot_path)
+            "analyze it; share it with the user via MEDIA:" + media_path
         )
     return _dumps(response)
 
@@ -736,7 +748,42 @@ def browser_console(args: dict, ctx) -> str:
     })
 
 
+# A JS-eval expression can navigate the page (location.href=…, window.open(…),
+# document.location=…) around browser_navigate's scheme+SSRF guard, then a
+# later browser_snapshot returns the fetched content — and the browser jail is
+# allow-default for reads. Screen the expression text for URL literals that
+# carry a disallowed scheme (file:/ftp:/data:/… — anything but http/https),
+# resolve to a private/loopback/metadata target, or embed a secret. Not a JS
+# parser: a conservative substring screen that closes the direct
+# `location.href='file:///…'` class of escape.
+_EVAL_URL_RE = re.compile(
+    r"[a-zA-Z][a-zA-Z0-9+.\-]*:/{2,3}[^\s'\"`)]+|file:/{0,3}[^\s'\"`)]*",
+    re.IGNORECASE,
+)
+
+
+def _screen_eval_expression(expression: str) -> Optional[str]:
+    """Return a tool-error reason if a JS-eval expression tries to navigate to a
+    forbidden URL, else None."""
+    for tok in _EVAL_URL_RE.findall(expression or ""):
+        tok = tok.strip()
+        if not tok:
+            continue
+        if _has_secret(tok):
+            return "Blocked: the expression embeds a credential-looking URL."
+        if _is_always_blocked_url(tok):
+            return ("Blocked: the expression targets a cloud metadata endpoint. "
+                    "Use browser_navigate for guarded navigation.")
+        guard = _url_guard_error(tok)
+        if guard:
+            return f"{guard} Use browser_navigate for guarded navigation."
+    return None
+
+
 def _browser_eval(ctx, expression: str) -> str:
+    screen = _screen_eval_expression(expression)
+    if screen:
+        return _dumps({"success": False, "error": screen})
     result = drv.run_browser_command(ctx, _TASK_ID, "eval", [expression])
     if not result.get("success"):
         err = result.get("error", "eval failed")
@@ -776,10 +823,11 @@ def browser_cdp(args: dict, ctx) -> str:
     if not isinstance(params, dict):
         return tool_error(f"'params' must be an object/dict, got {type(params).__name__}")
 
-    # Raw CDP can navigate (Page.navigate / Page.open), bypassing browser_navigate's
-    # scheme + SSRF guard. Screen any navigation verb's url param through the same
-    # checks so file:// / private-range targets can't sneak in via CDP.
-    if method.lower() in {"page.navigate", "page.open"}:
+    # Raw CDP can navigate (Page.navigate / Page.open) OR spawn a new target at
+    # a url (Target.createTarget), both bypassing browser_navigate's scheme +
+    # SSRF guard. Screen any navigation verb's url param through the same checks
+    # so file:// / private-range targets can't sneak in via CDP.
+    if method.lower() in {"page.navigate", "page.open", "target.createtarget"}:
         cdp_url = _normalize_url(str(params.get("url") or ""))
         if not cdp_url:
             return tool_error(
@@ -794,6 +842,16 @@ def browser_cdp(args: dict, ctx) -> str:
         guard = _url_guard_error(cdp_url)
         if guard:
             return tool_error(f"{guard} Use browser_navigate for guarded navigation.")
+
+    # Raw CDP can also EVAL page JS (Runtime.evaluate / Runtime.callFunctionOn),
+    # the same page-navigation escape as browser_console's expression path — a
+    # location.href='file:///…' in the expression skips the scheme/SSRF screen.
+    # Screen the JS the same way.
+    if method.lower() in {"runtime.evaluate", "runtime.callfunctionon"}:
+        expr = params.get("expression") or params.get("functionDeclaration") or ""
+        screen = _screen_eval_expression(str(expr))
+        if screen:
+            return tool_error(screen)
 
     target_id = args.get("target_id")
     frame_id = args.get("frame_id")

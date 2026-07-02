@@ -608,7 +608,9 @@ def _transcript_export_jsonl(meta: S.SessionMeta) -> str:
             epoch = 0
         try:
             rows = conn.execute(
-                "SELECT id, ts, role, content, kind FROM messages WHERE epoch=? ORDER BY id",
+                # kind='replay' is compaction's tail re-append — the same rows sit
+                # earlier in the epoch; exporting them would duplicate the tail.
+                "SELECT id, ts, role, content, kind FROM messages WHERE epoch=? AND kind != 'replay' ORDER BY id",
                 (epoch,),
             ).fetchall()
         except sqlite3.Error as e:
