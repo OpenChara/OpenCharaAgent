@@ -149,7 +149,17 @@ export function Board() {
               <div
                 key={s.name}
                 className={`chara-card${!live && dot !== "err" ? " offline" : ""}`}
+                role="button"
+                tabIndex={0}
+                aria-label={s.char_name}
                 onClick={() => nav(`#/chara/${encodeURIComponent(s.name)}`)}
+                onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return; // inner buttons handle their own keys
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    nav(`#/chara/${encodeURIComponent(s.name)}`);
+                  }
+                }}
               >
                 <CardFace
                   card={cards.find((c) => c.locked && c.owner === s.name) ?? ({ name: s.char_name } as DeckCard)}

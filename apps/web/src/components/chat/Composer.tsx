@@ -275,20 +275,18 @@ export function Composer({
     onSend(trimmed, atts);
   };
 
-  const onSendClick = () => {
-    const hasText = text.trim().length > 0;
-    if (streaming && !hasText) {
-      if (stopping) {
-        // Second press: the polite interrupt didn't land (a turn the server never
-        // closed). Force-reset locally so ■ never permanently freezes the composer.
-        onForceStop();
-        return;
-      }
-      setStopping(true);
-      onInterrupt();
-    } else {
-      submit();
+  // Stopping and sending are DISTINCT actions: the ■ stop button shows whenever a
+  // turn is streaming — even with a draft typed (a draft used to hide it entirely,
+  // leaving no way to stop). With both visible, ■ stops and ↑ queues the draft.
+  const onStopClick = () => {
+    if (stopping) {
+      // Second press: the polite interrupt didn't land (a turn the server never
+      // closed). Force-reset locally so ■ never permanently freezes the composer.
+      onForceStop();
+      return;
     }
+    setStopping(true);
+    onInterrupt();
   };
 
   const onKeyDown = (ev: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -308,7 +306,8 @@ export function Composer({
     }
   };
 
-  const showStop = streaming && text.trim().length === 0;
+  const showStop = streaming; // always stoppable, draft or not
+  const showSend = !streaming || text.trim().length > 0 || staged.length > 0;
 
   return (
     <div
@@ -427,14 +426,23 @@ export function Composer({
           onCompositionEnd={() => { composingRef.current = false; }}
           onKeyDown={onKeyDown}
         />
-        <button
-          className={showStop ? `stop${stopping ? " stopping" : ""}` : "send"}
-          // Stays pressable while "stopping": a second press is the escape hatch that
-          // force-resets a turn the server never closed (no liveness signal exists).
-          onClick={onSendClick}
-        >
-          {showStop ? "■" : "↑"}
-        </button>
+        {showStop && (
+          <button
+            className={`stop${stopping ? " stopping" : ""}`}
+            aria-label={t("stop")}
+            title={t("stop")}
+            // Stays pressable while "stopping": a second press is the escape hatch that
+            // force-resets a turn the server never closed (no liveness signal exists).
+            onClick={onStopClick}
+          >
+            ■
+          </button>
+        )}
+        {showSend && (
+          <button className="send" aria-label={t("composer-send")} title={t("composer-send")} onClick={submit}>
+            ↑
+          </button>
+        )}
       </div>
     </div>
   );

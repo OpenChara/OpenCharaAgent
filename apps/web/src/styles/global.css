@@ -2477,3 +2477,14 @@ body.dark .market-sort.on{background:#2A323A}
   color:var(--text-dim, #888); padding:2px 0}
 .task-done-toggle:hover{color:var(--text, inherit)}
 .task-list.done{margin-top:6px}
+
+/* ---- Keyboard access (a11y pass) --------------------------------------------
+ * The clickable rows/cards got role=button + tabIndex; give them a visible
+ * focus ring (the market-card already has one — same shape). The modal box is
+ * focused programmatically on open (tabIndex=-1) — no ring on the box itself. */
+.chara-card:focus-visible,.spine:focus-visible,.prow.click:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+.modal:focus{outline:none}
+
+/* The chat settings pane's local display prefs (backdrop veil / sprite opacity). */
+.pfield .ctl input[type="range"]{flex:1; max-width:220px; accent-color:var(--accent)}
+.pfield .ctl .pref-val{font-size:12px; color:var(--text-3); min-width:38px; text-align:right; flex:none}

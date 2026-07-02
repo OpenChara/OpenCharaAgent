@@ -328,16 +328,16 @@ Concise resolved record:
   `allow_bot` wired; `split_text` counts UTF-16 units + avoids cutting inside
   code fences. Tests: `apps/web` vitest suite + `test_messaging.py`.
 
+### Web UX residue — RESOLVED 2026-07-03
+All five fixed (239 vitest green, build clean): superchat read-state now
+fail-OPEN with retries (`lib/superchat.ts`); stop button visible while
+streaming even with a draft (Composer); Market mobile CSS in `mobile.css`
+(sheet-filling detail + sticky action bar); keyboard/AT basics on board/deck/
+chat-panel rows + DeckModal dialog role/focus trap/Escape/focus restore;
+chat backdrop/sprite prefs got their UI (聊天背景/立绘 controls in the chat
+settings pane, per-chara localStorage, live-reactive).
+
 ### Remaining OPEN residue (small, non-blocking)
-- Web UX (from the audit's last sweep, still open): chat backdrop/sprite prefs
-  have NO UI (nothing writes the localStorage keys); can't stop a turn with a
-  draft typed; Market has zero mobile CSS; keyboard/AT access missing on
-  board/deck/tabs/rows + DeckModal has no dialog role/focus trap; superchat
-  read-state fails closed to "all unread forever" on a failed `superchat.read`.
-- `sandbox.resolve_readable` compares the resolved target against the
-  UNRESOLVED workspace/assets bases — under a symlinked prefix (macOS
-  /tmp→/private/tmp) a legitimate workspace file can be refused (degrades to
-  the honest note; pre-existing pattern shared with resolve_inside).
 - Latent (inherent to the join-timeout takeover model): a superseded zombie
   past the 10 s join can still overlap a freshly-claimed slot for its last
   in-flight tool; its interrupt flag is set so the window is minimal.

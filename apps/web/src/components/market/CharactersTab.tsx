@@ -381,7 +381,11 @@ export function CharactersTab() {
                     role="button"
                     tabIndex={0}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") setPreview(c);
+                      if (e.target !== e.currentTarget) return; // the import button handles its own keys
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault(); // Space must not scroll the grid
+                        setPreview(c);
+                      }
                     }}
                   >
                     <div className="market-thumb">

@@ -159,6 +159,26 @@
 }
 
 @media (max-width: 680px) {
+  /* Market on a phone. global.css carries a first 760px pass (controls padding,
+     2-col grid, stacked detail head); these close what it missed at true phone
+     width: tighter gutters, the filter popover kept scrollable on a short screen,
+     and the detail preview filling its full-screen sheet with the action bar
+     pinned (it was capped at 78vh — the import button floated mid-screen). */
+  .market-controls { padding: 6px 12px; }
+  .market-bar, .market-applied { padding-left: 12px; padding-right: 12px; }
+  .market-scroll { padding: 4px 12px calc(20px + env(safe-area-inset-bottom)); }
+  .market-grid { gap: 10px; }
+  .market-pop { max-height: min(70vh, 480px); overflow-y: auto; }
+  .mkd { height: 100%; max-height: none; }
+  .mkd-bar {
+    position: sticky; bottom: 0; background: var(--panel);
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+  .mkd-cover { width: 104px; }
+  .mkd-name { font-size: 18px; }
+}
+
+@media (max-width: 680px) {
   /* Touch has no hover — it maps to a long-press, a poor way to reveal an action — so
      controls the desktop UI reveals on :hover are PERSISTENT on a phone: the deck card's
      复制 / 唤醒 / 删除, the board card's actions, the works-row reveal, the visual

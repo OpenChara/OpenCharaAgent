@@ -136,7 +136,17 @@ export function Deck() {
                 <div
                   key={c.path}
                   className={"spine" + (c.locked ? " locked" : "")}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={c.name}
                   onClick={() => setEditing(c)}
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return; // inner buttons handle their own keys
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setEditing(c);
+                    }
+                  }}
                 >
                   <CardFace card={c} cls={`face ${paletteClass(c.name)}`}>
                     {c.locked ? (

@@ -1,7 +1,9 @@
 /* Per-chara chat visual prefs — ported from front/web/app.js
  * (VISUAL_DEFAULTS:335, visualKey:342, readVisualPrefs:346). Operator
- * presentation prefs kept in localStorage, scoped per open chat. Pure read; the
- * DOM-applying side (applyVisualPrefs, CSS vars) stays in the view.
+ * presentation prefs kept in localStorage, scoped per open chat. Read +
+ * write live here; the DOM-applying side (CSS vars) stays in the view.
+ * The chat settings pane writes via writeVisualPrefs, which fires
+ * VISUAL_PREFS_EVENT so the open chat re-reads and applies live.
  *
  * The JS read a global `state.chat.name` for the scope; here the chara name is an
  * explicit argument (null = the bare unscoped key, the original's no-chat case). */
@@ -59,4 +61,28 @@ export function readVisualPrefs(charaName?: string | null): VisualPrefs {
     spriteOpacity: num("lm-sprite-opacity", VISUAL_DEFAULTS.spriteOpacity),
     spritePos: pos,
   };
+}
+
+/** Fired on window after writeVisualPrefs so an open chat re-reads and applies. */
+export const VISUAL_PREFS_EVENT = "lm-visual-prefs";
+
+/** Write a partial set of per-chara visual prefs and notify listeners. The keys
+ *  mirror readVisualPrefs exactly (same names, same per-chara scoping). */
+export function writeVisualPrefs(charaName: string | null | undefined, patch: Partial<VisualPrefs>): void {
+  const set = (k: string, v: string) => {
+    try {
+      localStorage.setItem(visualKey(k, charaName), v);
+    } catch {
+      /* private mode — the in-memory state the caller keeps still applies */
+    }
+  };
+  if (patch.bgOn !== undefined) set("lm-chat-bg-on", patch.bgOn ? "1" : "0");
+  if (patch.veilOpacity !== undefined) set("lm-chat-veil-opacity", String(patch.veilOpacity));
+  if (patch.spriteOpacity !== undefined) set("lm-sprite-opacity", String(patch.spriteOpacity));
+  if (patch.spritePos !== undefined) set("lm-sprite-pos", patch.spritePos);
+  try {
+    window.dispatchEvent(new Event(VISUAL_PREFS_EVENT));
+  } catch {
+    /* non-browser environment */
+  }
 }

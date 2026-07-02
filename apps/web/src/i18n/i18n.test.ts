@@ -110,8 +110,12 @@ describe("I18N strings map", () => {
   //   client draws no "arrived" divider either (the .arrived CSS stays for rejoin-gap) → 717.
   // + vis-ref-del-q (the "delete this reference? irreversible" confirm) → 718.
   // + market-tag-add (manual tag entry in the market filter panel) → 719.
-  it("preserves the full key set from the source dict (719 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(719);
+  // The chat backdrop/sprite prefs UI (10: p-backdrop, p-backdrop-sub, p-veil,
+  // p-veil-sub, p-sprite-pos, p-sprite-opacity, sprite-off/left/center/right)
+  // + the composer's send-button label (composer-send — the stop button now
+  // coexists with send while streaming) → 730.
+  it("preserves the full key set from the source dict (730 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(730);
   });
 
   it("every value is a [zh, en] string tuple", () => {

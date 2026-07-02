@@ -15,6 +15,7 @@ import { rpcErrText } from "../../lib/status";
 import { providerOf } from "../../lib/format";
 import { Select, type SelectOption } from "../settings/Select";
 import { Segmented } from "../ui/Segmented";
+import { readVisualPrefs, writeVisualPrefs, type VisualPrefs, type SpritePos } from "../../lib/visual";
 import type { ModelInfo } from "../deck/types";
 import type { CharaStream, Snapshot } from "../../hooks/useCharaStream";
 import { TasksSection, type TaskItem } from "./TasksSection";
@@ -101,10 +102,26 @@ function Prow({
   cls?: string;
 }) {
   const clickable = !!(onClick || onSwitch);
+  // Keyboard/AT parity for the clickable rows: role=button + Enter/Space activate
+  // (a switch-only row toggles its switch — same as the pointer affordance).
+  const activate = onClick || onSwitch;
   return (
     <div
       className={`prow${clickable ? " click" : ""}${cls ? " " + cls : ""}`}
       onClick={onClick}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={
+        clickable
+          ? (e) => {
+              if (e.target !== e.currentTarget) return; // inner switch handles its own keys
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                activate?.();
+              }
+            }
+          : undefined
+      }
     >
       <div className="pmain">
         <span className="plbl">{label}</span>
@@ -554,10 +571,19 @@ function SettingsPane({ stream, name }: { stream: CharaStream; name: string }) {
           {rpOn !== activeRp && <span className="fact-hint">{t("mod-next-start")}</span>}
         </div>
       </div>
+      <VisualPrefsFields charaName={stream.charName} />
       <div className="pgroup" style={{ marginTop: 22 }}>
         <div
           className={"prow click" + (restarting ? " busy" : "")}
+          role="button"
+          tabIndex={0}
           onClick={() => void doRestart()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              void doRestart();
+            }
+          }}
         >
           <div className="pmain">
             <span className="plbl">{restarting ? t("restarting") : t("p-restart")}</span>
@@ -567,7 +593,15 @@ function SettingsPane({ stream, name }: { stream: CharaStream; name: string }) {
         </div>
         <div
           className={"prow danger click" + (deleting ? " busy" : "")}
+          role="button"
+          tabIndex={0}
           onClick={() => void doDelete()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              void doDelete();
+            }
+          }}
         >
           <div className="pmain">
             <span className="plbl">{deleting ? t("deleting") : t("p-delete")}</span>
@@ -577,6 +611,84 @@ function SettingsPane({ stream, name }: { stream: CharaStream; name: string }) {
         </div>
       </div>
     </div>
+  );
+}
+
+/* 聊天背景 / 立绘 presentation prefs — LOCAL display preferences (this device
+ * only), stored per-chara in localStorage and applied live by the open chat
+ * (writeVisualPrefs fires VISUAL_PREFS_EVENT; ChatStreamPage re-reads). The
+ * render path always existed — this is the missing write side. Keyed by
+ * stream.charName: the SAME key ChatStreamPage reads with. Instant apply, no
+ * API round-trip (pure local state — the binding rule's easiest case). */
+const SPRITE_CHOICES: readonly SpritePos[] = ["off", "left", "center", "right"];
+
+function VisualPrefsFields({ charaName }: { charaName: string }) {
+  const t = useT();
+  const [vp, setVp] = useState<VisualPrefs>(() => readVisualPrefs(charaName));
+  useEffect(() => setVp(readVisualPrefs(charaName)), [charaName]);
+  const patch = (p: Partial<VisualPrefs>) => {
+    setVp((prev) => ({ ...prev, ...p })); // instant
+    writeVisualPrefs(charaName, p); // persist + notify the open chat
+  };
+  return (
+    <>
+      <div className="pfield" style={{ marginTop: 16 }}>
+        <label>{t("p-backdrop")}</label>
+        <div className="why">{t("p-backdrop-sub")}</div>
+        <div className="ctl">
+          <button
+            className={"switch" + (vp.bgOn ? " on" : "")}
+            aria-label={t("p-backdrop")}
+            aria-pressed={vp.bgOn}
+            onClick={() => patch({ bgOn: !vp.bgOn })}
+          />
+        </div>
+      </div>
+      {vp.bgOn && (
+        <div className="pfield">
+          <label>{t("p-veil")}</label>
+          <div className="why">{t("p-veil-sub")}</div>
+          <div className="ctl">
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={vp.veilOpacity}
+              aria-label={t("p-veil")}
+              onChange={(e) => patch({ veilOpacity: Number(e.target.value) })}
+            />
+            <span className="pref-val">{vp.veilOpacity}%</span>
+          </div>
+        </div>
+      )}
+      <div className="pfield" style={{ marginTop: 16 }}>
+        <label>{t("p-sprite-pos")}</label>
+        <div className="ctl">
+          <Segmented
+            ariaLabel={t("p-sprite-pos")}
+            value={vp.spritePos}
+            options={SPRITE_CHOICES.map((p) => ({ value: p, label: t(("sprite-" + p) as TKey) }))}
+            onChange={(p) => patch({ spritePos: p })}
+          />
+        </div>
+      </div>
+      {vp.spritePos !== "off" && (
+        <div className="pfield">
+          <label>{t("p-sprite-opacity")}</label>
+          <div className="ctl">
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={vp.spriteOpacity}
+              aria-label={t("p-sprite-opacity")}
+              onChange={(e) => patch({ spriteOpacity: Number(e.target.value) })}
+            />
+            <span className="pref-val">{vp.spriteOpacity}%</span>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

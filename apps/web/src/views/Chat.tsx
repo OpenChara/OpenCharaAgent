@@ -15,7 +15,8 @@ import { isMobileViewport } from "../hooks/useIsMobile";
 import { useHubApi, useHubState, type BoardSession } from "../state/hub";
 import { chatTimeLabel, currentTimezone, glyphOf, paletteClass } from "../lib/format";
 import { assetUrl } from "../rpc";
-import { readVisualPrefs } from "../lib/visual";
+import { readVisualPrefs, VISUAL_PREFS_EVENT } from "../lib/visual";
+import { markSuperchatRead, nextReadTs } from "../lib/superchat";
 import { useCharaStream, type Snapshot } from "../hooks/useCharaStream";
 import { StreamItemView, TimeSeparator } from "../components/chat/StreamItems";
 import { Composer } from "../components/chat/Composer";
@@ -210,7 +211,20 @@ function ChatStreamPage({
   // the URLs (bg_url / sprite_url|keyvisual_url need the auth token via assetUrl).
   const sandboxRoot = snap ? String(snap.sandbox_root || "") : "";
   const workspaceRoot = snap ? String(snap.workspace_root || snap.sandbox_root || "") : "";
-  const prefs = readVisualPrefs(stream.charName);
+  // Reactive prefs: the chat settings pane (and another tab) writes them via
+  // writeVisualPrefs, which fires VISUAL_PREFS_EVENT — re-read so the backdrop/
+  // sprite update live, no reload needed.
+  const [prefs, setPrefs] = useState(() => readVisualPrefs(stream.charName));
+  useEffect(() => {
+    const sync = () => setPrefs(readVisualPrefs(stream.charName));
+    sync();
+    window.addEventListener(VISUAL_PREFS_EVENT, sync);
+    window.addEventListener("storage", sync);
+    return () => {
+      window.removeEventListener(VISUAL_PREFS_EVENT, sync);
+      window.removeEventListener("storage", sync);
+    };
+  }, [stream.charName]);
   const bgUrl = prefs.bgOn && snap?.bg_url ? assetUrl(String(snap.bg_url)) : "";
   const spriteUrl =
     prefs.spritePos !== "off" ? assetUrl(String(snap?.sprite_url || snap?.keyvisual_url || "")) : "";
@@ -244,24 +258,35 @@ function ChatStreamPage({
   }, [stream.items, stream.work, stream.ready, stream.charName]);
 
   // Opening the chat marks all current superchats READ ("点进去就是已读"): once
-  // attached, set the watermark to now, adopt the returned read_ts for per-bubble
-  // read styling, and refresh the roster so the board's unread mark clears at once.
+  // attached, set the LOCAL watermark to now immediately (fail-OPEN — a dropped
+  // `superchat.read` must never leave the whole history rendered unread), then
+  // persist it server-side with retries; on success adopt the returned read_ts
+  // and refresh the roster so the board's unread mark clears too.
   // Keyed by the SESSION name (the route prop) — NOT stream.charName (the card
   // display name), which resolves to a different value and targets the wrong session.
   useEffect(() => {
     if (!name || !stream.ready) return;
-    let on = true;
-    hub
-      .call<{ read_ts?: number }>("superchat.read", { name, ts: Date.now() / 1000 }, 10000)
-      .then((r) => {
-        if (!on) return;
-        setSuperReadTs(Number(r?.read_ts) || Date.now() / 1000);
-        void refresh(); // board unread mark clears immediately
-      })
-      .catch(() => {});
+    const gate = { aborted: false };
+    // Watermark = the newest VISIBLE super bubble's SERVER timestamp — "opened =
+    // read" means what's on screen, and server stamps can't be skewed by the
+    // client clock (a client-now watermark could pre-read a superchat arriving
+    // moments later). Client now is only the fallback when none are visible.
+    const seen = stream.items
+      .filter((it) => it.kind === "super" && it.ts !== undefined)
+      .map((it) => (it as { ts?: number }).ts || 0);
+    const ts = seen.length ? Math.max(...seen) : Date.now() / 1000;
+    setSuperReadTs((prev) => Math.max(prev, ts)); // optimistic local read-state
+    void markSuperchatRead(hub, name, ts, { signal: gate }).then((serverTs) => {
+      if (gate.aborted || serverTs === null) return; // failed → stay read locally
+      setSuperReadTs((prev) => nextReadTs(prev, ts, serverTs));
+      void refresh(); // board unread mark clears
+    });
     return () => {
-      on = false;
+      gate.aborted = true;
     };
+    // stream.items is read once at open-time on purpose — items arriving later
+    // are the in-chat flush effect's job, not a reason to re-mark on-open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name, stream.ready, hub, refresh]);
 
   // Flush newly-seen super bubbles that arrive WHILE the chat is open (turn settled
@@ -274,10 +299,16 @@ function ChatStreamPage({
     if (!unread.length) return;
     const maxTs = Math.max(...unread);
     const timer = setTimeout(() => {
-      hub
-        .call<{ read_ts?: number }>("superchat.read", { name, ts: maxTs }, 10000)
-        .then((r) => setSuperReadTs((prev) => Math.max(prev, Number(r?.read_ts) || maxTs)))
-        .catch(() => {});
+      // Optimistic + fail-open, same as the on-open mark: the bubble flips to read
+      // locally even if the server write drops; retries persist it best-effort.
+      // No abort gate here — the optimistic bump re-runs this effect (superReadTs
+      // is a dep), and aborting on that cleanup would cancel the retries we just
+      // started. The call is idempotent and a post-unmount setState is a no-op.
+      setSuperReadTs((prev) => Math.max(prev, maxTs));
+      void markSuperchatRead(hub, name, maxTs).then((serverTs) => {
+        if (serverTs === null) return;
+        setSuperReadTs((prev) => nextReadTs(prev, maxTs, serverTs));
+      });
     }, 1600);
     return () => clearTimeout(timer);
   }, [stream.items, stream.streaming, name, superReadTs, hub]);
