@@ -70,6 +70,34 @@ await page.screenshot({ path: "/tmp/shot.png", fullPage: true });
   shot, it's the artifact. Workaround: navigate to another view and back (or take
   the screenshot twice) before judging dark-mode rendering.
 
+### Live functional check — a REAL model turn (what mocks can't cover)
+
+Mock/`sk-or-dummy` keys verify rendering and the fail-visibly path, but never a
+real provider round-trip. To exercise the actual attach→send→child-spawn→
+request→stream chain end to end:
+
+- Launch an **isolated** instance (`LUNAMOTH_HOME=<tmp>`), then copy the real
+  key from `~/.lunamoth/desktop.json` into `<tmp>/home/desktop.json` **in code,
+  never echoed** (read the dict, write the dict; pick a cheap real model).
+- `attach`/`send` are the **per-chara** JSON-RPC, NOT the hub WS. Connect to
+  `ws://host:wsport/chara/<session>?token=<t>` (session id, e.g. `card`, not the
+  display name). The hub WS (`/?token=`) only serves `cards.list`/`session.wake`;
+  the hub NEVER hosts an agent (one process = one activated session).
+- The chara runs in a supervisor-spawned `serve --stdio` child. Its outcome lands
+  in `<home>/sessions/<name>/sandbox/logs/{errors,lunamoth}.log`,
+  `requests.jsonl` (credential-redacted, 1 line per turn), and `transcript.db` —
+  read THOSE, not the hub's stdout, to see what the model call did.
+- **Teardown is mandatory and security-sensitive**: kill the instance, then
+  `grep -rl "sk-or-\|sk-"` the whole scratchpad before deleting — the real key
+  was copied into the isolated home; a stray review dir from an earlier run can
+  still hold a *dummy* key, but confirm which is which before you trust "clean".
+- Scar (2026-07-03): fail-visibly works beautifully under a real 401 — a dead
+  OpenRouter key surfaced as a clean `HTTP 401: … (provider said: "User not
+  found.")` RuntimeError, recorded to transcript, no daemon crash, no fabricated
+  reply. But you cannot verify a *successful* generation / self-work / speak with
+  a dead key: check the key first with a read-only `GET /api/v1/key` (OpenRouter)
+  before assuming a no-reply is a code bug.
+
 ---
 
 ## 2. Cloud deploy — the mechanism (decoupled from app code)
