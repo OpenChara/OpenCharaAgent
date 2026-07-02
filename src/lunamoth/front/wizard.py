@@ -14,7 +14,7 @@ from __future__ import annotations
 import getpass
 import sys
 
-from ..config import ROOT
+from ..config import content_dir
 from ..content.knobs import embodiment_copy, normalize_embodiment
 from ..session.settings import (
     PRESETS,
@@ -51,9 +51,13 @@ def _choose(prompt: str, options: list[str], default_index: int = 0) -> int:
 
 
 def _discover_characters() -> list[tuple[str, str]]:
-    """(label, path) for cards under cards/. Label is the card's name, else stem."""
+    """(label, path) for the bundled cards. Label is the card's name, else stem.
+
+    Resolved via config.content_dir (like content/persona.py): ROOT/"cards" exists
+    only in a dev checkout — on the wheel channel the cards live in the packaged
+    lunamoth/_bundled/cards, and scanning ROOT left this menu EMPTY."""
     out: list[tuple[str, str]] = []
-    base = ROOT / "cards"
+    base = content_dir("cards")
     if not base.is_dir():
         return out
     from ..content.cards import CharacterCard

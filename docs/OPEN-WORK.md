@@ -384,6 +384,34 @@ Highlights (full detail in git history):
   stale-paint artifact — documented in AGENT-FIELD-NOTES §1 scars, not an app
   bug).
 
+## 2026-07-03 third sweep — RESOLVED (front/CLI/install layer + docs + interactive UI)
+
+The last unaudited layer (front/ CLI, updater, install.sh, deploy, CI) plus a
+bilingual README accuracy pass and an interactive Playwright walk. All findings
+fixed, adversarially re-verified (the review's own 5 counter-findings fixed too):
+
+- **[HIGH, supply chain] install.sh's SHA256SUMS verification was dead code on
+  the default public path**, and `lunamoth update` installed the wheel with no
+  checksum at all. Both now download → verify sha256 → install from the
+  verified local file; mismatch refuses loudly; missing manifest / missing
+  sha-tool get an honest NOTE. One wall-clock budget spans download+install so
+  the webui's RPC ceiling holds.
+- **[MEDIUM] wizard's first-run character menu was EMPTY on the wheel channel**
+  (scanned repo-root cards/ instead of `content_dir("cards")`).
+- **[MEDIUM] daemon pid hygiene**: stale `daemon.pid` across reboots could make
+  `start-all` skip a chara or `stop` killpg an unrelated reused pid. Liveness
+  now includes an identity check with a per-session `--session` argv marker
+  (sibling charas distinguished; markerless pre-upgrade daemons still pass);
+  starts claim the pid file O_EXCL before spawning; `stop` no longer deletes an
+  in-flight start claim.
+- **READMEs (EN+zh, lockstep)**: five-platform messaging table (WeChatPadPro
+  row dropped, Discord/Slack added), real first-run flow, aspiration replaces
+  the removed "wishes", the Market + card import documented as shipped, image
+  gen / visuals pipeline / personal website / backdrop-sprite prefs added.
+- **Interactive UI walk** (create flow, dirty guard, generate-failure path,
+  chat settings): all correct — one fix, the first-run welcome now closes on
+  Escape like every other layer.
+
 ### Remaining OPEN residue (small, non-blocking)
 - Keyring cross-process last-write-wins (TUI `save_global_key` vs hub RPCs on
   `desktop.json`) — needs an flock to fully close; atomicity already prevents

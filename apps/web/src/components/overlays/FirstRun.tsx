@@ -9,7 +9,7 @@
  * welcome + the embedded picker. Binding UI rule: the lang toggle flips instantly;
  * each path opens its own overlay. */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useT, useLang } from "../../i18n";
 import { useOverlay } from "../../state/overlay";
 import { useEnsureModel } from "./useEnsureModel";
@@ -25,6 +25,16 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
   const overlay = useOverlay();
   const ensureModel = useEnsureModel();
   const [pane, setPane] = useState<Pane>("welcome");
+
+  // Escape dismisses, same as every other dismissible layer (DeckModal etc.) —
+  // the × already offers the way out; the keyboard shouldn't be second-class.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   const onPick = (card: DeckCard) => {
     onClose();

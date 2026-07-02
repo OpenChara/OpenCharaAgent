@@ -181,50 +181,54 @@ WHEEL_URL="$(printf '%s\n' "$release_json" \
 [ -n "$WHEEL_URL" ] || fail "no .whl asset found in the latest release of ${REPO_SLUG}"
 say "wheel: $WHEEL_URL"
 
-# A private-repo asset isn't a public URL — download it through the API with the
-# token, then install the local file. A public release URL installs directly.
-INSTALL_TARGET="$WHEEL_URL"
-TMP_WHEEL=""
+# Download the wheel to a local file FIRST — public and private path alike — so
+# the checksum below verifies the exact bytes we install. (Handing the URL
+# straight to `uv tool install` on the public path used to leave the
+# verification dead code on the DEFAULT install.) A private-repo asset
+# additionally needs the token as a bearer header. The wheel lives in its own
+# temp DIR; the trap cleans it up on EVERY exit path (fail included).
+WHEEL_BASENAME="${WHEEL_URL##*/}"
+TMP_DIR="$(mktemp -d -t lunamoth-XXXXXX)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+TMP_WHEEL="$TMP_DIR/$WHEEL_BASENAME"
 if [ -n "${GITHUB_TOKEN:-}" ]; then
-  TMP_WHEEL="$(mktemp -t lunamoth-XXXXXX).whl"
   say "downloading wheel (authenticated) ..."
-  curl -fsSL ${AUTH_HEADER[@]+"${AUTH_HEADER[@]}"} -H "Accept: application/octet-stream" -o "$TMP_WHEEL" "$WHEEL_URL" \
-    || fail "wheel download failed"
-  INSTALL_TARGET="$TMP_WHEEL"
+else
+  say "downloading wheel ..."
 fi
+curl -fsSL ${AUTH_HEADER[@]+"${AUTH_HEADER[@]}"} -H "Accept: application/octet-stream" -o "$TMP_WHEEL" "$WHEEL_URL" \
+  || fail "wheel download failed"
+INSTALL_TARGET="$TMP_WHEEL"
 
 # Integrity: if the release publishes a checksum for the wheel, verify the
 # downloaded bytes before installing — this product hands an LLM a shell, so a
 # tampered wheel is the worst case. If no checksum is published we say so plainly
 # rather than implying the download was verified.
-if [ -n "$TMP_WHEEL" ]; then
-  WHEEL_BASENAME="${WHEEL_URL##*/}"
-  SUM_URL="$(printf '%s' "$release_json" \
-    | grep -oE '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]+(SHA256SUMS|\.sha256)"' \
-    | head -n1 | sed -E 's/.*"(https[^"]+)"/\1/')"
-  if [ -n "$SUM_URL" ]; then
-    if command -v sha256sum >/dev/null 2>&1; then
-      ACTUAL_SHA="$(sha256sum "$TMP_WHEEL" | awk '{print $1}')"
-    elif command -v shasum >/dev/null 2>&1; then
-      ACTUAL_SHA="$(shasum -a 256 "$TMP_WHEEL" | awk '{print $1}')"
-    else
-      ACTUAL_SHA=""
-    fi
-    if [ -n "$ACTUAL_SHA" ]; then
-      # Pull the hash for THIS wheel by name (a SHA256SUMS may list more than one
-      # file); fall back to the sole hash if the manifest has no path column.
-      SUMS="$(curl -fsSL ${AUTH_HEADER[@]+"${AUTH_HEADER[@]}"} -H "Accept: application/octet-stream" "$SUM_URL")"
-      EXPECTED_SHA="$(printf '%s\n' "$SUMS" | grep -F "$WHEEL_BASENAME" | grep -oiE '[0-9a-f]{64}' | head -n1)"
-      [ -n "$EXPECTED_SHA" ] || EXPECTED_SHA="$(printf '%s\n' "$SUMS" | grep -oiE '[0-9a-f]{64}' | head -n1)"
-      if [ -n "$EXPECTED_SHA" ] && [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
-        rm -f "$TMP_WHEEL"
-        fail "wheel checksum MISMATCH (expected $EXPECTED_SHA, got $ACTUAL_SHA) — refusing to install"
-      fi
-      [ -n "$EXPECTED_SHA" ] && say "wheel checksum verified ($ACTUAL_SHA)"
-    fi
+SUM_URL="$(printf '%s' "$release_json" \
+  | grep -oE '"browser_download_url"[[:space:]]*:[[:space:]]*"[^"]+(SHA256SUMS|\.sha256)"' \
+  | head -n1 | sed -E 's/.*"(https[^"]+)"/\1/')"
+if [ -n "$SUM_URL" ]; then
+  if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL_SHA="$(sha256sum "$TMP_WHEEL" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    ACTUAL_SHA="$(shasum -a 256 "$TMP_WHEEL" | awk '{print $1}')"
   else
-    say "NOTE: this release publishes no checksum — wheel integrity NOT verified."
+    ACTUAL_SHA=""
+    say "NOTE: cannot verify the wheel checksum — no sha256 tool found (sha256sum/shasum); install one to enable verification."
   fi
+  if [ -n "$ACTUAL_SHA" ]; then
+    # Pull the hash for THIS wheel by name (a SHA256SUMS may list more than one
+    # file); fall back to the sole hash if the manifest has no path column.
+    SUMS="$(curl -fsSL ${AUTH_HEADER[@]+"${AUTH_HEADER[@]}"} -H "Accept: application/octet-stream" "$SUM_URL")"
+    EXPECTED_SHA="$(printf '%s\n' "$SUMS" | grep -F "$WHEEL_BASENAME" | grep -oiE '[0-9a-f]{64}' | head -n1)"
+    [ -n "$EXPECTED_SHA" ] || EXPECTED_SHA="$(printf '%s\n' "$SUMS" | grep -oiE '[0-9a-f]{64}' | head -n1)"
+    if [ -n "$EXPECTED_SHA" ] && [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+      fail "wheel checksum MISMATCH (expected $EXPECTED_SHA, got $ACTUAL_SHA) — refusing to install"
+    fi
+    [ -n "$EXPECTED_SHA" ] && say "wheel checksum verified ($ACTUAL_SHA)"
+  fi
+else
+  say "NOTE: this release publishes no checksum — wheel integrity NOT verified."
 fi
 
 say "installing lunamoth (server + messaging extras) ..."
@@ -232,8 +236,6 @@ say "installing lunamoth (server + messaging extras) ..."
 # `lunamoth` entrypoint onto PATH. Re-running upgrades in place (--force).
 "$UV" tool install --force "lunamoth[server,messaging] @ ${INSTALL_TARGET}" \
   || fail "uv tool install failed"
-
-[ -n "$TMP_WHEEL" ] && rm -f "$TMP_WHEEL"
 
 # `uv tool install` links into uv's own bin dir; surface it on PATH if needed.
 UV_BIN="$("$UV" tool dir --bin 2>/dev/null || true)"

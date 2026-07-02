@@ -36,7 +36,7 @@ The agent core borrows heavily from [Hermes](https://github.com/NousResearch/her
 
 ## Quick start
 
-It's beta, macOS and Linux. First launch is a welcome screen: pick a provider (OpenRouter / OpenAI / Ollama / Mock), then describe a character and let the AI draft the card, or pick one from the bundled deck. `/settings` changes anything later.
+It's beta, macOS and Linux. First launch is a welcome screen: pick a language, then describe a character and let the AI draft the card — or pick one from the bundled deck. The model is set in Settings: presets for OpenRouter / OpenAI / Volcengine Ark / Hunyuan / Alibaba Cloud DashScope, plus any custom OpenAI-compatible endpoint (local Ollama included). `/settings` changes anything later.
 
 ### On your Mac
 
@@ -53,7 +53,7 @@ Or run the full desktop app from a clone (this is how we develop it) — needs [
 
 ```bash
 git clone https://github.com/Lunamos/LunaMoth.git && cd LunaMoth
-uv sync --extra dev --extra server --extra messaging
+uv sync --extra dev --extra server --extra messaging   # add --extra visuals for local background removal
 cd apps/desktop && npm install && npm run dev      # opens the desktop window
 ```
 
@@ -84,12 +84,13 @@ A LunaMoth character isn't a chat session you open and throw away. It's a **char
 - **Two registers.** What it tells *you* (`say`) is separate from its own inner life (`muse`). You see the muse in the desktop app; messaging channels only get the `say`.
 - **Real agency, real fences.** Tools run inside a per-session OS jail that confines writes to the workspace and hides your secrets — and *refuses* to run rather than quietly dropping the jail (see [Tools & the sandbox](#tools--the-sandbox)).
 - **Memory you can trust.** Durable memory is a token-capped file the chara edits through tools, not a bottomless log. Every tool call is written to `sandbox/logs/audit.jsonl`.
+- **A home of its own.** An optional wake-time module gives the chara a personal homepage under `workspace/home`, served read-only in a sandboxed tab.
 
 The desktop app (a thin Electron window over the local server) is the main way to use it. A resident `lunamothd` supervisor keeps charas alive in the background and notifies you when one wants to talk. There's also a frozen-but-working terminal UI (`lunamoth tui`) for headless use.
 
 ## A model
 
-An API endpoint is the easy path — OpenRouter is the fastest: paste an `sk-or-…` key, name a model, test, go. Any OpenAI-compatible server works too, including local ones:
+An API endpoint is the easy path — OpenRouter is the fastest: paste an `sk-or-…` key, name a model, test, go. Wheel installs configure all of this in Settings; from a clone, env vars can also point the run script at any OpenAI-compatible server, including local ones:
 
 ```bash
 export LLM_PROVIDER=openai_compatible
@@ -103,7 +104,9 @@ With nothing configured, LunaMoth falls back to an offline mock engine — enoug
 
 ## Cards & content
 
-A card is the one content file: identity, voice, the embedded world (`character_book`), seed wishes, and limits all in a single `.json` or `.png` (SillyTavern V2/V3 — our cards *are* that format). `{{char}}`/`{{user}}` macros, `first_mes`, and keyword-triggered lore all work.
+A card is the one content file: identity, voice, the embedded world (`character_book`), the seed **Aspiration** (the user-owned north star — read-only to the chara, which advances it through its own tasks and in-session todos), and limits, all in a single `.json` or `.png` (SillyTavern V2/V3 — our cards *are* that format). `{{char}}`/`{{user}}` macros, `first_mes`, and keyword-triggered lore all work.
+
+Import is faithful and model-free — ST V2/V3/V1 JSON, character-tavern cards, or an ST PNG (the embedded portrait becomes the avatar) — via the create flow, and the built-in **Market** browses character-tavern.com's catalog (sort / filter / preview) for one-click import. The deck editor's Visuals tab generates a card's art set — keyvisual / avatar / sprite / stickers / background, anchored on the keyvisual so the whole set stays one character (optional local background removal: `uv sync --extra visuals`); chat can show a per-chara backdrop and sprite from chat settings.
 
 The bundled deck ships several example charas. Two carry the project:
 
@@ -126,7 +129,7 @@ How that command is contained is the **isolation level**, set per chara:
 | `sandbox` (default) | OS jail — `sandbox-exec` on macOS, `bubblewrap` → `Landlock` on Linux. Writes confined to the workspace; the rest of your `$HOME` (`~/.ssh`, `~/.aws`, `~/.lunamoth`) is unreadable. If no jail is available it refuses to run — it never silently degrades. |
 | `admin` | No jail: runs as you, cwd in the workspace. Opt-in, for a directory you trust. |
 
-Permissions flex at runtime: network is on by default (`/net off` to cut it), and `/allow-dir <path>` grants a writable path outside the workspace. Browser tools (`browser_*`, a real Chromium) are optional — `lunamoth setup browser` installs the driver; they run jailed on all platforms. The installer also best-effort installs `ffmpeg` so a chara can do video/audio work (e.g. an MV for music it made) from its terminal; if ffmpeg isn't present the prompt simply never mentions it.
+The level is picked at wake and switchable later — a change applies on the chara's next start. Permissions flex at runtime: network is on by default (`/net off` to cut it), and `/allow-dir <path>` grants a writable path outside the workspace. Browser tools (`browser_*`, a real Chromium) are optional — `lunamoth setup browser` installs the driver; they run jailed on all platforms. `generate_image` is multi-provider (Ark / DashScope / OpenAI / OpenRouter), runs as a non-blocking background job, and delivers the result as a `MEDIA:` line on every surface. The installer also best-effort installs `ffmpeg` so a chara can do video/audio work (e.g. an MV for music it made) from its terminal; if ffmpeg isn't present the prompt simply never mentions it.
 
 ## Run it on a server
 
@@ -182,22 +185,24 @@ Frontend dev loop: `uv run lunamoth desktop --no-open` in one terminal, `cd apps
 
 ## Messaging gateways
 
-A chara can also live in your chat apps. In the desktop app's **Gateways** page (or `lunamoth gateway NAME` headless), connect personal WeChat, QQ, or Telegram — config lives in `~/.lunamoth/sessions/NAME/messaging.json`, login credentials stay in a separate per-platform file. Only `say`/`speak` text is delivered; muse and tool chatter never leave. An empty `allowed_senders` is open to anyone (you'll get a warning at startup) — add ids to lock it down.
+A chara can also live in your chat apps. In the desktop app's **Gateways** page (or `lunamoth gateway NAME` headless), connect personal WeChat, QQ, Telegram, Discord, or Slack — config lives in `~/.lunamoth/sessions/NAME/messaging.json`, login credentials stay in a separate per-platform file. Only `say`/`speak` text is delivered; muse and tool chatter never leave. An empty `allowed_senders` is open to anyone (you'll get a warning at startup) — add ids to lock it down.
 
 | Platform | How |
 | --- | --- |
-| **WeChat** | iLink/ClawBot (`weixin`, scan a QR — lowest ban risk, grayscale-gated), or self-run [WeChatPadPro](https://github.com/WeChatPadPro/WeChatPadPro) (`weixinpad`, any account — but real ban risk, use a spare). |
+| **WeChat** | iLink/ClawBot (`weixin`) — scan a QR. Lowest ban risk, grayscale-gated. |
 | **QQ** | OneBot v11 via NapCat — LunaMoth is the WS client; it never holds credentials. |
 | **Telegram** | A `@BotFather` bot token, long-polled. No public URL needed. |
+| **Discord** | A bot token over the native Gateway WebSocket — enable the Message Content intent. |
+| **Slack** | Socket Mode — an app-level `xapp-` token plus a bot `xoxb-` token. No public URL needed. |
 
 These are built but not yet hardened against real-world credentials — treat them as beta. See [SECURITY.md](SECURITY.md) for the trust model.
 
 ## Roadmap
 
-The foundations are done: ST-compatible cards, composable tools with native tool calling, the sandbox, persistent `live`/`chat` charas, transcript + bounded memory, self-written skills, MCP, wishes, the typed event protocol, the three-zone prompt stack, the desktop app, and the messaging gateways. What's left is mostly the characters themselves:
+The foundations are done: ST-compatible cards, composable tools with native tool calling, the sandbox, persistent `live`/`chat` charas, transcript + bounded memory, self-written skills, MCP, the aspiration → task goal model, the typed event protocol, the three-zone prompt stack, the desktop app, and the messaging gateways. What's left is mostly the characters themselves:
 
 - **The chara curriculum** *(the big one)* — neutral prompt guidance so any worldview can live well: how to use tools, treat goals, spend unattended time — suggestions, never orders. Next: cross-worldview eval cards and a browse path for curiosity.
-- **Card studio & market** — a faster inspiration→living-chara path in the deck, plus a shareable card/pack index (with proper card + asset import).
+- **Card packs** — the Market and faithful card import shipped; what's left is our own shareable pack format + index (`lunamoth-pack.json`) so creators can publish card+asset packs.
 - **A packaged app** — drag-to-Applications DMG / AppImage, so it isn't clone-only.
 - **World-info parity** — recursive scan, cooldown/delay, insertion depth, probability, whole-word matching (`content/worldinfo.py`).
 - **Messaging & remote** — live-test the gateways with real accounts; a remote TUI client over the gateway.

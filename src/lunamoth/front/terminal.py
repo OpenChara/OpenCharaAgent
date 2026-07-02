@@ -211,6 +211,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--clean-on-exit', action='store_true', help='wipe the session sandbox on shutdown (default: persist)')
     parser.add_argument('--no-clean-on-exit', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--debug', action='store_true', help='DEBUG-level diagnostics in sandbox/logs/')
+    # INERT identity marker stamped by cli._start_daemon: never read here (the session
+    # rides env) — it only makes the daemon argv distinguishable per chara, so
+    # sessions.pid_is_lunamoth can tell sibling daemons apart after reboot pid-reuse.
+    parser.add_argument('--session', default='', help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if args.debug:
         import os

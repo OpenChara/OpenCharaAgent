@@ -7,8 +7,12 @@ the uv-not-found and no-release error paths, and wheel-URL extraction.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
+from pathlib import Path
+
+import pytest
 
 from lunamoth import updater
 
@@ -18,10 +22,12 @@ def _completed(cmd, code=0, out="", err=""):
 
 
 def test_apply_wheel_reinstalls_from_latest_url_never_upgrade(monkeypatch):
+    # No checksum manifest on the release → the honest fallback installs the URL
+    # directly (with a NOTE), still via reinstall — never `uv tool upgrade`.
     monkeypatch.setattr(updater, "is_dev", lambda: False)
     monkeypatch.setattr(updater, "find_uv", lambda: "/fake/uv")
-    monkeypatch.setattr(updater, "latest_wheel_url",
-                        lambda: "https://x/lunamoth-0.9.0-py3-none-any.whl")
+    monkeypatch.setattr(updater, "_latest_wheel_assets",
+                        lambda: ("https://x/lunamoth-0.9.0-py3-none-any.whl", None))
     seen = {}
 
     def fake_run(cmd, **kw):
@@ -35,12 +41,132 @@ def test_apply_wheel_reinstalls_from_latest_url_never_upgrade(monkeypatch):
     assert seen["cmd"] == ["/fake/uv", "tool", "install", "--force",
                            "lunamoth[server,messaging] @ https://x/lunamoth-0.9.0-py3-none-any.whl"]
     assert "upgrade" not in seen["cmd"]
+    assert "NOT verified" in res["output"]  # no manifest → say so plainly
+
+
+def test_apply_wheel_verifies_checksum_and_installs_the_local_file(monkeypatch):
+    """The release publishes SHA256SUMS → apply downloads BOTH, verifies, and hands
+    uv the verified LOCAL bytes (never the raw URL); the temp wheel is cleaned up."""
+    monkeypatch.setattr(updater, "is_dev", lambda: False)
+    monkeypatch.setattr(updater, "find_uv", lambda: "/fake/uv")
+    monkeypatch.setattr(updater, "_latest_wheel_assets",
+                        lambda: ("https://x/lunamoth-1.0.0-py3-none-any.whl",
+                                 "https://x/SHA256SUMS"))
+    blob = b"wheel-bytes"
+    digest = hashlib.sha256(blob).hexdigest()
+    sums = f"{digest}  lunamoth-1.0.0-py3-none-any.whl\n".encode()
+    monkeypatch.setattr(updater, "_http_get",
+                        lambda url, timeout=0: blob if url.endswith(".whl") else sums)
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        target = cmd[-1].split(" @ ", 1)[1]
+        seen["target"] = target
+        seen["bytes"] = Path(target).read_bytes()  # exists AT install time
+        return _completed(cmd, 0, "installed")
+    monkeypatch.setattr(updater.subprocess, "run", fake_run)
+
+    res = updater.apply()
+    assert res["ok"] and res["restart_required"]
+    assert not seen["target"].startswith("http")      # a local file, not the URL
+    assert seen["bytes"] == blob                      # the exact verified bytes
+    assert digest in res["output"]                    # the verification is reported
+    assert not Path(seen["target"]).exists()          # temp wheel removed in finally
+
+
+def test_apply_shares_one_wall_budget_across_download_and_install(monkeypatch):
+    """Download + install share ONE _APPLY_TIMEOUT wall budget: the wall time the
+    downloads spent is deducted from the uv step's timeout (floor 60s), so apply()
+    can't stack two full timeouts past the webui's 320s update.apply RPC ceiling."""
+    monkeypatch.setattr(updater, "is_dev", lambda: False)
+    monkeypatch.setattr(updater, "find_uv", lambda: "/fake/uv")
+    monkeypatch.setattr(updater, "_latest_wheel_assets",
+                        lambda: ("https://x/lunamoth-1.0.0-py3-none-any.whl",
+                                 "https://x/SHA256SUMS"))
+    blob = b"wheel-bytes"
+    digest = hashlib.sha256(blob).hexdigest()
+    sums = f"{digest}  lunamoth-1.0.0-py3-none-any.whl\n".encode()
+
+    clock = {"t": 1000.0}
+
+    class _Clock:  # only the attribute apply() reaches (time.monotonic)
+        @staticmethod
+        def monotonic():
+            return clock["t"]
+
+    monkeypatch.setattr(updater, "time", _Clock)
+    spent = {"per_download": 110.0}
+
+    def slow_get(url, timeout=0):
+        clock["t"] += spent["per_download"]  # each of the two downloads burns wall time
+        return blob if url.endswith(".whl") else sums
+
+    monkeypatch.setattr(updater, "_http_get", slow_get)
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["timeout"] = kw.get("timeout")
+        return _completed(cmd, 0, "installed")
+
+    monkeypatch.setattr(updater.subprocess, "run", fake_run)
+
+    assert updater.apply()["ok"]
+    # 220s downloading → the install step gets the REMAINING 80s, not a fresh 300
+    assert seen["timeout"] == pytest.approx(updater._APPLY_TIMEOUT - 220.0)
+
+    # budget (over)exhausted: the step still gets the 60s floor to fail with output
+    clock["t"] = 1000.0
+    spent["per_download"] = 170.0  # 340s total — past the whole budget
+    assert updater.apply()["ok"]
+    assert seen["timeout"] == 60.0
+
+
+def test_apply_wheel_checksum_mismatch_never_installs(monkeypatch):
+    monkeypatch.setattr(updater, "is_dev", lambda: False)
+    monkeypatch.setattr(updater, "find_uv", lambda: "/fake/uv")
+    monkeypatch.setattr(updater, "_latest_wheel_assets",
+                        lambda: ("https://x/lunamoth-1.0.0-py3-none-any.whl",
+                                 "https://x/SHA256SUMS"))
+    sums = ("0" * 64 + "  lunamoth-1.0.0-py3-none-any.whl\n").encode()
+    monkeypatch.setattr(updater, "_http_get",
+                        lambda url, timeout=0: b"tampered" if url.endswith(".whl") else sums)
+    calls = []
+    monkeypatch.setattr(updater.subprocess, "run",
+                        lambda cmd, **kw: calls.append(cmd) or _completed(cmd))
+    res = updater.apply()
+    assert res["ok"] is False and res["restart_required"] is False
+    assert calls == []                       # uv was NEVER invoked
+    assert "MISMATCH" in res["output"]
+    assert updater.manual_command() in res["output"]
+
+
+def test_download_verified_wheel_picks_the_hash_by_basename(monkeypatch):
+    blob = b"the-wheel"
+    digest = hashlib.sha256(blob).hexdigest()
+    manifest = ("1" * 64 + "  other-2.0.0-py3-none-any.whl\n"
+                + digest + "  lunamoth-1.0.0-py3-none-any.whl\n").encode()
+    monkeypatch.setattr(updater, "_http_get",
+                        lambda url, timeout=0: blob if url.endswith(".whl") else manifest)
+    path, sha = updater.download_verified_wheel(
+        "https://x/lunamoth-1.0.0-py3-none-any.whl", "https://x/SHA256SUMS")
+    try:
+        assert sha == digest and path.read_bytes() == blob
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def test_download_verified_wheel_refuses_a_hashless_manifest(monkeypatch):
+    monkeypatch.setattr(updater, "_http_get",
+                        lambda url, timeout=0: b"w" if url.endswith(".whl") else b"no hashes here\n")
+    with pytest.raises(updater.ChecksumMismatch):
+        updater.download_verified_wheel("https://x/w.whl", "https://x/SHA256SUMS")
 
 
 def test_apply_wheel_no_release_is_a_clear_error(monkeypatch):
     monkeypatch.setattr(updater, "is_dev", lambda: False)
     monkeypatch.setattr(updater, "find_uv", lambda: "/fake/uv")
-    monkeypatch.setattr(updater, "latest_wheel_url", lambda: None)
+    monkeypatch.setattr(updater, "_latest_wheel_assets", lambda: (None, None))
     res = updater.apply()
     assert res["ok"] is False and res["restart_required"] is False
     assert "release wheel" in res["output"]
@@ -85,7 +211,7 @@ def test_apply_dev_pulls_then_syncs(monkeypatch):
 def test_apply_surfaces_a_failing_step(monkeypatch):
     monkeypatch.setattr(updater, "is_dev", lambda: False)
     monkeypatch.setattr(updater, "find_uv", lambda: "/fake/uv")
-    monkeypatch.setattr(updater, "latest_wheel_url", lambda: "https://x/w.whl")
+    monkeypatch.setattr(updater, "_latest_wheel_assets", lambda: ("https://x/w.whl", None))
     monkeypatch.setattr(updater.subprocess, "run",
                         lambda cmd, **kw: _completed(cmd, 1, "", "boom"))
     res = updater.apply()
@@ -113,6 +239,7 @@ def test_fetch_releases_extracts_the_wheel_asset_url(monkeypatch):
     rels = updater.fetch_releases()
     assert rels[0]["tag"] == "v0.9.0"
     assert rels[0]["wheel_url"] == "https://x/w.whl"  # the .whl asset, not SHA256SUMS
+    assert rels[0]["sums_url"] == "https://x/SHA256SUMS"  # the checksum manifest, for apply()
 
 
 def test_latest_wheel_url_uses_newest_release_only(monkeypatch):

@@ -1,7 +1,9 @@
 import json
+import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -103,6 +105,128 @@ def test_running_pid_lifecycle():
         S.delete_session("run")
     meta.clear_running()
     S.delete_session("run")
+
+
+def _backdate(path, seconds):
+    old = time.time() - seconds
+    os.utime(path, (old, old))
+
+
+def test_daemon_pid_reused_by_a_stranger_is_stale(monkeypatch):
+    """Reboot pid-reuse: a LIVE pid that fails the identity check must read as stale —
+    the file is dropped, so start proceeds and stop never signals the stranger."""
+    meta = S.create_session("reused")
+    meta.daemon_pid_path.write_text(str(os.getpid()), encoding="utf-8")  # alive, but pytest
+    _backdate(meta.daemon_pid_path, 3600)  # past the fresh-spawn identity grace
+    monkeypatch.setattr(S, "pid_is_lunamoth", lambda pid, session=None: False)  # not one of ours
+    assert meta.daemon_pid() is None
+    assert not meta.daemon_pid_path.exists()  # stale file removed
+
+
+def test_daemon_pid_keeps_a_verified_lunamoth_process(monkeypatch):
+    meta = S.create_session("ours")
+    meta.daemon_pid_path.write_text(str(os.getpid()), encoding="utf-8")
+    _backdate(meta.daemon_pid_path, 3600)
+    monkeypatch.setattr(S, "pid_is_lunamoth", lambda pid, session=None: True)  # identity passes
+    assert meta.daemon_pid() == os.getpid()
+    assert meta.daemon_pid_path.exists()
+
+
+def test_daemon_pid_trusts_a_fresh_record_during_spawn(monkeypatch):
+    """A record written moments ago may point at a child still mid fork→exec (its
+    cmdline briefly reads as the parent's) — identity must not condemn it yet."""
+    meta = S.create_session("fresh")
+    meta.daemon_pid_path.write_text(str(os.getpid()), encoding="utf-8")  # just written
+    monkeypatch.setattr(S, "pid_is_lunamoth", lambda pid, session=None: False)
+    assert meta.daemon_pid() == os.getpid()  # grace window: trusted, not dropped
+    assert meta.daemon_pid_path.exists()
+
+
+def test_dead_daemon_pid_file_is_dropped():
+    meta = S.create_session("deadpid")
+    meta.daemon_pid_path.write_text("999999999", encoding="utf-8")
+    assert meta.daemon_pid() is None
+    assert not meta.daemon_pid_path.exists()  # removed so a new start can claim
+
+
+def test_empty_daemon_pid_is_an_in_flight_claim():
+    """cli._start_daemon claims daemon.pid (O_EXCL, empty) BEFORE spawning: a fresh
+    empty file is not stale; an orphaned claim expires after the TTL."""
+    meta = S.create_session("claiming")
+    meta.daemon_pid_path.write_text("", encoding="utf-8")
+    assert meta.daemon_pid() is None
+    assert meta.daemon_pid_path.exists()  # fresh claim: left for the starter
+    _backdate(meta.daemon_pid_path, 2 * S._CLAIM_TTL)
+    assert meta.daemon_pid() is None
+    assert not meta.daemon_pid_path.exists()  # a crashed starter's claim self-heals
+
+
+def test_pid_is_lunamoth_reads_the_command_line():
+    # argv carrying the package name passes; a plain sleeper does not; nor a dead pid.
+    probe = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)",
+                              "lunamoth-identity-probe"])
+    sleeper = subprocess.Popen(["/bin/sleep", "30"])
+    try:
+        deadline = time.time() + 5  # give the children a beat to finish exec
+        while time.time() < deadline and not S.pid_is_lunamoth(probe.pid):
+            time.sleep(0.05)
+        assert S.pid_is_lunamoth(probe.pid) is True
+        assert S.pid_is_lunamoth(sleeper.pid) is False
+    finally:
+        for p in (probe, sleeper):
+            p.kill()
+            p.wait()
+    assert S.pid_is_lunamoth(999999999) is False
+
+
+def test_pid_is_lunamoth_tells_sibling_sessions_apart():
+    """Every daemon argv is otherwise identically `-m lunamoth.front.terminal` (the
+    session rides only env), so cli._start_daemon stamps an inert `--session NAME`
+    marker. With a session given, a DIFFERENT marker is a sibling's daemon (reboot
+    pid-reuse across charas once made start-all skip A and A.stop() kill B)."""
+    code = "import time; time.sleep(30)"
+    alice = subprocess.Popen([sys.executable, "-c", code, "lunamoth", "--session", "alice"])
+    bob = subprocess.Popen([sys.executable, "-c", code, "lunamoth", "--session", "bob"])
+    old = subprocess.Popen([sys.executable, "-c", code, "lunamoth-pre-marker-daemon"])
+    try:
+        deadline = time.time() + 5  # give the children a beat to finish exec
+        while time.time() < deadline and not (
+            S.pid_is_lunamoth(alice.pid, session="alice")
+            and S.pid_is_lunamoth(bob.pid, session="bob")
+            and S.pid_is_lunamoth(old.pid)
+        ):
+            time.sleep(0.05)
+        assert S.pid_is_lunamoth(alice.pid, session="alice") is True
+        assert S.pid_is_lunamoth(bob.pid, session="bob") is True
+        # the sibling collision: bob's daemon must NOT pass as alice's (and vice versa)
+        assert S.pid_is_lunamoth(bob.pid, session="alice") is False
+        assert S.pid_is_lunamoth(alice.pid, session="bob") is False
+        # back-compat: a pre-upgrade daemon carries NO marker — lunamoth, just
+        # unlabeled: it must not be treated as foreign.
+        assert S.pid_is_lunamoth(old.pid, session="alice") is True
+        # the bare match (no session asked) is unchanged
+        assert S.pid_is_lunamoth(bob.pid) is True
+    finally:
+        for p in (alice, bob, old):
+            p.kill()
+            p.wait()
+
+
+def test_daemon_pid_hands_its_session_name_to_the_identity_check(monkeypatch):
+    """daemon_pid() must ask for THIS chara's daemon, not any lunamoth process —
+    that session= is what stops a sibling's reused pid from passing."""
+    meta = S.create_session("named")
+    meta.daemon_pid_path.write_text(str(os.getpid()), encoding="utf-8")
+    _backdate(meta.daemon_pid_path, 3600)
+    seen = {}
+
+    def fake_identity(pid, session=None):
+        seen["session"] = session
+        return True
+
+    monkeypatch.setattr(S, "pid_is_lunamoth", fake_identity)
+    assert meta.daemon_pid() == os.getpid()
+    assert seen["session"] == "named"
 
 
 def test_stale_running_marker_is_harmless():

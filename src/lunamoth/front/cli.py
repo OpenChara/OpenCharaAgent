@@ -101,32 +101,64 @@ def _start_daemon(meta: S.SessionMeta, patience: float | None = None) -> bool:
     """Spawn a detached background process where this agent lives on its own.
 
     The agent keeps thinking / creating in its workspace with no terminal
-    attached. Returns True if it started (or was already running)."""
-    if meta.daemon_pid():
+    attached. Returns True if it started (or was already running/starting)."""
+    if meta.daemon_pid():  # also drops a STALE pid file (reboot pid-reuse / dead pid)
         return True
     if not meta.is_configured():
         return False
+    # Claim daemon.pid atomically (O_EXCL) BEFORE spawning: two concurrent starts
+    # both used to pass the falsy pid check and double-spawn the agent. The winner
+    # writes the real pid after Popen; a loser finds the claim already held and
+    # treats the chara as already starting. daemon_pid() reads an empty file as an
+    # in-flight claim (never stale until its TTL lapses).
+    meta.root.mkdir(parents=True, exist_ok=True)
+    try:
+        claim = meta.daemon_pid_path.open("x", encoding="utf-8")
+    except FileExistsError:
+        return True  # a concurrent starter holds the claim — already starting
     env = {**os.environ, **meta.env()}  # meta.env() carries LUNAMOTH_PY_BACKEND
-    log = meta.daemon_log.open("ab")
-    argv = [sys.executable, "-m", "lunamoth.front.terminal"]
-    if patience is not None:
-        argv += ["--patience", str(patience)]
-    proc = subprocess.Popen(
-        argv,
-        stdin=subprocess.DEVNULL, stdout=log, stderr=log,
-        start_new_session=True, env=env, cwd=str(APP_DIR),
-    )
-    meta.daemon_pid_path.write_text(str(proc.pid), encoding="utf-8")
+    try:
+        log = meta.daemon_log.open("ab")
+        # --session is an INERT identity marker (terminal.py ignores it; the session
+        # itself rides env): without it every daemon argv is identical, so after a
+        # reboot pid_is_lunamoth couldn't tell chara A's daemon from chara B's.
+        argv = [sys.executable, "-m", "lunamoth.front.terminal", "--session", meta.name]
+        if patience is not None:
+            argv += ["--patience", str(patience)]
+        proc = subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+            start_new_session=True, env=env, cwd=str(APP_DIR),
+        )
+    except BaseException:
+        claim.close()
+        meta.daemon_pid_path.unlink(missing_ok=True)  # release the claim on spawn failure
+        raise
+    with claim:
+        claim.write(str(proc.pid))
     meta.last_active = time.time()
     meta.save()
     return True
 
 
-def _stop_daemon(meta: S.SessionMeta) -> bool:
+def _stop_daemon(meta: S.SessionMeta) -> str:
+    """Returns a status: "stopped" | "not running" | "starting — try again shortly".
+    Callers print it (or compare == "stopped"); never test its truthiness.
+
+    daemon_pid() verifies the process IDENTITY (pid_is_lunamoth, with the session's
+    --session marker) — a reboot-reused pid comes back None (file dropped), so we
+    never killpg an unrelated process or a sibling chara's daemon. A FRESH empty
+    claim means a concurrent _start_daemon is mid-Popen: unlinking it would let the
+    daemon come up with no pid file (unfindable, unstoppable), so the claim is left
+    for the starter and the stop reports "starting" instead of silently clearing it.
+    Only a genuinely stale file (dead/foreign pid, or a claim past its TTL) is
+    removed here."""
     pid = meta.daemon_pid()
     if not pid:
+        if meta.daemon_claim_active():
+            return "starting — try again shortly"
         meta.daemon_pid_path.unlink(missing_ok=True)
-        return False
+        return "not running"
     import signal
     try:
         os.killpg(os.getpgid(pid), signal.SIGTERM)
@@ -136,7 +168,7 @@ def _stop_daemon(meta: S.SessionMeta) -> bool:
         except OSError:
             pass
     meta.daemon_pid_path.unlink(missing_ok=True)
-    return True
+    return "stopped"
 
 
 def _launch_tui(meta: S.SessionMeta, args: argparse.Namespace) -> int:
@@ -216,7 +248,7 @@ def cmd_tui(args: argparse.Namespace) -> int:
         elif action == "stop" and name:
             meta = S.load_session(name)
             if meta:
-                print("stopped" if _stop_daemon(meta) else "not running")
+                print(_stop_daemon(meta))
 
 
 def _prompt_new_session() -> "S.SessionMeta | None":
@@ -302,14 +334,14 @@ def cmd_start(args: argparse.Namespace) -> int:
 
 def cmd_stop(args: argparse.Namespace) -> int:
     if getattr(args, "all", False) or args.name is None:
-        n = sum(1 for m in S.list_sessions() if _stop_daemon(m))
+        n = sum(1 for m in S.list_sessions() if _stop_daemon(m) == "stopped")
         print(f"stopped {n} background chara")
         return 0
     meta = S.load_session(args.name)
     if meta is None:
         print(f"error: no chara named {args.name!r}", file=sys.stderr)
         return 1
-    print(f"{args.name}: stopped" if _stop_daemon(meta) else f"{args.name}: not running")
+    print(f"{args.name}: {_stop_daemon(meta)}")
     return 0
 
 

@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -68,6 +69,73 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 def valid_name(name: str) -> bool:
     return bool(_NAME_RE.match(name))
+
+
+# An EMPTY daemon.pid is an in-flight start claim (front/cli._start_daemon opens it
+# O_EXCL before spawning, writes the pid after). A claim that outlives this TTL is a
+# crashed starter — drop it so the chara can be started again.
+_CLAIM_TTL = 60.0
+
+# A pid RECORD younger than this is trusted without the identity check: a just-
+# spawned child can still be mid fork→exec, when its command line briefly reads as
+# the parent's. The reboot-reuse staleness the check exists for is by definition
+# hours old, so the grace window costs nothing.
+_IDENTITY_GRACE = 5.0
+
+
+def pid_is_lunamoth(pid: int, session: str | None = None) -> bool:
+    """Does this pid actually belong to a lunamoth process — and, when ``session``
+    is given, to THAT chara's daemon?
+
+    Liveness alone (``kill(pid, 0)``) is not identity: after a reboot the OS can hand
+    a recorded pid to an UNRELATED process. Read the command line (/proc on Linux,
+    ``ps`` on macOS) and require the lowercase package name in it — the daemon argv
+    always carries it (``-m lunamoth.front.terminal``, or the ``lunamoth``
+    entrypoint). Case-SENSITIVE on purpose: a stranger whose path merely contains
+    e.g. ``.../LunaMoth/...`` must not pass.
+
+    The package name alone can't tell chara A's daemon from chara B's — every daemon
+    argv is identically ``-m lunamoth.front.terminal`` (the session rides only env),
+    so reboot pid-reuse ACROSS siblings made start-all skip A and A.stop() kill B.
+    cli._start_daemon therefore stamps an inert ``--session <name>`` marker into the
+    argv (front/terminal.py accepts and ignores it). With ``session`` given, a
+    cmdline carrying a DIFFERENT ``--session`` is a sibling's process — foreign. A
+    lunamoth cmdline with NO marker at all still passes: a pre-upgrade daemon
+    (spawned before the marker existed) must not be treated as a stranger.
+    False on any doubt."""
+    if pid <= 0:
+        return False
+    try:
+        proc = Path(f"/proc/{pid}/cmdline")
+        if proc.exists():  # Linux
+            cmdline = proc.read_bytes().replace(b"\x00", b" ").decode("utf-8", errors="replace")
+        else:  # macOS (no /proc)
+            p = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
+                               capture_output=True, text=True, timeout=5)
+            if p.returncode != 0:
+                return False
+            cmdline = p.stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if "lunamoth" not in cmdline:
+        return False
+    if session is None:
+        return True
+    # Session names are token-safe (valid_name: no whitespace), so plain word
+    # splitting recovers the marker from either the /proc or the `ps` rendering.
+    tokens = cmdline.split()
+    marker: str | None = None
+    for i, tok in enumerate(tokens):
+        if tok == "--session":
+            if i + 1 < len(tokens):
+                marker = tokens[i + 1]
+            break
+        if tok.startswith("--session="):
+            marker = tok.split("=", 1)[1]
+            break
+    if marker is None:
+        return True  # pre-marker daemon (old install) — lunamoth, just unlabeled
+    return marker == session
 
 
 @dataclass
@@ -200,9 +268,56 @@ class SessionMeta:
         except (OSError, ValueError):
             return None
 
+    def daemon_claim_active(self) -> bool:
+        """True while daemon.pid is an EMPTY in-flight start claim younger than
+        ``_CLAIM_TTL`` (cli._start_daemon opens it O_EXCL BEFORE spawning and writes
+        the real pid only after Popen). The ONE freshness rule — ``daemon_pid()``
+        (leave the claim for the starter) and cli._stop_daemon (don't unlink a
+        mid-spawn claim) both read it, so they can never disagree."""
+        try:
+            if self.daemon_pid_path.read_text().strip():
+                return False  # a real pid record, not a claim
+            return time.time() - self.daemon_pid_path.stat().st_mtime <= _CLAIM_TTL
+        except OSError:
+            return False  # no file (or unreadable) — no claim to protect
+
     def daemon_pid(self) -> int | None:
-        """PID of the detached background loop for this agent, if running."""
-        return self._alive(self.daemon_pid_path)
+        """PID of the detached background loop for this agent, if running.
+
+        Liveness alone is not enough: across a reboot the recorded pid can be REUSED
+        by an unrelated process — ``start-all`` would silently skip the chara and
+        ``stop`` would killpg a stranger. Verify the process identity
+        (``pid_is_lunamoth``, with THIS session's ``--session`` marker so a sibling
+        chara's daemon is foreign too); any STALE pid file (dead pid, garbage
+        content, or a foreign process) is removed here, so start may proceed and
+        stop never signals it. An EMPTY file is an in-flight start claim (see
+        cli._start_daemon) and is left alone until ``_CLAIM_TTL`` expires."""
+        try:
+            text = self.daemon_pid_path.read_text().strip()
+        except OSError:
+            return None
+        if not text:
+            if not self.daemon_claim_active():
+                # a crashed starter's orphaned claim self-heals after the TTL
+                self.daemon_pid_path.unlink(missing_ok=True)
+            return None
+        try:
+            pid = int(text)
+            os.kill(pid, 0)
+        except (OSError, ValueError):
+            self.daemon_pid_path.unlink(missing_ok=True)  # dead pid / garbage — stale
+            return None
+        if not pid_is_lunamoth(pid, session=self.name):
+            # Identity failure = reboot pid-reuse — EXCEPT a record written moments
+            # ago, whose child may still be mid fork→exec (see _IDENTITY_GRACE).
+            try:
+                fresh = time.time() - self.daemon_pid_path.stat().st_mtime < _IDENTITY_GRACE
+            except OSError:
+                fresh = False
+            if not fresh:
+                self.daemon_pid_path.unlink(missing_ok=True)
+                return None
+        return pid
 
     def status(self) -> str:
         """attached (live TUI) | running (background daemon) | idle | new (unconfigured)."""
