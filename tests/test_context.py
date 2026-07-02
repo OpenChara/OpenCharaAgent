@@ -169,6 +169,37 @@ def test_token_count_restore_resets_memo():
     assert c.token_count() == _fresh_count(c.messages)
 
 
+def test_token_count_is_thread_safe_against_trim():
+    """snapshot() calls token_count() from the TRANSPORT thread while the worker
+    thread's add_message→trim() iterates/rebuilds the same _tok_memo dict — the
+    unguarded interleave raised 'dictionary changed size during iteration'."""
+    import threading
+
+    c = ContextBuffer(max_tokens=400, trim_buffer_tokens=0)
+    errors: list[BaseException] = []
+    stop = threading.Event()
+
+    def counter():
+        try:
+            while not stop.is_set():
+                c.token_count()
+        except BaseException as exc:  # noqa: BLE001 - the assertion target
+            errors.append(exc)
+
+    t = threading.Thread(target=counter)
+    t.start()
+    try:
+        # Every add trims (window ~400 tokens), so the memo is constantly pruned
+        # while the counter thread constantly rebuilds it.
+        for i in range(3000):
+            c.add("user", f"message number {i} with some padding text attached")
+    finally:
+        stop.set()
+        t.join()
+    assert errors == []
+    assert c.token_count() == _fresh_count(c.messages)
+
+
 @pytest.fixture
 def agent(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")

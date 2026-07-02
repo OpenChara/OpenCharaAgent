@@ -86,6 +86,47 @@ def test_in_range_timeout_gets_no_note(tmp_path):
     assert "clamped" not in out
 
 
+def _capture_jail_builder(monkeypatch):
+    """Stub build_jail_command in the runner's namespace, recording its kwargs.
+    Pure argv-construction assert: the Linux bwrap tier (run_cwd=None, chdirs
+    itself) must receive the validated workdir instead of silently dropping it."""
+    import lunamoth.tools.runner as R
+    captured: dict = {}
+
+    def fake_build(command, workspace, isolation, *, allow_network=False, writable=(),
+                   browser=False, interactive=False, workdir=None):
+        captured["workdir"] = workdir
+        captured["interactive"] = interactive
+        return ["/bin/bash", "-c", command], str(workspace), ""
+
+    monkeypatch.setattr(R, "build_jail_command", fake_build)
+    return captured
+
+
+def test_workdir_threaded_into_jail_builder(tmp_path, monkeypatch):
+    captured = _capture_jail_builder(monkeypatch)
+    ws = tmp_path / "workspace"
+    (ws / "sub").mkdir(parents=True)
+    out = run_terminal("pwd", ws, isolation="sandbox", workdir="sub", timeout=10)
+    assert "exit=0" in out
+    assert captured["workdir"] == str((ws / "sub").resolve())
+    # An UNVALIDATED workdir (escapes the workspace under sandbox) falls back to
+    # the workspace — the jail builder never sees the escaping path.
+    run_terminal("pwd", ws, isolation="sandbox", workdir="/etc", timeout=10)
+    assert captured["workdir"] == str(ws.resolve())
+
+
+def test_pty_workdir_threaded_into_jail_builder(tmp_path, monkeypatch):
+    from lunamoth.tools.runner import run_terminal_pty
+    captured = _capture_jail_builder(monkeypatch)
+    ws = tmp_path / "workspace"
+    (ws / "sub").mkdir(parents=True)
+    out = run_terminal_pty("pwd", ws, isolation="sandbox", workdir="sub", timeout=10)
+    assert "exit=0" in out
+    assert captured["workdir"] == str((ws / "sub").resolve())
+    assert captured["interactive"] is True
+
+
 def test_timeout_keeps_partial_output(tmp_path):
     ws = tmp_path / "workspace"
     out = run_terminal("echo 早期输出; echo oops >&2; sleep 60", ws, isolation="admin", timeout=1)

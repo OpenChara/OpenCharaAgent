@@ -180,6 +180,27 @@ describe("ChatSession", () => {
     expect(deps.renderLifeState).not.toHaveBeenCalled();
   });
 
+  it("a disposed session drops late frames from its still-open socket", async () => {
+    // Regression: dispose() closes the socket ASYNCHRONOUSLY (detach first), so a
+    // frame can still arrive on the old socket after the successor session mounted
+    // (epoch restart / cross-chara hash edit). The four immediate callbacks must
+    // drop it — otherwise it writes into the successor session's model.
+    const model = new StreamModel();
+    const deps = makeDeps(model);
+    const fake = makeFakeClient();
+    const s = session("quinn", fake, deps);
+    await s.start();
+    s.dispose();
+
+    fake.onProtocolEvent!({ type: "text", text: "late", channel: "say" });
+    fake.onPermissionAsk!({ id: "p1", kind: "terminal", reason: "late ask" });
+    fake.onClarifyAsk!({ id: "c1", question: "late?", choices: [] });
+    fake.onPeerMessage!({ text: "late peer", source: "weixin" });
+
+    expect(deps.onEvent).not.toHaveBeenCalled();
+    expect(model.items).toHaveLength(0); // nothing written into the model
+  });
+
   it("onRejoinGap clears the anchor and requests a clean restart (full re-attach)", async () => {
     // A declared replay gap means the live transcript can't be resumed in place —
     // the recovery is a remount (fresh attach restores the FULL history), not a

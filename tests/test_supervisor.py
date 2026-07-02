@@ -1053,3 +1053,59 @@ def test_gateway_platform_rows_merge_config_and_live(tmp_path):
     assert rows["weixin"] == {"platform": "weixin", "enabled": True, "state": "running"}
     assert rows["qq"] == {"platform": "qq", "enabled": False, "state": "stopped"}
     assert rows["telegram"] == {"platform": "telegram", "enabled": True, "state": "needs_login"}
+
+
+def test_rejoin_delivers_frames_pushed_during_replay():
+    """A frame the stdout pump pushes WHILE handle_rejoin awaits a send is in
+    neither the replay snapshot nor the live path (driver.joined flips only
+    after rejoin returns) — it used to be lost permanently. The replay must
+    keep draining the ring until no new frames remain."""
+    import asyncio
+
+    from lunamoth.server.supervisor import CharaChild
+    from lunamoth.session.sessions import SessionMeta
+
+    child = CharaChild(SessionMeta(name="t"), supervisor=None)
+    for m in ("a", "b", "c"):
+        child.ring.push({"method": m})
+
+    received: list[int] = []
+
+    class Driver:
+        joined = False
+
+        async def send(self, frame):
+            received.append(frame.get("seq"))
+            if len(received) == 1:
+                # Simulate _read_stdout running during this await: a live frame
+                # lands in the ring but is NOT sent (joined is still False).
+                child.ring.push({"method": "live-during-replay"})
+            return True
+
+    ok = asyncio.run(child.handle_rejoin(0, Driver()))
+    assert ok
+    assert received == [1, 2, 3, 4]  # the mid-replay frame arrives too, in order
+
+
+def test_rejoin_gap_still_reports_gap():
+    import asyncio
+
+    from lunamoth.server.supervisor import CharaChild
+    from lunamoth.session.sessions import SessionMeta
+
+    child = CharaChild(SessionMeta(name="t"), supervisor=None)
+    child.ring = FrameRing(capacity=2)
+    for m in ("a", "b", "c"):  # capacity 2 → seq 1 evicted
+        child.ring.push({"method": m})
+    sent = []
+
+    class Driver:
+        joined = False
+
+        async def send(self, frame):
+            sent.append(frame)
+            return True
+
+    ok = asyncio.run(child.handle_rejoin(0, Driver()))
+    assert not ok
+    assert sent and sent[0].get("method") == "rejoin.gap"

@@ -185,6 +185,32 @@ def test_request_log_trim_is_byte_bounded(agent, monkeypatch):
     assert nums == sorted(nums)  # a contiguous newest tail, oldest dropped
 
 
+def test_request_log_keeps_the_log_when_a_single_record_exceeds_the_byte_cap(agent, monkeypatch):
+    """When the tail window holds no complete line (one record bigger than the
+    byte cap), the trim used to rewrite the file to NOTHING. It must skip the
+    rewrite instead — the newest record survives, even oversized."""
+    from lunamoth.core import request_log as agent_mod
+
+    path = _requests_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.unlink()
+    monkeypatch.setattr(agent_mod, "_REQUEST_LOG_MAX_BYTES", 10_000)
+    # The trim sweep fires exactly on this append.
+    agent_mod._request_log_appends = agent_mod._REQUEST_LOG_TRIM_EVERY - 1
+    big = "y" * 50_000  # one record far over the byte window
+    agent_mod._append_request_log("send", [big], [{"role": "user", "content": "keep-me"}], [], "m")
+    raw = path.read_text(encoding="utf-8")
+    assert raw  # never self-emptied
+    rec = json.loads(raw.splitlines()[-1])
+    assert rec["messages"][0]["content"] == "keep-me"
+    # And once normal-sized records follow, the next sweep trims back down.
+    agent_mod._request_log_appends = 0
+    for i in range(agent_mod._REQUEST_LOG_TRIM_EVERY):
+        agent_mod._append_request_log("send", ["s"], [{"role": "user", "content": str(i)}], [], "m")
+    assert path.stat().st_size <= 10_000
+
+
 def test_request_log_no_temp_files_left_behind(agent):
     """The atomic trim must not leave .tmp scratch files in the logs dir."""
     from lunamoth.core import request_log as agent_mod

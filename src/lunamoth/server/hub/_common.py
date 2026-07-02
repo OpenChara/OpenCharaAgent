@@ -132,7 +132,14 @@ def _await_supervisor(supervisor: Any, coro):
         # Unit-test/fake supervisor path.
         return asyncio.run(coro)
     fut = asyncio.run_coroutine_threadsafe(coro, loop)
-    return fut.result(timeout=60.0)
+    try:
+        return fut.result(timeout=60.0)
+    except TimeoutError:
+        # Cancel the loop-side coroutine instead of orphaning it to run (and
+        # mutate state) unobserved after the RPC has already errored out.
+        fut.cancel()
+        op = getattr(coro, "__qualname__", "") or type(coro).__name__
+        raise TimeoutError(f"supervisor call timed out after 60s: {op}") from None
 
 
 # ---- avatar-SVG safety (shared by card listing/sanitize and avatar upload) ----

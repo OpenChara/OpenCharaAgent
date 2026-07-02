@@ -464,14 +464,22 @@ class CharaChild:
         self.driver_slot.clear(driver)
 
     async def handle_rejoin(self, last_seq: int, driver: _Driver) -> bool:
-        ok, frames = self.ring.replay_after(last_seq)
-        if not ok:
-            await driver.send({"jsonrpc": "2.0", "method": "rejoin.gap"})
-            return False
-        for frame in frames:
-            if not await driver.send(frame):
+        # Frames the stdout pump pushes while we await a send below are neither
+        # in the snapshot nor sent live (the caller flips driver.joined only
+        # AFTER we return), so keep draining the ring past the last sent seq
+        # until a synchronous check finds nothing new — then joined flips with
+        # no gap (same task, no await between the final check and the flip).
+        while True:
+            ok, frames = self.ring.replay_after(last_seq)
+            if not ok:
+                await driver.send({"jsonrpc": "2.0", "method": "rejoin.gap"})
                 return False
-        return True
+            if not frames:
+                return True
+            for frame in frames:
+                if not await driver.send(frame):
+                    return False
+                last_seq = int(frame.get("seq", last_seq))
 
     def _spawn(self, coro, *, name: "str | None" = None) -> None:
         """Fire-and-forget a coroutine while keeping a STRONG ref (the loop holds only

@@ -18,6 +18,7 @@ context is bounded by length, never by deleting a class of messages).
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -85,6 +86,12 @@ class ContextBuffer:
     #   * an id() freed by a pop and reused by a fresh dict cannot return the old
     #     estimate, because the memo is pruned to the current id set every call.
     _tok_memo: "dict[int, int]" = field(default_factory=dict, repr=False, compare=False)
+    # Guards _tok_memo: token_count() runs on the TRANSPORT thread (snapshot →
+    # protocol/api.py) while the worker thread's trim() iterates/rebuilds the
+    # same dict — an unguarded write mid-comprehension is a RuntimeError. The
+    # lock covers only the dict touches (never the token estimation), so the
+    # memo's O(1) amortized behavior is unchanged and contention is negligible.
+    _tok_lock: "threading.Lock" = field(default_factory=threading.Lock, repr=False, compare=False)
 
     def add(self, role: str, content: str, kind: str = "") -> None:
         msg: dict[str, Any] = {"role": role, "content": content}
@@ -161,16 +168,21 @@ class ContextBuffer:
         The estimate FORMULA is unchanged — only its recomputation is avoided.
         """
         key = id(msg)
-        val = self._tok_memo.get(key)
+        with self._tok_lock:
+            val = self._tok_memo.get(key)
         if val is None:
             val = estimate_tokens(_msg_text(msg)) + 2
-            self._tok_memo[key] = val
+            with self._tok_lock:
+                self._tok_memo[key] = val
         return val
 
     def token_count(self) -> int:
         total = 0
         live: dict[int, int] = {}
-        for m in self.messages:
+        # Iterate a snapshot of the list: the transport thread counts while the
+        # worker thread's trim() pops (a slightly stale total is fine; reading a
+        # mutating list mid-iteration is not).
+        for m in list(self.messages):
             key = id(m)
             v = live.get(key)
             if v is None:
@@ -179,7 +191,8 @@ class ContextBuffer:
             total += v
         # Prune the memo down to exactly the messages present right now so a
         # later dict reusing a freed id() can never read a stale estimate.
-        self._tok_memo = live
+        with self._tok_lock:
+            self._tok_memo = live
         return total
 
     def trim(self) -> None:
@@ -207,6 +220,8 @@ class ContextBuffer:
         # stale keys between full counts.
         if self.messages:
             live_ids = {id(m) for m in self.messages}
-            self._tok_memo = {k: v for k, v in self._tok_memo.items() if k in live_ids}
+            with self._tok_lock:
+                self._tok_memo = {k: v for k, v in self._tok_memo.items() if k in live_ids}
         else:
-            self._tok_memo = {}
+            with self._tok_lock:
+                self._tok_memo = {}

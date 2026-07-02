@@ -1307,3 +1307,59 @@ def test_safe_extensions_secondary_only_theme_is_dropped():
     )
     assert out2["lunamoth"]["theme"] == {"primary": "#112233", "secondary": "#445566"}
     assert out2["lunamoth"]["theme_color"] == "#112233"
+
+
+# ---- keyring durability (2026-07 audit: desktop.json is the ONE secret store) ------
+
+def test_concurrent_save_key_never_loses_an_entry():
+    """keys.save runs on the RPC worker pool: two interleaved read-modify-write
+    cycles used to silently drop each other's entry. The module lock serializes
+    the whole RMW, so every thread's key survives."""
+    import threading
+
+    from lunamoth.server.hub import config as C
+
+    n = 12
+    errors = []
+
+    def save(i):
+        try:
+            C.save_key(f"key-{i}", provider="openrouter",
+                       base_url="https://example.invalid/v1", api_key=f"sk-{i}")
+        except Exception as exc:  # noqa: BLE001 - the assertion target
+            errors.append(exc)
+
+    threads = [threading.Thread(target=save, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    labels = {k["label"] for k in C.list_keys()}
+    assert labels == {f"key-{i}" for i in range(n)}
+
+
+def test_keyring_write_is_atomic_temp_plus_replace(monkeypatch):
+    """The keyring write must be temp-file + os.replace (a mid-write crash can
+    never truncate every provider key), and the destination file must be 0600."""
+    import os
+    import stat
+
+    from lunamoth.server.hub import config as C
+
+    replaced = []
+    real_replace = os.replace
+
+    def spy_replace(src, dst):
+        replaced.append((str(src), str(dst)))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr("os.replace", spy_replace)
+    C.save_key("atomic", provider="openrouter",
+               base_url="https://example.invalid/v1", api_key="sk-a")
+    path = C.desktop_config_path()
+    # The keyring landed via a temp sibling swapped into place — never a direct write.
+    assert any(dst == str(path) and src != str(path) for src, dst in replaced)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600  # holds API keys
+    # And the content is whole.
+    assert any(k["label"] == "atomic" for k in C.list_keys())

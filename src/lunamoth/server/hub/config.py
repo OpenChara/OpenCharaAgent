@@ -6,10 +6,11 @@ Secrets never travel in a public payload — they're reduced to has_<field> flag
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import Any
 
-from ...config import content_dir
+from ...config import atomic_write_text, content_dir
 from ...content import image_providers as image_providers
 from ...session import sessions as S
 from ..dispatch import RpcError
@@ -71,25 +72,33 @@ def _read_desktop_raw() -> dict[str, Any]:
         return {}
     # The keyring is the ONE key store: fold any legacy top-level `api_key` into it on
     # read (idempotent; only fires while a top-level secret is still present), so the
-    # UI's active/has-key view matches the runtime's keyring resolution.
+    # UI's active/has-key view matches the runtime's keyring resolution. The migration
+    # is itself a read-modify-WRITE, and this reader is reachable from read-only RPCs
+    # (load_defaults/list_keys) outside any caller lock — take _DESKTOP_LOCK for it so
+    # it can't interleave with a concurrent keys.save/delete cycle.
     if raw.get("api_key"):
         from ...session import settings as _S
-        _S.migrate_legacy_default_key()
-        try:
-            raw = json.loads(desktop_config_path().read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
+        with _DESKTOP_LOCK:
+            _S.migrate_legacy_default_key()
+            try:
+                raw = json.loads(desktop_config_path().read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return {}
     return raw if isinstance(raw, dict) else {}
 
 
+# Serializes every read-modify-write of desktop.json — the ONE secret store. The
+# mutating RPCs (keys.save/delete, defaults.save, use_key) run on the RPC worker
+# pool, so two interleaved cycles would silently drop each other's entry. RLock
+# because use_key's cycle spans save_defaults.
+_DESKTOP_LOCK = threading.RLock()
+
+
 def _write_desktop_raw(raw: dict[str, Any]) -> None:
-    path = desktop_config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
-    try:
-        path.chmod(0o600)  # holds API keys
-    except OSError:
-        pass
+    # Atomic (temp + os.replace) and 0600: a mid-write crash must never leave a
+    # truncated keyring — this file holds every provider key.
+    atomic_write_text(desktop_config_path(),
+                      json.dumps(raw, ensure_ascii=False, indent=2), private=True)
 
 
 def load_defaults() -> dict[str, str]:
@@ -100,12 +109,13 @@ def load_defaults() -> dict[str, str]:
 def save_defaults(updates: dict[str, str]) -> dict[str, str]:
     # Merge into the RAW file so sibling top-level sections (the named "keys"
     # store) survive a defaults write.
-    raw = _read_desktop_raw()
-    for k in _DEFAULT_FIELDS:
-        if k in updates and isinstance(updates[k], str):
-            raw[k] = updates[k]
-    raw.pop("api_key", None)  # the keyring is the one store — never persist a top-level secret
-    _write_desktop_raw(raw)
+    with _DESKTOP_LOCK:
+        raw = _read_desktop_raw()
+        for k in _DEFAULT_FIELDS:
+            if k in updates and isinstance(updates[k], str):
+                raw[k] = updates[k]
+        raw.pop("api_key", None)  # the keyring is the one store — never persist a top-level secret
+        _write_desktop_raw(raw)
     return {k: raw[k] for k in _DEFAULT_FIELDS if isinstance(raw.get(k), str)}
 
 
@@ -172,31 +182,33 @@ def save_key(label: str, provider: str = "", base_url: str = "",
     label = str(label or "").strip()
     if not label:
         raise RpcError(-32602, "keys.save needs a label")
-    raw = _read_desktop_raw()
-    keys = raw.get("keys") if isinstance(raw.get("keys"), dict) else {}
-    cur = keys.get(label) if isinstance(keys.get(label), dict) else {}
-    item = dict(cur)
-    for field_name, value in (("provider", provider), ("base_url", base_url), ("model", model)):
-        if value:
-            item[field_name] = str(value)
-    if api_key:
-        item["api_key"] = str(api_key)  # omitted on update = keep the stored secret
-    if not item.get("api_key"):
-        raise RpcError(-32602, f"keys.save: '{label}' has no stored api_key — provide one")
-    keys[label] = item
-    raw["keys"] = keys
-    _write_desktop_raw(raw)
+    with _DESKTOP_LOCK:
+        raw = _read_desktop_raw()
+        keys = raw.get("keys") if isinstance(raw.get("keys"), dict) else {}
+        cur = keys.get(label) if isinstance(keys.get(label), dict) else {}
+        item = dict(cur)
+        for field_name, value in (("provider", provider), ("base_url", base_url), ("model", model)):
+            if value:
+                item[field_name] = str(value)
+        if api_key:
+            item["api_key"] = str(api_key)  # omitted on update = keep the stored secret
+        if not item.get("api_key"):
+            raise RpcError(-32602, f"keys.save: '{label}' has no stored api_key — provide one")
+        keys[label] = item
+        raw["keys"] = keys
+        _write_desktop_raw(raw)
     return list_keys()
 
 
 def delete_key(label: str) -> list[dict[str, Any]]:
-    raw = _read_desktop_raw()
-    keys = raw.get("keys") if isinstance(raw.get("keys"), dict) else {}
-    if label not in keys:
-        raise RpcError(-32035, f"no such key: {label}")
-    keys.pop(label)
-    raw["keys"] = keys
-    _write_desktop_raw(raw)
+    with _DESKTOP_LOCK:
+        raw = _read_desktop_raw()
+        keys = raw.get("keys") if isinstance(raw.get("keys"), dict) else {}
+        if label not in keys:
+            raise RpcError(-32035, f"no such key: {label}")
+        keys.pop(label)
+        raw["keys"] = keys
+        _write_desktop_raw(raw)
     return list_keys()
 
 
@@ -224,12 +236,13 @@ def use_key(label: str) -> dict[str, Any]:
     (provider/base_url/model) into the top-level defaults + record active_key_label.
     The secret stays in the keyring (the one store) — never duplicated top-level."""
     label = str(label or "")
-    item = _keys_map(_read_desktop_raw()).get(label)
-    if item is None or not item.get("api_key"):
-        raise RpcError(-32035, f"no such key: {label}")
-    updates = {k: str(item[k]) for k in ("provider", "base_url", "model") if item.get(k)}
-    updates["active_key_label"] = label
-    public = _public_defaults(save_defaults(updates))
+    with _DESKTOP_LOCK:
+        item = _keys_map(_read_desktop_raw()).get(label)
+        if item is None or not item.get("api_key"):
+            raise RpcError(-32035, f"no such key: {label}")
+        updates = {k: str(item[k]) for k in ("provider", "base_url", "model") if item.get(k)}
+        updates["active_key_label"] = label
+        public = _public_defaults(save_defaults(updates))
     from ...session.settings import migrate_legacy_default_key
     migrate_legacy_default_key()  # clean any stale top-level secret left by an older use_key
     return public

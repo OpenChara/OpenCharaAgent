@@ -96,6 +96,11 @@ def _trim_request_log(path: Path) -> None:
     if not over_bytes and len(lines) <= _REQUEST_LOG_MAX_LINES:
         return  # within both caps — nothing to rewrite
     keep = lines[-_REQUEST_LOG_MAX_LINES:]
+    if not keep:
+        # The tail window held no complete line — a single record bigger than
+        # the byte cap. Rewriting would EMPTY the log; keep the file as-is (the
+        # next sweep, with newer normal records in the window, trims it back).
+        return
     tmp = path.with_name(path.name + f".tmp.{os.getpid()}")
     try:
         with tmp.open("wb") as fh:

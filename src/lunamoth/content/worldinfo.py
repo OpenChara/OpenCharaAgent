@@ -57,15 +57,19 @@ class WorldEntry:
             comment=str(d.get("comment", "")),
         )
 
-    def keyword_matches(self, scan_text: str) -> bool:
+    def keyword_matches(self, scan_text: str, *, lowered: bool = False) -> bool:
         """For non-constant entries, any primary key must appear.
 
         When `selective` with secondary keys, at least one secondary key must
         also appear (a small subset of ST's AND/NOT logic — enough to be useful).
+
+        ``lowered=True`` marks *scan_text* as already lowercased, so a caller
+        scanning many entries (``Lorebook.keyword_entries``) lowercases the —
+        potentially large — scan text once per scan instead of once per entry.
         """
         if not self.enabled or self.constant or not self.keys:
             return False
-        haystack = scan_text.lower()
+        haystack = scan_text if lowered else scan_text.lower()
         primary_hit = any(k.lower() in haystack for k in self.keys if k)
         if not primary_hit:
             return False
@@ -136,9 +140,10 @@ class Lorebook:
         state = sticky if sticky is not None else {}
         prefix = namespace or self.name or "world"
 
+        haystack = scan_text.lower()  # one pass per scan, not one per entry
         hits: set[int] = set()
         for entry in self.entries:
-            if entry.keyword_matches(scan_text):
+            if entry.keyword_matches(haystack, lowered=True):
                 hits.add(entry.entry_id)
                 state[f"{prefix}:{entry.entry_id}"] = int(sticky_turns)
 

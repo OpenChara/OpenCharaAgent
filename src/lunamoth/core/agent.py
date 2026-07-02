@@ -450,6 +450,11 @@ class LunaMothAgent:
         ctx = self.context_limit()
         session.context.max_tokens = ctx
         session.context.trim_buffer_tokens = min(100_000, max(4096, ctx // 8))
+        # A wide→narrow swap must shrink the LIVE context NOW: idle/react/event
+        # paths build the next request without an add_message (whose trim would
+        # otherwise be the first to notice), so an over-window history would ride
+        # straight to the narrow endpoint and 400.
+        session.context.trim()
 
     def make_session(self) -> "Session":
         """Build a Session whose context window honors the active limits layer.
@@ -646,14 +651,14 @@ class LunaMothAgent:
             parts.append(f"{n_stick} expression stickers (assets/stickers/)")
         if not parts:
             return ""
+        # No "assets/ is read-only" clause here — _RULES already teaches the
+        # geography; this note carries only the NEW information (the inventory).
         return ("[Your visual set] Your assets/ shelf — a read-only reference area beside "
                 "your workspace — holds your card's reference art: "
                 + "; ".join(parts)
                 + ". Reach them by the plain prefix assets/… — e.g. assets/sprite.png. "
-                "assets/ is read-only (you can read and send these, but not write there); "
-                "your own work lives in your workspace. You can show any of these to the "
-                "foreground when it fits — write a line MEDIA:<path> in your reply, e.g. "
-                "MEDIA:assets/sprite.png.")
+                "You can show any of these to the foreground when it fits — write a line "
+                "MEDIA:<path> in your reply, e.g. MEDIA:assets/sprite.png.")
 
     def _stable_prefix(self) -> list[str]:
         """Session-stable prompt prefix. The same list object is reused until a
@@ -787,11 +792,12 @@ class LunaMothAgent:
         if self._tools_active():
             net = "on" if status.get("network_access") else "off"
             today = datetime.now().strftime("%Y-%m-%d %a")
+            # Dynamic facts only — the workspace/works/assets geography is static
+            # and already taught once in the CACHED stable prefix (rules.py _RULES);
+            # restating it here re-shipped the same prose every turn.
             msgs.append(
                 f"Environment: isolation={self.state.permissions().isolation}, network={net}, "
-                f"date={today}. workspace is your private read/write directory "
-                "(put work you want your user to see under works/); assets/ beside it is a "
-                "read-only reference shelf you can read but not write."
+                f"date={today}."
             )
 
         world_blocks = self._keyword_world_info_blocks(scan_text, session)

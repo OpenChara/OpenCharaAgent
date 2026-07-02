@@ -59,6 +59,16 @@ await page.screenshot({ path: "/tmp/shot.png", fullPage: true });
   **card**, not the model, so a dead key still renders them.
 - **Clean up after**: delete the `_*.mjs` scripts (never leave them in the repo),
   the temp instance dir, and the screenshots.
+- **Headless dark-mode STALE-PAINT artifact** (cost a 2026-07-03 session an hour):
+  with `colorScheme: "dark"` emulation, the FIRST full-page screenshot after load
+  can show the content pane painted LIGHT while the DOM is provably dark
+  (`getComputedStyle` on every ancestor says dark; `elementFromPoint` finds no
+  overlay; a clip screenshot after navigating away and back is dark). It is a
+  headless-Chromium compositor artifact, NOT an app bug — do not chase it in CSS.
+  Diagnose with the triple: computed-style walk + big-light-element scan + a
+  same-run clip after a hash navigation; if they disagree with the full-page
+  shot, it's the artifact. Workaround: navigate to another view and back (or take
+  the screenshot twice) before judging dark-mode rendering.
 
 ---
 

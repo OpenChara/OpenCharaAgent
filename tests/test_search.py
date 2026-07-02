@@ -324,3 +324,24 @@ def test_incomplete_probe_is_not_cached(ws):
     ctx = _DeadTerminalCtx(ws, "[timed out after 60s]")
     assert search_mod._has_command(ctx, "rg") is False
     assert "rg" not in search_mod._cmd_cache  # next call re-probes
+
+
+def test_refused_jail_probe_surfaces_as_tool_error_not_py_fallback(ws):
+    """When the isolation ladder REFUSES (no jail available), search must surface
+    a tool error like the terminal does — never silently degrade to unjailed
+    pure-Python I/O (the ladder's 'never degrade silently' invariant). A timeout
+    (the test above) may still fall back to the py path."""
+    import json as _json
+
+    from lunamoth.tools.builtin import search as search_mod
+
+    search_mod._cmd_cache.clear()
+    search_mod._loop_state["last_key"] = None
+    search_mod._loop_state["consecutive"] = 0
+    ctx = _DeadTerminalCtx(ws, "[lunamoth: refused — no jail available]")
+    out = _json.loads(search_mod.search_files({"pattern": "TODO", "path": "."}, ctx))
+    assert "error" in out, f"must surface an error, got: {out}"
+    assert "refused" in out["error"]
+    # No degraded pure-Python results leaked through.
+    assert "matches" not in out and "files" not in out
+    assert "rg" not in search_mod._cmd_cache  # nothing cached from the refused probe

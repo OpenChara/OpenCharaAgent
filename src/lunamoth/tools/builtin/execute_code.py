@@ -43,9 +43,12 @@ logger = logging.getLogger("lunamoth.tools.execute_code")
 # The tools allowed inside the sandbox (hermes SANDBOX_ALLOWED_TOOLS,
 # code_execution_tool.py:61-69). The intersection of this list and the
 # session's enabled tools determines which stubs are generated.
+# web_search / web_extract are SHELVED, not deleted (see web.py
+# `_WEB_TOOLS_ENABLED = False`): they are never registered, so listing them
+# here only advertised dead ends — a script's call hit the RPC allowlist and
+# failed. Their stub/doc entries below stay intact; re-add the two names here
+# when `_WEB_TOOLS_ENABLED` flips back on.
 SANDBOX_ALLOWED_TOOLS = frozenset([
-    "web_search",
-    "web_extract",
     "read_file",
     "write_file",
     "search_files",
@@ -77,7 +80,7 @@ def check_sandbox_requirements() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# hermes_tools.py stub generator (hermes :211-291)
+# lunamoth_tools.py stub generator (hermes generate_hermes_tools_module, :211-291)
 # ---------------------------------------------------------------------------
 
 # Per-tool stubs: (func_name, signature, docstring, args_dict_expr).
@@ -390,7 +393,6 @@ def execute_code(args: dict, ctx) -> str:
         # admin/sandbox isolation the workspace path is shared verbatim; the stub
         # bakes in the absolute path of rpc_dir.
         tools_src = generate_tools_module(list(sandbox_tools), str(rpc_dir))
-        (stage_dir / "hermes_tools.py").write_text(tools_src, encoding="utf-8")
         (stage_dir / "lunamoth_tools.py").write_text(tools_src, encoding="utf-8")
         (stage_dir / "script.py").write_text(code, encoding="utf-8")
 
@@ -404,8 +406,8 @@ def execute_code(args: dict, ctx) -> str:
         rpc_thread.start()
 
         # Run the child inside the chara isolation. PYTHONPATH points at the
-        # stage dir so `from hermes_tools import ...` (and lunamoth_tools)
-        # resolve. We force UTF-8 + no bytecode, exactly like hermes (:1225-1244).
+        # stage dir so `from lunamoth_tools import ...` resolves. We force
+        # UTF-8 + no bytecode, exactly like hermes (:1225-1244).
         # Run from the workspace (the default cwd) and `cd` into the stage dir by
         # its workspace-relative name. Do NOT pass workdir=stage_dir: that makes
         # run_terminal set the real cwd to stage_dir under sandbox-darwin/admin

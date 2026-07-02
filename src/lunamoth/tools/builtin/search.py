@@ -189,8 +189,15 @@ def _has_command(ctx, cmd: str) -> bool:
     if cmd not in _cmd_cache:
         res = run_capturing_rc(ctx, f"command -v {cmd} >/dev/null 2>&1 && echo yes")
         if not res.completed:
-            # Terminal timed out / refused: fall back to the pure-Python path
-            # this probe gates, but DON'T cache — the next call re-probes.
+            # A REFUSED jail must surface as an error, never silently degrade to
+            # the unjailed pure-Python I/O this probe gates — the isolation
+            # ladder's "never degrade silently" invariant (terminal refuses in
+            # the same state). search_files' outer handler turns this into a
+            # tool_error.
+            if "[lunamoth: refused" in res.note:
+                raise RuntimeError(f"Search did not run: {res.note}")
+            # A timeout / runner hiccup (not a refusal) may still fall back to
+            # the pure-Python path, but DON'T cache — the next call re-probes.
             return False
         _cmd_cache[cmd] = res.stdout.strip().endswith("yes")
     return _cmd_cache[cmd]

@@ -157,7 +157,12 @@ export class ChatSession {
     const { model } = deps;
     const client = this.client;
 
+    // ALL callbacks guard on `dead`: dispose() closes the socket ASYNCHRONOUSLY
+    // (detach first), so a late frame can still arrive on a just-disposed session's
+    // socket — e.g. across an epoch restart, where the successor session shares the
+    // hook's model refs. Without the guard it would write into the successor's model.
     client.onProtocolEvent = (ev) => {
+      if (this.dead) return;
       // Until the restored history is laid down, a live frame (a turn already in
       // flight when we attached) must be HELD — rendering it now would push it above
       // the history. Flushed in order right after renderRestored (see start()).
@@ -168,14 +173,17 @@ export class ChatSession {
       deps.onEvent(ev);
     };
     client.onPermissionAsk = (p) => {
+      if (this.dead) return;
       model.pushPermission(p.id, p.kind, p.reason);
       deps.bump();
     };
     client.onClarifyAsk = (p) => {
+      if (this.dead) return;
       model.pushClarify(p.id, p.question, p.choices);
       deps.bump();
     };
     client.onPeerMessage = (p) => {
+      if (this.dead) return;
       if (!p.text) return;
       model.pushUser(p.text, [], { via: p.source || undefined });
       deps.bump();

@@ -1675,6 +1675,9 @@ body.dark .wb-content{background:rgba(255,255,255,.04)}
 .gw-blurb{font-size:12px; color:var(--text-2); line-height:1.6; margin-bottom:12px}
 /* 网关总览页 */
 .gw-overview{flex:1; overflow:auto; padding:20px 24px; display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:14px; align-content:start}
+/* empty state: drop the grid (align-content:start crams it top-left) so
+   .empty-state (flex:1) centers in the pane, matching the other views. */
+.gw-overview.is-empty{display:flex; flex-direction:column}
 .gw-card{border:1px solid var(--hairline); border-radius:var(--radius); padding:14px 16px; background:var(--panel); display:flex; flex-direction:column; gap:8px}
 .gw-card-head{display:flex; align-items:center; justify-content:space-between; gap:8px}
 .gw-plat-name{font-weight:600; font-size:14px; color:var(--text)}

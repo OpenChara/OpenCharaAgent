@@ -120,6 +120,10 @@ export function useCharaStream(name: string): CharaStream {
   const appTurnRef = useRef(false);
   const queueRef = useRef<{ text: string; atts: StagedAttachment[]; id: string }[]>([]);
   const disposedRef = useRef(false);
+  // ref mirror of `ready` (attach resolved) so send/flush callbacks see the live
+  // value: a send BEFORE attach completes must queue, never hit client.send —
+  // which would reject with a raw "not connected".
+  const readyRef = useRef(false);
 
   /* ---- work-state slot (chat.js setWorkState/setStatusWord) ---- */
   const applyStatusWord = useCallback((word: string) => {
@@ -276,7 +280,7 @@ export function useCharaStream(name: string): CharaStream {
 
   const flushQueueRef = useRef<() => void>(() => {});
   const flushQueue = useCallback(() => {
-    if (disposedRef.current || !queueRef.current.length) return;
+    if (disposedRef.current || !readyRef.current || !queueRef.current.length) return;
     if (clientRef.current?.streaming || appTurnRef.current) return;
     const item = queueRef.current.shift()!;
     persistQueue();
@@ -290,6 +294,14 @@ export function useCharaStream(name: string): CharaStream {
   // the queue. The caller (ChatSession) decides WHEN to flush — immediately if the
   // chara is idle, or on the in-flight turn's end (onTurnEnd → flushQueue) otherwise.
   const restoreQueue = useCallback(() => {
+    // Sends made BEFORE attach completed were queued in memory (not persisted, so
+    // they can't clobber a previous visit's stored queue) and their bubbles drawn
+    // before the restored history landed. Lift them out, restore the persisted
+    // queue first (it's chronologically older), then re-draw the pre-attach sends
+    // below the history, and persist the merged queue.
+    const preAttach = queueRef.current;
+    queueRef.current = [];
+    for (const q of preAttach) modelRef.current!.removeItem(q.id);
     let saved: { text?: string }[] = [];
     try {
       const raw = localStorage.getItem(queueStoreKey);
@@ -297,26 +309,36 @@ export function useCharaStream(name: string): CharaStream {
     } catch {
       saved = [];
     }
-    if (!Array.isArray(saved) || !saved.length) return;
+    if (!Array.isArray(saved)) saved = [];
     for (const it of saved) {
       const text = typeof it?.text === "string" ? it.text : "";
       if (!text) continue;
       const id = modelRef.current!.pushUser(text, [], { queued: true });
       queueRef.current.push({ text, atts: [], id });
     }
-    bump();
-  }, [queueStoreKey, bump]);
+    for (const q of preAttach) {
+      const id = modelRef.current!.pushUser(q.text, q.atts, { queued: true });
+      queueRef.current.push({ text: q.text, atts: q.atts, id });
+    }
+    if (preAttach.length) persistQueue();
+    if (queueRef.current.length || preAttach.length) bump();
+  }, [queueStoreKey, bump, persistQueue]);
 
-  /* ---- public send: queue if busy (chat.js submit/queueMessage) ---- */
+  /* ---- public send: queue if busy OR not yet attached (chat.js submit) ---- */
   const send = useCallback(
     (text: string, atts: StagedAttachment[]) => {
       if (!text && !atts.length) return;
-      const busy = clientRef.current?.streaming || appTurnRef.current;
+      // Pre-ready (attach still in flight) rides the SAME queue: client.send would
+      // reject with a raw "not connected". The bubble draws immediately (binding
+      // rule); the attach path (restoreQueue → flushQueue) reorders it below the
+      // restored history and delivers it. Not persisted yet — restoreQueue merges
+      // it with (instead of clobbering) a previous visit's stored queue.
+      const busy = clientRef.current?.streaming || appTurnRef.current || !readyRef.current;
       if (busy) {
         const id = modelRef.current!.pushUser(text, atts, { queued: true });
         bump();
         queueRef.current.push({ text, atts, id });
-        persistQueue();
+        if (readyRef.current) persistQueue();
       } else {
         void sendUser(text, atts);
       }
@@ -396,6 +418,7 @@ export function useCharaStream(name: string): CharaStream {
      state and bridges the hook's callbacks/refs in via `deps`. */
   useEffect(() => {
     disposedRef.current = false;
+    readyRef.current = false;
     const model = new StreamModel();
     modelRef.current = model;
     setCharName(name);
@@ -417,7 +440,10 @@ export function useCharaStream(name: string): CharaStream {
       isAppTurn: () => appTurnRef.current,
       setConnected,
       setCharName,
-      setReady,
+      setReady: (b) => {
+        readyRef.current = b;
+        setReady(b);
+      },
       setError,
       setLife: (life) => {
         lifeRef.current = life;

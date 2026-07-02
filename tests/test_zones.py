@@ -116,6 +116,21 @@ def test_runtime_flips_and_worldinfo_change_only_volatile_tail(agent_factory, tm
     assert "KEY-VOLATILE" not in _blob(a._stable_prefix())
 
 
+def test_env_facts_line_is_dynamic_only(agent_factory, tmp_path):
+    """The volatile env line carries only the dynamic facts (isolation/network/
+    date). The static workspace/works/assets geography is taught once in the
+    CACHED stable prefix (rules.py) — re-shipping it every turn burned tokens."""
+    card = _write_card(tmp_path / "card.json")
+    a = agent_factory(card=card)
+    s = a.make_session()
+    tail = _blob(a._volatile_tail(a._scan_text(s, "hi"), s))
+    assert "Environment: isolation=" in tail and "network=" in tail and "date=" in tail
+    assert "workspace is your private" not in tail
+    assert "reference shelf" not in tail
+    # ...and the geography still lives in the stable prefix, once.
+    assert "works/" in _blob(a._stable_prefix())
+
+
 def test_card_phi_is_last_and_absent_from_persona_block(agent_factory, tmp_path):
     card = _write_card(tmp_path / "card.json", phi="PHI-LAST for {{char}}/{{user}}")
     a = agent_factory(card=card)

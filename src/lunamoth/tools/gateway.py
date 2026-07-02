@@ -316,7 +316,8 @@ class ToolGateway:
         server = name.split("__", 2)[1] if name.count("__") >= 2 else ""
         if self.mcp is None or server not in self.mcp_allowed:
             result = {"ok": False, "error": f"tool denied: {name}"}
-            self.audit.write("tool_denied", tool=name, args=self._safe_args(kwargs), result=result)
+            with self._dispatch_lock:
+                self.audit.write("tool_denied", tool=name, args=self._safe_args(kwargs), result=result)
             return result
         try:
             result = {"ok": True, "data": self.mcp.call(name, kwargs)}

@@ -253,8 +253,12 @@ def _macos_jail(command: str, workspace: Path, allow_network: bool, writable: li
 
 
 def _linux_jail_argv(inner: list[str], workspace: Path, allow_network: bool, writable: list[Path],
-                     *, browser: bool = False) -> list[str]:
+                     *, browser: bool = False, workdir: str | None = None) -> list[str]:
+    """``workdir`` (already VALIDATED by the caller to sit inside the workspace
+    or a writable allowlist path) overrides bwrap's ``--chdir`` target; the
+    confinement (binds) is unchanged — only the starting directory moves."""
     ws = str(workspace)
+    chdir = workdir or ws
     if browser:
         # The browser jail, VALIDATED end-to-end on a real Linux host (Ubuntu
         # 22.04, kernel 5.15, bwrap 0.6.1) 2026-06-19. Two hard constraints learned
@@ -289,7 +293,7 @@ def _linux_jail_argv(inner: list[str], workspace: Path, allow_network: bool, wri
         cmd += ["--bind", "/tmp", "/tmp"]                   # shared rw temp (socket + profile)
         for p in writable:
             cmd += ["--bind", str(p), str(p)]
-        cmd += ["--chdir", ws, *inner]
+        cmd += ["--chdir", chdir, *inner]
         return cmd
     cmd = ["bwrap", "--die-with-parent", "--unshare-all"]
     if allow_network:
@@ -306,13 +310,14 @@ def _linux_jail_argv(inner: list[str], workspace: Path, allow_network: bool, wri
         cmd += ["--ro-bind-try", str(assets), str(assets)]
     for p in writable:
         cmd += ["--bind", str(p), str(p)]
-    cmd += ["--chdir", ws, *inner]
+    cmd += ["--chdir", chdir, *inner]
     return cmd
 
 
 def _linux_jail(command: str, workspace: Path, allow_network: bool, writable: list[Path],
-                *, browser: bool = False) -> list[str]:
-    return _linux_jail_argv(["/bin/bash", "-c", command], workspace, allow_network, writable, browser=browser)
+                *, browser: bool = False, workdir: str | None = None) -> list[str]:
+    return _linux_jail_argv(["/bin/bash", "-c", command], workspace, allow_network, writable,
+                            browser=browser, workdir=workdir)
 
 
 def _linux_landlock_argv(inner: list[str], workspace: Path, allow_network: bool, writable: list[Path],
@@ -370,6 +375,7 @@ def build_jail_command(
     writable: Sequence[Path] = (),
     browser: bool = False,
     interactive: bool = False,
+    workdir: str | None = None,
 ) -> tuple[list[str], str | None, str]:
     """The ONE isolation-ladder selector for a non-interactive ``bash -c`` run.
 
@@ -384,7 +390,13 @@ def build_jail_command(
         cwd). The explicit operator opt-out.
       * ``sandbox`` with a native OS jail (bwrap on Linux / sandbox-exec on macOS)
         → the jail argv; ``run_cwd`` is the workspace on macOS, ``None`` on Linux
-        (bwrap sets its own ``--chdir``).
+        (bwrap sets its own ``--chdir``, targeting ``workdir`` when given).
+
+    ``workdir`` is a caller-VALIDATED cwd (runner.py confines it to the
+    workspace / writable allowlist before calling): where the jail returns a
+    ``run_cwd`` the caller substitutes it there; the Linux bwrap tier instead
+    honors it via ``--chdir`` here (its ``run_cwd`` is ``None``). The
+    confinement itself is identical either way.
       * ``sandbox`` with no native jail but Landlock available (Linux no-userns) →
         the Landlock re-exec argv, ``run_cwd`` the workspace, plus a ``note`` when
         ``allow_network`` is False (ABI v1 can't gate the network).
@@ -413,7 +425,8 @@ def build_jail_command(
                 cmd = _macos_jail(command, workspace, allow_network, writable_list,
                                   browser=browser, interactive=interactive)
             else:
-                cmd = _linux_jail(command, workspace, allow_network, writable_list, browser=browser)
+                cmd = _linux_jail(command, workspace, allow_network, writable_list,
+                                  browser=browser, workdir=workdir)
             run_cwd = str(workspace) if sys.platform == "darwin" else None
             return cmd, run_cwd, ""
         if landlock_available():

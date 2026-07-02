@@ -463,6 +463,20 @@ function SettingsPane({ stream, name }: { stream: CharaStream; name: string }) {
   const activeRp = snap.embodiment === "actor";
   const [siteWant, setSiteWant] = useState<boolean | null>(null);
   const [rpWant, setRpWant] = useState<boolean | null>(null);
+  // Reconcile (the netPending pattern above): sticky is only for the WAITING gap —
+  // once the authoritative snapshot agrees (the chara restarted with the change
+  // applied, or it changed in place, e.g. from another window), the desired value
+  // yields to the live one; and switching charas must never carry a stale toggle.
+  useEffect(() => {
+    if (siteWant !== null && activeSite === siteWant) setSiteWant(null);
+  }, [activeSite, siteWant]);
+  useEffect(() => {
+    if (rpWant !== null && activeRp === rpWant) setRpWant(null);
+  }, [activeRp, rpWant]);
+  useEffect(() => {
+    setSiteWant(null);
+    setRpWant(null);
+  }, [name]);
   const siteOn = siteWant ?? activeSite;
   const rpOn = rpWant ?? activeRp;
   const setModule = (mod: "website" | "force_roleplay", next: boolean) => {
@@ -481,6 +495,14 @@ function SettingsPane({ stream, name }: { stream: CharaStream; name: string }) {
   // is confirm-gated. Re-enabling it (→ sandbox) tightens, no confirm.
   const activeSandbox = String(snap.isolation || "sandbox") !== "admin";
   const [isoWant, setIsoWant] = useState<boolean | null>(null);
+  // Same reconcile as the modules above: live value catches up → drop the sticky
+  // desire; chara switch → never show the previous chara's pending toggle.
+  useEffect(() => {
+    if (isoWant !== null && activeSandbox === isoWant) setIsoWant(null);
+  }, [activeSandbox, isoWant]);
+  useEffect(() => {
+    setIsoWant(null);
+  }, [name]);
   const sandboxOn = isoWant ?? activeSandbox;
   const setSandbox = (next: boolean) => {
     if (!next && !confirm(t("iso-admin-confirm"))) return;

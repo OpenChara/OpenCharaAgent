@@ -291,16 +291,17 @@ def run_terminal_result(
     try:
         cmd, jail_cwd, jail_note = build_jail_command(
             command, workspace, isolation, allow_network=allow_network, writable=writable,
-            browser=browser,
+            browser=browser, workdir=str(cwd),
         )
     except JailUnavailableError as e:
         # NEVER degrade to directory trust — under it the chara could read the
         # whole container, incl. the global key in ~/.lunamoth (OPEN-WORK SEC-low).
         return TerminalResult((f"[lunamoth: refused — {e}]" + note).strip(), refused=True)
     note += jail_note
-    # admin / macOS sandbox honor the resolved workdir; Linux bwrap sets its own
-    # --chdir (jail_cwd is None there). The helper returns the workspace as the
-    # default cwd; substitute the resolved workdir when the jail allows a cwd.
+    # admin / macOS sandbox / Landlock honor the resolved workdir via run_cwd;
+    # Linux bwrap sets its own --chdir (jail_cwd is None there), targeting the
+    # same validated workdir passed to build_jail_command above. Substitute the
+    # resolved workdir when the jail allows a cwd.
     run_cwd = str(cwd) if jail_cwd is not None else None
 
     t0 = time.monotonic()
@@ -465,6 +466,7 @@ def run_terminal_pty(
         cmd, jail_cwd, jail_note = build_jail_command(
             command, workspace, isolation, allow_network=allow_network, writable=writable,
             interactive=True,  # the child sits on a pty slave; macOS needs ttys ioctl
+            workdir=str(cwd),  # validated above; bwrap honors it via --chdir
         )
     except JailUnavailableError as e:
         return (f"[lunamoth: refused — {e}]" + note).strip()

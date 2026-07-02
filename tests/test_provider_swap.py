@@ -110,6 +110,21 @@ def test_swap_provider_resyncs_context_window(agent, monkeypatch):
     assert session.context.trim_buffer_tokens == 8_000
 
 
+def test_swap_to_narrow_window_trims_the_live_context(agent, monkeypatch):
+    # Resizing alone is not enough: idle/react/event paths build the next request
+    # WITHOUT an add_message (whose trim would be the first to notice), so the
+    # swap itself must bring an over-window history back under the new window.
+    _pin_windows(monkeypatch, {"big-model": 1_000_000, "small-model": 64_000})
+    agent.settings.model = "big-model"
+    session = agent.make_session()
+    for i in range(30):
+        session.context.messages.append({"role": "user", "content": f"{i} " + "x" * 40_000})
+    assert session.context.token_count() > 64_000  # over the narrow window
+    agent.swap_model("small-model", session=session)
+    assert session.context.token_count() <= session.context.max_tokens - session.context.trim_buffer_tokens
+    assert session.context.messages  # trimmed, not wiped
+
+
 def test_swap_with_no_session_is_a_noop(agent, monkeypatch):
     _pin_windows(monkeypatch, {"small-model": 64_000})
     agent.swap_model("small-model", session=None)  # must not raise

@@ -303,10 +303,24 @@ def test_generate_tools_module_intersection():
     src = ec_mod.generate_tools_module(["read_file", "terminal", "web_search"], "/tmp/rpc")
     assert "def read_file(" in src
     assert "def terminal(" in src
-    assert "def web_search(" in src
+    # web tools are SHELVED (web.py _WEB_TOOLS_ENABLED=False → never registered),
+    # so no stub is generated even when a caller lists them as enabled.
+    assert "def web_search(" not in src
     # Not enabled -> no stub.
     assert "def patch(" not in src
     assert "def json_parse(" in src and "def retry(" in src
+
+
+def test_schema_omits_shelved_web_tools():
+    """The model-facing schema must not advertise the shelved web tools — a
+    script calling them dead-ends on the RPC allowlist (they're unregistered)."""
+    desc = ec_mod.EXECUTE_CODE_SCHEMA["description"]
+    assert "web_search" not in desc
+    assert "web_extract" not in desc
+    code_desc = ec_mod.EXECUTE_CODE_SCHEMA["parameters"]["properties"]["code"]["description"]
+    assert "web_search" not in code_desc
+    assert "web_search" not in ec_mod.SANDBOX_ALLOWED_TOOLS
+    assert "web_extract" not in ec_mod.SANDBOX_ALLOWED_TOOLS
 
 
 def test_check_sandbox_requirements_posix():

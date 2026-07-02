@@ -106,6 +106,43 @@ def test_linux_shell_jail_keeps_die_with_parent(tmp_path):
     assert not (argv.count("--ro-bind") and "/" in argv[argv.index("--ro-bind") + 1:argv.index("--ro-bind") + 2])
 
 
+def test_linux_jail_chdir_honors_workdir(tmp_path):
+    """bwrap's --chdir targets the caller-validated workdir (terminal's
+    `workdir=` param); without one it stays the workspace. The binds — the
+    confinement — are identical either way."""
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    sub = ws / "sub"
+    sub.mkdir()
+    for browser in (False, True):
+        default = isolation._linux_jail_argv(["/bin/bash", "-c", "x"], ws, True, [], browser=browser)
+        assert default[default.index("--chdir") + 1] == str(ws)
+        argv = isolation._linux_jail_argv(["/bin/bash", "-c", "x"], ws, True, [],
+                                          browser=browser, workdir=str(sub))
+        i = argv.index("--chdir")
+        assert argv[i + 1] == str(sub)
+        # Only the starting directory moved — every other arg is unchanged.
+        assert argv[:i + 1] == default[:i + 1]
+        assert argv[i + 2:] == default[i + 2:]
+
+
+def test_build_jail_command_threads_workdir_to_bwrap(tmp_path, monkeypatch):
+    """On the Linux/bwrap tier build_jail_command returns run_cwd=None (bwrap
+    chdirs itself) — the validated workdir must ride --chdir instead of being
+    silently dropped."""
+    ws = tmp_path / "workspace"
+    ws.mkdir()
+    sub = ws / "proj"
+    sub.mkdir()
+    monkeypatch.setattr(isolation, "os_sandbox_available", lambda: True)
+    monkeypatch.setattr(isolation.sys, "platform", "linux")
+    cmd, run_cwd, note = isolation.build_jail_command(
+        "pwd", ws, "sandbox", allow_network=True, workdir=str(sub))
+    assert cmd[0] == "bwrap"
+    assert run_cwd is None
+    assert cmd[cmd.index("--chdir") + 1] == str(sub)
+
+
 # ---- behavioral: the deny-order actually holds under a real sandbox-exec -----
 
 def test_macos_browser_profile_denies_secret_contents_behaviorally(tmp_path, monkeypatch):

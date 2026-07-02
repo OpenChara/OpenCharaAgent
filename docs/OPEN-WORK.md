@@ -337,7 +337,57 @@ chat-panel rows + DeckModal dialog role/focus trap/Escape/focus restore;
 chat backdrop/sprite prefs got their UI (聊天背景/立绘 controls in the chat
 settings pane, per-chara localStorage, live-reactive).
 
+## 2026-07-03 second sweep — RESOLVED (fresh five-track audit + UI review)
+
+A second full audit (core/protocol, server/session, tools/visuals/content, web,
+prompt/harness) plus a Playwright visual review of every view × theme × viewport,
+run AFTER v0.1.11. All findings fixed, adversarially re-verified, tests green.
+Highlights (full detail in git history):
+
+- **[HIGH] `ContextBuffer.token_count()` raced `trim()`** — the token memo was
+  written from the transport thread (snapshot polling) while the worker thread
+  iterated it → `RuntimeError: dictionary changed size`. A per-instance lock now
+  guards every memo touch. Test: `test_context.py` (threaded stress).
+- **[HIGH] the keyring (`desktop.json`, every provider secret) was written
+  non-atomically with racy read-modify-writes** — a mid-write crash could
+  truncate all keys; concurrent RPCs lost updates. Now atomic (temp+replace,
+  0600) + one RLock around every RMW incl. the legacy-key migration path.
+  Known residue: a TUI-process writer can still last-write-wins a hub write
+  (cross-process; needs flock; pre-existing, LOW).
+- **[HIGH, prompt] `execute_code` advertised the shelved `web_search`/
+  `web_extract`** in its model-facing schema — scripts dead-ended on the RPC
+  allowlist. Shelved from `SANDBOX_ALLOWED_TOOLS`; the schema no longer teaches
+  them. Also dropped the `hermes_tools.py` staging twin (de-brand hygiene).
+- **[MEDIUM] `rejoin` dropped frames pushed during the replay window** —
+  handle_rejoin now loops until caught up before the driver joins live.
+- **[MEDIUM] bwrap ignored `terminal(workdir=…)`** — the jail argv hardcoded
+  `--chdir <workspace>`; the validated workdir is now threaded through (shell +
+  PTY). macOS/Landlock/admin were already correct.
+- **[MEDIUM, prompt] `terminal` schema claimed over-limit timeouts are
+  "rejected" (they're clamped)** — wording fixed; **the volatile tail re-shipped
+  two static sentences every turn** (workspace/works/assets prose already in the
+  cached prefix) — reduced to the dynamic facts only; the art note's duplicate
+  "assets read-only" clause trimmed.
+- **[MEDIUM, web] `ChatSession`'s immediate stream callbacks lacked the `dead`
+  guard** — a disposed session's late frames could write into the successor's
+  model; **pre-attach sends now queue** instead of surfacing a raw "not
+  connected"; chat settings sticky toggles reconcile on snapshot/name change;
+  Gateways empty state centered with a single CTA.
+- **[LOW]** `sync_context_window` now trims immediately (idle/react/event paths
+  could ship over-window after a narrow swap); request log never self-empties on
+  one oversized record; `_await_supervisor` cancels the coroutine on timeout;
+  gateway's MCP-denied audit write joined `_dispatch_lock`; search REFUSES
+  (tool error) instead of silently degrading to unjailed py-fallback when the
+  jail is refused; worldinfo lowercases the scan text once per scan.
+- **UI visual review**: dark/light × desktop/mobile × all six views verified
+  clean (the "white board in dark mode" turned out to be a headless-Chromium
+  stale-paint artifact — documented in AGENT-FIELD-NOTES §1 scars, not an app
+  bug).
+
 ### Remaining OPEN residue (small, non-blocking)
+- Keyring cross-process last-write-wins (TUI `save_global_key` vs hub RPCs on
+  `desktop.json`) — needs an flock to fully close; atomicity already prevents
+  torn files. LOW.
 - Latent (inherent to the join-timeout takeover model): a superseded zombie
   past the 10 s join can still overlap a freshly-claimed slot for its last
   in-flight tool; its interrupt flag is set so the window is minimal.

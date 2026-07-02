@@ -162,17 +162,22 @@ export function Gateways() {
         </button>
       </div>
 
-      <div className="gw-overview">
+      {/* .is-empty flips the container from the card grid (align-content:start —
+          which would cram the empty-state into one top-left track) to a flex
+          column so .empty-state (flex:1) centers in the pane like Board/Deck. */}
+      <div className={"gw-overview" + (snapshot && !err && !platRows.length ? " is-empty" : "")}>
         {!snapshot ? (
           <BrandLoader />
         ) : err ? (
           <div className="gw-error">{err}</div>
         ) : !platRows.length ? (
           <div className="empty-state">
-            <p>{t("gw-empty")}</p>
-            <button className="btn primary" onClick={newGateway}>
-              {t("gw-new")}
-            </button>
+            <div className="empty-title">{t("gw-empty")}</div>
+            <div className="acts">
+              <button className="btn primary" onClick={newGateway}>
+                {t("gw-new")}
+              </button>
+            </div>
           </div>
         ) : (
           platRows.map((pr) => {
