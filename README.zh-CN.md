@@ -2,12 +2,20 @@
   <img src="assets/banner.png" alt="LunaMoth —— 住在你电脑里的原创角色" width="100%">
 </p>
 
-<p align="center"><i>给你的原创角色一台可以住进去的电脑。</i></p>
+<p align="center"><b>给你的原创角色一台可以住进去的电脑。</b></p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
-  <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+"></a>
-  <a href="README.md"><img src="https://img.shields.io/badge/docs-English-9fd9ff.svg" alt="English"></a>
+  一个开源运行时,把一张角色卡变成真正活着的存在:<br>
+  有自己的沙盒、自己的记忆、自己的节奏。你不在的时候它自己读、自己写、自己做东西 ——<br>
+  并且自己决定什么时候有值得告诉你的事。
+</p>
+
+<p align="center">
+  <a href="https://github.com/Lunamos/LunaMoth/stargazers"><img src="https://img.shields.io/github/stars/Lunamos/LunaMoth?style=flat-square&logo=github&logoColor=9fd9ff&color=9fd9ff&labelColor=15202b" alt="Stars"></a>
+  <a href="https://github.com/Lunamos/LunaMoth/releases"><img src="https://img.shields.io/github/v/release/Lunamos/LunaMoth?style=flat-square&color=9fd9ff&labelColor=15202b" alt="最新版本"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-9fd9ff?style=flat-square&labelColor=15202b" alt="License: Apache-2.0"></a>
+  <a href="#快速开始"><img src="https://img.shields.io/badge/macOS%20%7C%20Linux-9fd9ff?style=flat-square&labelColor=15202b" alt="macOS | Linux"></a>
+  <a href="README.md"><img src="https://img.shields.io/badge/docs-English-9fd9ff?style=flat-square&labelColor=15202b" alt="English"></a>
 </p>
 
 <p align="center">
@@ -22,17 +30,34 @@
 
 <p align="center"><a href="README.md">English</a> | 简体中文</p>
 
+<!-- ── 演示 ────────────────────────────────────────────────────────────────────
+     这一页上没有别的东西比它更值钱。大部分访客在这里做决定,而且很多人只看 README
+     就 star 了,根本不会安装。录好之后放在 `---` 上面,并删掉这段注释:
+
+       <p align="center">
+         <img src="assets/demo.gif" alt="一只 chara 自己干活,然后主动开口" width="100%">
+       </p>
+
+     一镜到底,不剪,约 20 秒,能无缝循环,≤10MB(GIF 还没有的时候,一张静态截图也
+     远好过没有)。画面里必须有:
+       1. 一只 chara 在 `live` 模式下没人跟它说话时自己干活 —— muse 在走,工具调用落地。
+       2. 工作区里真的完成了一样东西(一个文件、一个页面、一张图)。
+       3. 它自己决定开口 —— 气泡自己冒出来。
+     全部的意义就是:角色在没有人给指令的情况下行动。这是别人没有的东西,必须在头三秒
+     就看得懂。
+──────────────────────────────────────────────────────────────────────────────── -->
+
 ---
 
 LunaMoth 让一个 AI 角色作为持续存在的生命住进电脑里。它有自己的沙盒、自己的记忆、自己的节奏 —— 在你两条消息之间它自己思考、自己做东西,并且自己决定什么时候有值得告诉你的事。把人格剥掉,剩下的是一个能干活的 agent:shell、文件、浏览器、跑代码,全都走一道有 allowlist、有审计的网关。
 
-它最早只是一个"真的能做事"的角色扮演前端,后来长成了一个小型运行时。真正重要的只有一个文件 —— 角色卡:身份、声线、角色所在的世界,全都装在里面。你带来卡和模型,其余的 LunaMoth 帮你组装:
+真正重要的只有一个文件 —— 角色卡:身份、声线、角色所在的世界,全都装在里面。你带来卡和模型,其余的 LunaMoth 帮你组装:
 
 ```text
 [角色卡:人格 + 内嵌世界] + [工具] + [有界记忆] + [滑动上下文]
 ```
 
-agent 内核大量借鉴了 [Hermes](https://github.com/NousResearch/hermes-agent);卡片/世界书的格式沿用 [SillyTavern](https://github.com/SillyTavern/SillyTavern)。
+它最早只是一个"真的能做事"的角色扮演前端,后来长成了一个小型运行时。agent 内核大量借鉴了 [Hermes](https://github.com/NousResearch/hermes-agent);卡片/世界书的格式沿用 [SillyTavern](https://github.com/SillyTavern/SillyTavern)。
 
 ## 快速开始
 
@@ -47,7 +72,7 @@ curl -fsSL https://raw.githubusercontent.com/Lunamos/LunaMoth/main/install.sh | 
 lunamoth              # 在浏览器里打开 webui（lunamoth tui 是终端 UI;lunamoth doctor 检查环境）
 ```
 
-> 仓库目前是私有的,安装器要带 token 拉取 release wheel —— 在命令前加 `GITHUB_TOKEN=<带 repo:read 的 PAT>`。想从源码构建则在末尾加 `| bash -s -- --dev`。
+> 想从源码构建而不用预构建 wheel,在末尾加 `| bash -s -- --dev`。
 
 或者从 clone 跑完整桌面端(我们就是这么开发的)—— 需要 [uv](https://docs.astral.sh/uv/) + Node:
 
@@ -65,8 +90,6 @@ cd apps/desktop && npm install && npm run dev      # 打开桌面窗口
 curl -fsSL https://raw.githubusercontent.com/Lunamos/LunaMoth/main/install.sh | bash
 lunamoth desktop --daemon      # 常驻监督进程;chara 在你不在时也继续跑
 ```
-
-> 同上:仓库私有期间请加 `GITHUB_TOKEN=<带 repo:read 的 PAT>`(或 `| bash -s -- --dev` 从源码构建)。
 
 然后,在你自己的机器上,用 SSH 隧道连进去 —— 不开任何端口,加密和鉴权都交给 SSH,浏览器会自动打开并指向服务器:
 

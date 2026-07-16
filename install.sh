@@ -15,8 +15,8 @@
 #     rebuild the served UI with `cd apps/web && npm run build`. Update later with
 #     `lunamoth update` (git pull + uv sync).
 #
-# A PRIVATE repo: the release-asset download needs a token — set
-# GITHUB_TOKEN=<a PAT with repo:read> before running (used as a bearer header).
+# The repo is PUBLIC — no token needed. GITHUB_TOKEN is honoured if set (a bearer
+# header, to dodge the 60/hr anonymous API rate limit), but is never required.
 set -euo pipefail
 
 REPO_SLUG="${LUNAMOTH_REPO_SLUG:-Lunamos/LunaMoth}"
@@ -171,7 +171,7 @@ fi
 
 say "resolving the latest release of ${REPO_SLUG} ..."
 release_json="$(curl -fsSL ${AUTH_HEADER[@]+"${AUTH_HEADER[@]}"} -H "Accept: application/vnd.github+json" "$API")" \
-  || fail "could not fetch the latest release of ${REPO_SLUG} — no published release yet, or a private repo (set GITHUB_TOKEN=<repo:read PAT>). To install from source instead, re-run with: ... | bash -s -- --dev"
+  || fail "could not fetch the latest release of ${REPO_SLUG} — GitHub may be unreachable or rate-limiting you; try again shortly. To install from source instead, re-run with: ... | bash -s -- --dev"
 
 # Find the .whl asset's download URL (grep/sed — no jq dependency).
 WHEEL_URL="$(printf '%s\n' "$release_json" \

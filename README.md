@@ -1,13 +1,21 @@
 <p align="center">
-  <img src="assets/banner.png" alt="LunaMoth — Original Character That Lives With You" width="100%">
+  <img src="assets/banner.png" alt="LunaMoth — an original character that lives in your computer" width="100%">
 </p>
 
-<p align="center"><i>Give your original character a computer to live in.</i></p>
+<p align="center"><b>Give your original character a computer to live in.</b></p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
-  <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.11%2B-blue.svg" alt="Python 3.11+"></a>
-  <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/文档-简体中文-9fd9ff.svg" alt="简体中文"></a>
+  An open-source runtime that turns a character card into a being that actually lives:<br>
+  its own sandbox, its own memory, its own pace. It reads, writes and makes things while you're away —<br>
+  and decides for itself when something is worth telling you.
+</p>
+
+<p align="center">
+  <a href="https://github.com/Lunamos/LunaMoth/stargazers"><img src="https://img.shields.io/github/stars/Lunamos/LunaMoth?style=flat-square&logo=github&logoColor=9fd9ff&color=9fd9ff&labelColor=15202b" alt="Stars"></a>
+  <a href="https://github.com/Lunamos/LunaMoth/releases"><img src="https://img.shields.io/github/v/release/Lunamos/LunaMoth?style=flat-square&color=9fd9ff&labelColor=15202b" alt="Latest release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-9fd9ff?style=flat-square&labelColor=15202b" alt="License: Apache-2.0"></a>
+  <a href="#quick-start"><img src="https://img.shields.io/badge/macOS%20%7C%20Linux-9fd9ff?style=flat-square&labelColor=15202b" alt="macOS | Linux"></a>
+  <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/文档-简体中文-9fd9ff?style=flat-square&labelColor=15202b" alt="简体中文"></a>
 </p>
 
 <p align="center">
@@ -22,17 +30,36 @@
 
 <p align="center">English | <a href="README.zh-CN.md">简体中文</a></p>
 
+<!-- ── THE DEMO ────────────────────────────────────────────────────────────────
+     Nothing else on this page earns as much. Most visitors decide here, and many
+     star from the README without ever installing. Record it, drop it in above the
+     `---`, and delete this comment:
+
+       <p align="center">
+         <img src="assets/demo.gif" alt="A chara working on its own, then speaking up" width="100%">
+       </p>
+
+     One take, no cuts, ~20s, loops cleanly, ≤10MB (a still screenshot beats nothing
+     while the GIF doesn't exist). What has to be on screen:
+       1. A chara in `live` mode working with nobody talking to it — muse ticking, a
+          tool call landing.
+       2. Something real finished in its workspace (a file, a page, an image).
+       3. It decides to speak — the bubble arrives on its own.
+     The whole point is the character acting with no human prompt. That's the thing
+     nothing else does, and it has to be legible in the first three seconds.
+──────────────────────────────────────────────────────────────────────────────── -->
+
 ---
 
 LunaMoth runs an AI character as a persistent being that lives in a computer. It has its own sandbox, its own memory, its own pace — it thinks and makes things between your messages, and decides for itself when something is worth telling you. Strip the persona away and what's left is a capable agent: shell, files, a browser, code, all behind an allowlisted, audited gateway.
 
-It started as a roleplay frontend that could actually *do* things, and grew into a small runtime. The character card is the one file that matters — identity, voice, and the character's world all travel inside it. You bring the card and a model; LunaMoth composes the rest:
+The character card is the one file that matters — identity, voice, and the character's world all travel inside it. You bring the card and a model; LunaMoth composes the rest:
 
 ```text
 [character card: persona + embedded world] + [tools] + [bounded memory] + [sliding context]
 ```
 
-The agent core borrows heavily from [Hermes](https://github.com/NousResearch/hermes-agent); the card/world-book format is [SillyTavern](https://github.com/SillyTavern/SillyTavern)'s.
+It started as a roleplay frontend that could actually *do* things, and grew into a small runtime. The agent core borrows heavily from [Hermes](https://github.com/NousResearch/hermes-agent); the card/world-book format is [SillyTavern](https://github.com/SillyTavern/SillyTavern)'s.
 
 ## Quick start
 
@@ -47,7 +74,7 @@ curl -fsSL https://raw.githubusercontent.com/Lunamos/LunaMoth/main/install.sh | 
 lunamoth              # opens the webui in your browser  (lunamoth tui = terminal UI; lunamoth doctor checks your setup)
 ```
 
-> While the repo is private, the installer fetches the release wheel through a token — prefix the command with `GITHUB_TOKEN=<a PAT with repo:read>`. To build from source instead, append `| bash -s -- --dev`.
+> To build from source instead of the prebuilt wheel, append `| bash -s -- --dev`.
 
 Or run the full desktop app from a clone (this is how we develop it) — needs [uv](https://docs.astral.sh/uv/) + Node:
 
@@ -65,8 +92,6 @@ Install on the server and leave a chara living in the background:
 curl -fsSL https://raw.githubusercontent.com/Lunamos/LunaMoth/main/install.sh | bash
 lunamoth desktop --daemon      # resident supervisor; charas keep running between visits
 ```
-
-> Same token note as above: while the repo is private, prefix with `GITHUB_TOKEN=<a PAT with repo:read>` (or `| bash -s -- --dev` to build from source).
 
 Then, from your own machine, tunnel in over SSH — no open ports, encryption and auth come from SSH, and your browser opens pointed at the server:
 
