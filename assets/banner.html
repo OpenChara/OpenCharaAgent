@@ -2,7 +2,19 @@
 <!-- LunaMoth GitHub banner source. Render with headless Chrome:
      chrome --headless --screenshot=banner.png --window-size=1280,400 \
             --force-device-scale-factor=2 file://.../banner.html
-     Fonts are macOS system serifs (Didot / Hoefler Text) — render on macOS. -->
+     Fonts are macOS system serifs (Didot / Hoefler Text) — render on macOS.
+
+     The wordmark, sigil and subtitle stay live text/SVG here; only the background
+     is art. banner-art.png is cropped from the generated banner-art.src.png
+     (1672x941): the image model letterboxed its own output, so the content band
+     (y 278..726) is cut out and padded back to 3.2:1 with a PER-COLUMN ramp from
+     the band's edge row to the letterbox colour — a flat pad leaves a visible
+     ~10-level seam. It lands at exactly 2560x800 = 1280x400@2x, so `cover` neither
+     scales nor crops. Art direction, if it is ever regenerated: the figure must be
+     a faceless silhouette seen from behind, absorbed in its own work — the product
+     is the user's OC, so the banner must not pin a specific character, and a
+     character that looked back at the viewer would say the opposite of what this
+     runtime is for. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -11,9 +23,15 @@
   html, body { width: 1280px; height: 400px; overflow: hidden; }
   body {
     position: relative;
+    /* Layers, topmost first: a faint glow lifting the wordmark off the art, a scrim
+       holding the top and bottom edges down, then the art itself. banner-art.png is
+       pre-cropped to exactly 1280x400@2x and is already near-black through the
+       centre by composition, so the scrim only has to touch the edges. */
     background:
-      radial-gradient(ellipse 900px 520px at 50% 46%, rgba(110, 170, 220, .34), rgba(110, 170, 220, 0) 68%),
-      radial-gradient(ellipse 1400px 700px at 50% 120%, #16314c, #0a1726 70%);
+      radial-gradient(ellipse 900px 520px at 50% 46%, rgba(110, 170, 220, .14), rgba(110, 170, 220, 0) 68%),
+      linear-gradient(180deg, rgba(10, 23, 38, .55) 0%, rgba(10, 23, 38, 0) 34%,
+                              rgba(10, 23, 38, 0) 66%, rgba(10, 23, 38, .55) 100%),
+      url("banner-art.png") center / cover no-repeat;
     background-color: #0a1726;
     display: flex;
     flex-direction: column;
