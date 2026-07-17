@@ -24,8 +24,8 @@ export interface BoardSession extends SessionSnapshot {
   card_dirty?: boolean;
   // `mode` is NOT a field: it's the same fact as `paused` (mode != live), so the
   // board derives the mode chip from `paused` rather than carrying two copies.
-  // speaks + superchat_unread are inherited from SessionSnapshot (the board
-  // headlines speaks[0] and shows an unread mark when superchat_unread > 0).
+  // last_message is inherited from SessionSnapshot (the board headlines it —
+  // the newest conversation message, WeChat-style).
 }
 
 /** hub.state response — only the fields the board reads are typed; the rest is

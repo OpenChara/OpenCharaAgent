@@ -138,36 +138,57 @@ describe("StreamModel — tool groups", () => {
   });
 });
 
-describe("StreamModel — super-chat (speak tool)", () => {
-  it("turns the say text after a speak tool_end into a super bubble", () => {
+describe("StreamModel — super-chat (the speak tool's one special bubble)", () => {
+  it("the TextDelta's superchat flag alone opens the super bubble", () => {
     const m = new StreamModel();
-    m.pushToolStart("speak", "", 0);
-    m.pushToolEnd("speak", true, 0.1, "spoke", 0);
-    m.pushText("hey, look at this", "say");
+    m.pushText("hey, ", "say", true);
+    m.pushText("look at this", "say", true);
     const supers = m.items.filter((i) => i.kind === "super");
     expect(supers).toHaveLength(1);
     expect((supers[0] as TextItem).raw).toBe("hey, look at this");
   });
 
-  it("does NOT super-flag when the speak tool failed", () => {
+  it("a live speak turn shows ONLY the bubble — the tool events draw no chip", () => {
+    // The full live sequence: ToolStart(speak) → ToolEnd(speak) → the superchat-
+    // marked say text. Exactly one item comes out: the special bubble.
     const m = new StreamModel();
     m.pushToolStart("speak", "", 0);
-    m.pushToolEnd("speak", false, 0.1, "", 0);
-    m.pushText("plain", "say");
+    m.pushToolEnd("speak", true, 0.1, "spoke", 0);
+    m.pushText("hey, look at this\n", "say", true);
+    expect(kinds(m)).toEqual(["super"]);
+  });
+
+  it("speak tool events do not break an open tool group of real tools", () => {
+    const m = new StreamModel();
+    m.pushToolStart("read_file", "a.txt", 0);
+    m.pushToolEnd("read_file", true, 0.1, "read", 0);
+    m.pushToolStart("speak", "", 1);
+    m.pushToolEnd("speak", true, 0.1, "", 1);
+    const g = only<ToolGroupItem>(m, "tool-group")[0];
+    expect(g.chips.map((c) => c.name)).toEqual(["read_file"]);
+    expect(g.tally).toEqual({ read_file: 1 });
+  });
+
+  it("a plain (non-superchat) say stays a plain say — tool events don't flag it", () => {
+    const m = new StreamModel();
+    m.pushToolStart("speak", "", 0);
+    m.pushToolEnd("speak", true, 0.1, "spoke", 0);
+    m.pushText("plain reply prose", "say");
     expect(m.items.some((i) => i.kind === "super")).toBe(false);
     expect(m.items.some((i) => i.kind === "say")).toBe(true);
   });
 
-  it("stamps a super bubble with a ts (the view derives read/unread from it)", () => {
+  it("a superchat-marked muse never opens a super bubble (say channel only)", () => {
     const m = new StreamModel();
-    m.pushToolStart("speak", "", 0);
-    m.pushToolEnd("speak", true, 0, "", 0);
-    m.pushText("ping", "say");
+    m.pushText("inner voice", "muse", true);
+    expect(kinds(m)).toEqual(["say"]);
+  });
+
+  it("stamps a super bubble with a ts (drives the time separators)", () => {
+    const m = new StreamModel();
+    m.pushText("ping", "say", true);
     const sup = m.items.find((i) => i.kind === "super") as TextItem;
-    // read/unread is no longer stored on the item — only the ts the view compares
-    // against its own watermark (Chat.tsx superReadTs).
     expect(sup.ts).toBeGreaterThan(0);
-    expect("unread" in sup).toBe(false);
   });
 });
 
@@ -221,6 +242,8 @@ describe("StreamModel — restored history", () => {
         content: "",
         tool_calls: [{ id: "s1", function: { name: "speak", arguments: '{"text":"important!"}' } }],
       },
+      // the speak's own tool result row — machinery, silently dropped
+      { role: "tool", content: '{"ok": true, "delivered": true}', tool_call_id: "s1" },
     ]);
     expect(m.items.some((i) => i.kind === "user")).toBe(true);
     expect(m.items.some((i) => i.kind === "think")).toBe(true);
@@ -230,6 +253,22 @@ describe("StreamModel — restored history", () => {
     expect(g.chips[0].summary).toContain("file body");
     const sup = m.items.find((i) => i.kind === "super") as TextItem;
     expect(sup.raw).toBe("important!");
+  });
+
+  it("a restored speak turn is ONE super bubble — no call chip, no orphan result chip", () => {
+    const m = new StreamModel();
+    m.renderRestored([
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [{ id: "s1", function: { name: "speak", arguments: '{"text":"look!"}' } }],
+      },
+      { role: "tool", content: '{"ok": true, "delivered": true}', tool_call_id: "s1" },
+    ]);
+    // exactly the special bubble — no tool-group, no `result` chip minted from
+    // the speak's dangling tool result row
+    expect(m.items.map((i) => i.kind)).toEqual(["super"]);
+    expect((m.items[0] as TextItem).raw).toBe("look!");
   });
 
   it("renders a compaction-boundary divider for a summary row, keeping the raw turns", () => {
@@ -257,11 +296,9 @@ describe("StreamModel — restored history", () => {
     expect(m.items.filter((i) => i.kind === "system" && i.cls === "compacted").length).toBe(1);
   });
 
-  it("does NOT leak pendingSuper past restore — the first live say stays a plain say", () => {
-    // Regression: restoring a speak tool_call set the live pendingSuper flag (which
-    // nothing in the restore path consumes — the restored super renders via the
-    // isSuper arg), so the chara's FIRST live reply after re-entering the chat
-    // mis-rendered as a ⚡super-chat.
+  it("the first live say after a restored speak stays a plain say", () => {
+    // The highlight rides each TextDelta's own superchat flag, so a restored
+    // super can never bleed into the chara's next live reply.
     const m = new StreamModel();
     m.renderRestored([
       { role: "user", content: "hi" },

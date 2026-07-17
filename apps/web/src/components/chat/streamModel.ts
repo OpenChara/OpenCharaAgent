@@ -18,15 +18,15 @@
  *  - A run of consecutive tool calls folds into ONE `tool-group` item; its
  *    summary is a hermes-style tally ("read 1 file · ran 2 commands"). Any
  *    non-tool item (text/think/system) breaks the group.
- *  - The `speak` tool ending ok sets a pending-super flag; the NEXT say-channel
- *    text opens as a bright super-chat bubble (the chara reaching out).
+ *  - The `speak` tool renders as exactly ONE special bubble: its text arrives as
+ *    a superchat-marked say TextDelta (the authoritative flag from the backend)
+ *    and opens a bright super-chat item; the speak tool call itself never draws
+ *    a chip — live or restored.
  *  - think deltas accumulate into the SINGLE think block for the turn
  *    (turnThink), re-used if the cursor briefly left it (e.g. interleaved tool
  *    calls). finalize() collapses any streaming think blocks.
  *
  * Subtle behaviors interpreted from chat.js, documented here:
- *  - super-chat read/unread is a CSS class applied later by the view from its own
- *    read watermark (Chat.tsx superReadTs); the model only records the super's `ts`.
  *  - closeCurrent markdown-renders say|super; think stays plain text. Muse text
  *    is folded into say, so it is markdown-rendered like any other message.
  *  - tool_end with no matching tool_start (orphan) still counts in the tally and
@@ -69,8 +69,7 @@ export interface TextItem {
   id: string;
   kind: "say" | "super";
   raw: string;
-  /** message time (epoch s) — drives the WeChat-style time separators. For a
-   *  super-chat it doubles as the read/unread watermark key (Chat.tsx superReadTs). */
+  /** message time (epoch s) — drives the WeChat-style time separators. */
   ts?: number;
 }
 
@@ -196,7 +195,6 @@ export class StreamModel {
   private toolGroup: ToolGroupItem | null = null;
   private turnThink: ThinkItem | null = null;
   private activeTools = new Map<string, ToolChip>();
-  private pendingSuper = false;
   // Item-id counter, INSTANCE-scoped (not module-global): each model numbers from
   // 0, so replaying identical restored history yields identical ids — stable React
   // keys keep a restored ThinkBlock/ToolGroup's local open/scroll state across
@@ -212,22 +210,18 @@ export class StreamModel {
     this.toolGroup = null;
     this.turnThink = null;
     this.activeTools.clear();
-    this.pendingSuper = false;
     this.seq = 0;
   }
 
   /* ---- the live event dispatch (chat.js onEvent) ---- */
-  // Returns whether `speak` just ok'd (so the caller can flag a notification);
-  // the work-state phase the caller surfaces is derived separately.
   // The `channel` (say|muse) is a backend-gateway forwarding hint, NOT a display
   // distinction — on the desktop both render identically. Muse text accumulates
   // into a normal `say` item; a self-work turn is still its own message because
-  // the turn boundary closes the previous item. (A pending super-chat only
-  // applies to the say channel — a muse turn never opens a super bubble.)
-  pushText(text: string, channel: "say" | "muse"): void {
-    const isSuper = channel === "say" && this.pendingSuper;
-    this.pendingSuper = false;
-    this.appendSay(text, isSuper);
+  // the turn boundary closes the previous item. The highlight comes straight
+  // from the TextDelta's authoritative `superchat` flag (the speak text); it
+  // only applies to the say channel — a muse turn never opens a super bubble.
+  pushText(text: string, channel: "say" | "muse", superchat = false): void {
+    this.appendSay(text, channel === "say" && superchat);
   }
 
   pushThink(text: string): void {
@@ -235,6 +229,7 @@ export class StreamModel {
   }
 
   pushToolStart(name: string, preview: string, index: number): void {
+    if (name === "speak") return; // a speak turn shows only the special bubble — no chip
     this.closeCurrent();
     const group = this.ensureToolGroup();
     this.tally(name);
@@ -245,6 +240,7 @@ export class StreamModel {
   }
 
   pushToolEnd(name: string, ok: boolean, duration: number, summary: string, index: number): void {
+    if (name === "speak") return; // no chip to close — see pushToolStart
     const key = `${index}:${name}`;
     let chip = this.activeTools.get(key);
     if (!chip) {
@@ -260,7 +256,6 @@ export class StreamModel {
     chip.summary = summary;
     if (!ok && this.toolGroup) this.toolGroup.fails += 1;
     this.activeTools.delete(key);
-    if (name === "speak" && ok) this.pendingSuper = true;
   }
 
   pushNotice(text: string): void {
@@ -319,7 +314,6 @@ export class StreamModel {
     for (const it of this.items) if (it.kind === "think") it.streaming = false;
     this.activeTools.clear();
     this.breakToolGroup();
-    this.pendingSuper = false;
     this.turnThink = null;
   }
 
@@ -329,9 +323,9 @@ export class StreamModel {
     if (this.cur.kind !== kind) {
       this.closeCurrent();
       this.breakToolGroup();
-      // Restore uses the message's recorded ts (chat.js `m.ts || now`) so an already-read
-      // historical super-chat doesn't re-render as unread, and time separators line up
-      // with when the message was actually said rather than when it was replayed.
+      // Restore uses the message's recorded ts (chat.js `m.ts || now`) so time
+      // separators line up with when the message was actually said rather than
+      // when it was replayed.
       const ts = tsOverride ?? Date.now() / 1000;
       const item: TextItem = { id: this.nextId(), kind, raw: "", ts };
       this.items.push(item);
@@ -389,6 +383,10 @@ export class StreamModel {
   // (say + super from speak tool_calls), think blocks, and tool-call chips.
   renderRestored(messages: RestoredMessage[]): void {
     const restoreChips = new Map<string, ToolChip>();
+    // A speak's tool RESULT row is machinery ({"ok":true,…}) — the bubble already
+    // carries the words, so the ids collected here silence those result rows
+    // instead of letting them orphan into a bare `result` chip.
+    const speakCallIds = new Set<string>();
     // Render the FULL tail the backend sent (already capped at RESTORE_MAX_MESSAGES).
     // A previous slice(-80) here truncated the visible history to ~the last 80 rows
     // (tool/think rows included), so any longer conversation looked incomplete.
@@ -406,6 +404,7 @@ export class StreamModel {
         if (m.kind === "summary") this.compactionMark();
         else if (hasText) this.systemLine(content);
       } else if (m.role === "tool") {
+        if (m.tool_call_id && speakCallIds.has(m.tool_call_id)) continue;
         if (hasText) this.restoreToolResult(m, restoreChips);
       } else if (m.role === "assistant") {
         const reasoning =
@@ -429,13 +428,17 @@ export class StreamModel {
         for (const tc of calls) {
           const fn = tc && tc.function;
           if (!fn) continue;
-          if (fn.name === "speak") continue;
+          if (fn.name === "speak") {
+            // no chip for a speak call (live parity); remember its id so the
+            // matching tool-result row is dropped instead of orphaning.
+            if (tc.id) speakCallIds.add(tc.id);
+            continue;
+          }
           this.restoreToolCall(fn, tc.id, restoreChips);
         }
-        // Restored speak texts render as super DIRECTLY (isSuper arg) — do NOT set
-        // pendingSuper here: nothing in the restore path consumes it (only live
-        // pushText does), so it would leak past restore and mis-render the chara's
-        // FIRST live reply as a ⚡super-chat.
+        // Restored speak texts render as super DIRECTLY (isSuper arg) — the same
+        // single special bubble the live path opens from the superchat-marked
+        // TextDelta.
         for (const speak of speakTextsFromMessage(m)) {
           this.appendSay(speak, true, m.ts);
           this.closeCurrent();

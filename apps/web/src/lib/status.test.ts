@@ -116,12 +116,11 @@ describe("statusOf", () => {
     expect(out.line).toBe("Living its own day");
   });
 
-  it("never headlines the opening line / last chat — only a real speak does", () => {
-    // Regression guard for the removed preview.awaiting branch: a chara that has
-    // only shown its card greeting (first_mes, a kind='chat' row) and never used
-    // the `speak` tool must read as living its day — NOT echo the opener as a
-    // message line on the board. With no speaks, life/idle wins, cls is not "msg".
-    const out = statusOf(en, { status: "running", life: { state: "working" } }, NOW);
+  it("never headlines the opening line — a greeting-only chara has no last_message", () => {
+    // The backend excludes the card greeting from last_message (a chara that has
+    // only greeted has no conversation yet), so the row arrives with
+    // last_message null and must read as living its day, cls not "msg".
+    const out = statusOf(en, { status: "running", last_message: null, life: { state: "working" } }, NOW);
     expect(out.line).toBe("Working on its own");
     expect(out.cls).toBe("");
   });
@@ -133,10 +132,14 @@ describe("statusOf", () => {
     expect(statusOf(en, { status: "running" }, NOW).line).toBe("Living its own day");
   });
 
-  it("headlines the latest superchat over life (read or unread)", () => {
+  it("headlines the last conversation message over life (chara side)", () => {
     const out = statusOf(
       en,
-      { status: "running", speaks: [{ text: "hi from me", ts: 100 }], life: { state: "working" } },
+      {
+        status: "running",
+        last_message: { text: "hi from me", ts: 100, role: "chara" },
+        life: { state: "working" },
+      },
       NOW,
     );
     expect(out.line).toBe("hi from me");
@@ -144,8 +147,22 @@ describe("statusOf", () => {
     expect(out.dot).toBe("live");
   });
 
-  it("a paused chara still shows its latest superchat, but the dot is off", () => {
-    const out = statusOf(en, { status: "running", paused: true, speaks: [{ text: "later", ts: 1 }] }, NOW);
+  it("a user turn is a headline too (WeChat semantics: last message, either side)", () => {
+    const out = statusOf(
+      en,
+      { status: "running", last_message: { text: "你在吗", ts: 200, role: "user" } },
+      NOW,
+    );
+    expect(out.line).toBe("你在吗");
+    expect(out.cls).toBe("msg");
+  });
+
+  it("a paused chara still shows its last message, but the dot is off", () => {
+    const out = statusOf(
+      en,
+      { status: "running", paused: true, last_message: { text: "later", ts: 1, role: "chara" } },
+      NOW,
+    );
     expect(out.line).toBe("later");
     expect(out.dot).toBe("off");
   });

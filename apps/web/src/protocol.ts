@@ -15,6 +15,9 @@ export interface TextDelta {
   type: "text";
   text: string;
   channel: Channel;
+  /** true for the deliberate `speak` text (the chara reaching the user) — the
+   *  chat renders it as the ONE special highlighted bubble. */
+  superchat: boolean;
 }
 export interface ThinkDelta {
   type: "think";
@@ -61,7 +64,12 @@ export function decodeEvent(data: Record<string, unknown>): ProtocolEvent | null
   const type = data?.type;
   switch (type) {
     case "text":
-      return { type, text: String(data.text ?? ""), channel: chan(data.channel) };
+      return {
+        type,
+        text: String(data.text ?? ""),
+        channel: chan(data.channel),
+        superchat: Boolean(data.superchat),
+      };
     case "think":
       return { type, text: String(data.text ?? "") };
     case "tool_start":

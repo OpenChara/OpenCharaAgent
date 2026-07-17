@@ -95,26 +95,23 @@ function MediaInline({
 function SayMessage({
   item,
   charName,
-  superReadTs,
   avatarUri,
   sandboxRoot,
   workspaceRoot,
 }: {
   item: TextItem;
   charName: string;
-  superReadTs: number;
   avatarUri?: string;
   sandboxRoot: string;
   workspaceRoot: string;
 }) {
   const t = useT();
   const isSuper = item.kind === "super";
-  const read = isSuper && item.ts !== undefined && item.ts <= superReadTs;
   // Extract MEDIA: markers from the accumulated text (hermes shape): prose renders
   // as markdown, a marker renders as an inline image / download, in order.
   const segments = splitOutbound(item.raw);
   return (
-    <div className={`char-msg${isSuper ? " super-chat" : ""}${read ? " read" : ""}`}>
+    <div className={`char-msg${isSuper ? " super-chat" : ""}`}>
       <Avatar name={charName} avatarUri={avatarUri} />
       <div className="body">
         <div className="name">
@@ -319,7 +316,6 @@ function ClarifyBox({
 export function StreamItemView({
   item,
   charName,
-  superReadTs,
   technical = false,
   avatarUri,
   sandboxRoot,
@@ -329,7 +325,6 @@ export function StreamItemView({
 }: {
   item: StreamItem;
   charName: string;
-  superReadTs: number;
   /** show raw tool-call previews (Settings · 显示 = Technical; Chat mirrors body.technical). */
   technical?: boolean;
   /** the chara's inline avatar data-URI (snapshot.avatar_uri); glyph fallback when absent. */
@@ -350,7 +345,6 @@ export function StreamItemView({
         <SayMessage
           item={item}
           charName={charName}
-          superReadTs={superReadTs}
           avatarUri={avatarUri}
           sandboxRoot={sandboxRoot}
           workspaceRoot={workspaceRoot}

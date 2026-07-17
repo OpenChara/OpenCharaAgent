@@ -1,7 +1,7 @@
 /* useCharaStream — the Chat view's engine. Owns a CharaClient + a StreamModel and
  * ports the chat.js ChatController lifecycle (open/attach/restore, the streaming
  * event dispatch, work-state + life-state, send/interrupt/command/snapshot, the
- * send-anytime queue, super-chat read-flush) into a React hook.
+ * send-anytime queue) into a React hook.
  *
  * The StreamModel mutates its `items` array in place (the load-bearing in-place
  * text accumulation). React can't see those mutations, so every mutating call is
@@ -195,7 +195,9 @@ export function useCharaStream(name: string): CharaStream {
       const m = modelRef.current!;
       if (ev.type === "text") {
         setWorkState(true, "generate");
-        m.pushText(ev.text, ev.channel);
+        // ev.superchat is the authoritative speak mark — it alone opens the
+        // special bubble (the model no longer infers it from tool events).
+        m.pushText(ev.text, ev.channel, ev.superchat);
         applyStatusWord(tRef.current("st-creating"));
       } else if (ev.type === "think") {
         m.pushThink(ev.text);
@@ -470,9 +472,9 @@ export function useCharaStream(name: string): CharaStream {
   return {
     // A FRESH array reference every render (the model appends/mutates in place, so
     // the raw reference is identical across bumps): consumers that key effects or
-    // memos on `items` — Chat.tsx's autoscroll, time separators, super-read flush —
-    // would otherwise never fire for live messages. Item objects keep their identity
-    // (stable React keys); only the container is re-referenced.
+    // memos on `items` — Chat.tsx's autoscroll, time separators — would otherwise
+    // never fire for live messages. Item objects keep their identity (stable React
+    // keys); only the container is re-referenced.
     items: modelRef.current.items.slice(),
     charName,
     connected,

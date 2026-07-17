@@ -6,11 +6,12 @@ describe("protocol.decodeEvent", () => {
     expect(PROTOCOL_VERSION).toBe(1);
   });
 
-  it("decodes a say text delta with channel default", () => {
+  it("decodes a say text delta with channel + superchat defaults", () => {
     expect(decodeEvent({ type: "text", text: "hi" })).toEqual({
       type: "text",
       text: "hi",
       channel: "say",
+      superchat: false,
     });
   });
 
@@ -19,6 +20,16 @@ describe("protocol.decodeEvent", () => {
       type: "text",
       text: "x",
       channel: "muse",
+      superchat: false,
+    });
+  });
+
+  it("carries the superchat mark (the speak text → the one special bubble)", () => {
+    expect(decodeEvent({ type: "text", text: "hey", channel: "say", superchat: true })).toEqual({
+      type: "text",
+      text: "hey",
+      channel: "say",
+      superchat: true,
     });
   });
 

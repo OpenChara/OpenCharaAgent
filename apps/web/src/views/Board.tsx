@@ -12,10 +12,9 @@ import type { DeckCard } from "../components/deck/types";
 
 /* Board — the roster of living charas. Faithful to index.html #view-board +
    app.js renderBoard: a grid of chara cards, each with a power toggle
-   (optimistic: spins immediately, reverts on failure — the binding UI rule) and
-   click-through to the chat. Deck-card avatars/sprites and the speaks-preview
-   are wired in when the Deck/Chat tracks land; until then the palette+glyph
-   fallback (app.js's no-card path) is used. */
+   (optimistic: spins immediately, reverts on failure — the binding UI rule),
+   a WeChat-style last-message preview (statusOf), and click-through to the
+   chat. Charas without a deck card fall back to the palette+glyph face. */
 
 const FIRST_RUN_SEEN = "lm-first-run-seen";
 
@@ -143,8 +142,6 @@ export function Board() {
             const live = s.name in pending ? pending[s.name] : !s.paused;
             // The dot follows the optimistic state too (err still wins from st).
             const dot = st.dot === "err" ? "err" : s.name in pending ? (live ? "live" : "off") : st.dot;
-            // Unread = superchats newer than the read watermark; cleared on entry.
-            const unread = (s.superchat_unread || 0) > 0;
             return (
               <div
                 key={s.name}
@@ -184,10 +181,7 @@ export function Board() {
                       <span className="chip">{modeLabel(t, s.paused ? "chat" : "live")}</span>
                     </div>
                   </div>
-                  <div className={`status-line ${st.cls}${unread ? " unread" : ""}`}>
-                    {unread && <span className="unread-dot" />}
-                    {st.line}
-                  </div>
+                  <div className={`status-line ${st.cls}`}>{st.line}</div>
                 </div>
               </div>
             );

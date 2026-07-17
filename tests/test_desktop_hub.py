@@ -799,101 +799,103 @@ def test_session_entry_includes_auth_error_kind():
     assert "HTTP 401" in row["error"]
 
 
-def test_board_state_extracts_recent_speak_tool_calls_from_transcript():
-    set_defaults()
-    entry = result("session.wake", {"card": luna_card_path()})
-    meta = S.load_session(entry["name"])
+# ---- last_message: the board's conversation preview ---------------------------
+
+def _seed_rows(meta, rows):
+    """Append (role, content, kind, ts) transcript rows in order (ids ascend).
+    Same schema TranscriptStore creates; epoch defaults to 0 like a fresh chara."""
     db = meta.sandbox_dir / "transcript.db"
     db.parent.mkdir(parents=True, exist_ok=True)
-
     conn = sqlite3.connect(db)
     try:
         conn.execute(
-            "CREATE TABLE messages ("
+            "CREATE TABLE IF NOT EXISTS messages ("
             "id INTEGER PRIMARY KEY AUTOINCREMENT, epoch INTEGER NOT NULL DEFAULT 0, "
             "role TEXT NOT NULL, content TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'chat', ts REAL NOT NULL)"
         )
-        rows = [
-            (
-                "assistant",
-                json.dumps({
-                    "role": "assistant",
-                    "tool_calls": [{
-                        "function": {"name": "speak", "arguments": json.dumps({"text": "old hello"})},
-                    }],
-                }),
-                "struct",
-                99.0,
-            ),
-            (
-                "assistant",
-                json.dumps({
-                    "role": "assistant",
-                    "tool_calls": [{
-                        "function": {"name": "terminal", "arguments": json.dumps({"cmd": "echo ignored"})},
-                    }],
-                }),
-                "struct",
-                100.0,
-            ),
-            (
-                "assistant",
-                json.dumps({
-                    "role": "assistant",
-                    "tool_calls": [{
-                        "function": {"name": "speak", "arguments": "{"},
-                    }],
-                }),
-                "struct",
-                101.0,
-            ),
-            (
-                "assistant",
-                json.dumps({
-                    "role": "assistant",
-                    "tool_calls": [{
-                        "function": {"name": "speak", "arguments": json.dumps({"text": "first hello"})},
-                    }],
-                }),
-                "struct",
-                102.0,
-            ),
-            (
-                "assistant",
-                json.dumps({
-                    "role": "assistant",
-                    "tool_calls": [
-                        {"function": {"name": "memory", "arguments": json.dumps({"text": "ignored"})}},
-                        {"function": {"name": "speak", "arguments": json.dumps({"text": "second hello"})}},
-                    ],
-                }),
-                "struct",
-                103.0,
-            ),
-            (
-                "assistant",
-                json.dumps({
-                    "role": "assistant",
-                    "tool_calls": [{
-                        "function": {"name": "speak", "arguments": json.dumps({"text": "newest hello"})},
-                    }],
-                }),
-                "struct",
-                104.0,
-            ),
-        ]
         conn.executemany("INSERT INTO messages(role, content, kind, ts) VALUES(?,?,?,?)", rows)
         conn.commit()
     finally:
         conn.close()
 
-    row = result("sessions.list")[0]
 
-    assert row["speaks"] == [
-        {"text": "newest hello", "ts": 104.0},
-        {"text": "second hello", "ts": 103.0},
-        {"text": "first hello", "ts": 102.0},
-    ]
+def _speak_struct(arguments):
+    return json.dumps({
+        "role": "assistant",
+        "tool_calls": [{"function": {"name": "speak", "arguments": arguments}}],
+    })
+
+
+def _woken_meta():
+    set_defaults()
+    entry = result("session.wake", {"card": luna_card_path()})
+    return S.load_session(entry["name"])
+
+
+def test_last_message_newest_wins_across_user_assistant_and_speak():
+    meta = _woken_meta()
+    _seed_rows(meta, [
+        ("assistant", "welcome, traveler", "chat", 100.0),  # the greeting (no user row yet)
+        ("user", "早", "chat", 101.0),
+        ("assistant", "早安。", "chat", 102.0),
+        # working noise between conversation turns — never a preview
+        ("assistant", json.dumps({"role": "assistant", "tool_calls": [
+            {"function": {"name": "terminal", "arguments": json.dumps({"cmd": "ls"})}},
+        ]}), "struct", 103.0),
+        ("tool", "cmd output", "tool", 103.5),
+        ("assistant", "…pondering…", "think", 103.7),
+        ("system", "…condensed…", "summary", 103.8),
+        ("assistant", _speak_struct(json.dumps({"text": "看这个！"})), "struct", 104.0),
+    ])
+    row = result("sessions.list")[0]
+    assert row["last_message"] == {"text": "看这个！", "ts": 104.0, "role": "chara"}
+    # the read/unread feature is gone with the old speaks feed
+    assert "speaks" not in row and "superchat_unread" not in row
+
+    # a newer user turn takes the headline, WeChat-style
+    _seed_rows(meta, [("user", "又来了", "chat", 105.0)])
+    row = result("sessions.list")[0]
+    assert row["last_message"] == {"text": "又来了", "ts": 105.0, "role": "user"}
+
+
+def test_last_message_none_for_a_greeting_only_chara():
+    # The card's first_mes greeting (an assistant chat row with no user row before
+    # it) must NOT surface — a chara that has only greeted has no conversation yet.
+    meta = _woken_meta()
+    _seed_rows(meta, [
+        ("assistant", "hello! I am the opening line", "chat", 100.0),
+        ("assistant", "…self-talk after the greeting…", "think", 101.0),
+    ])
+    row = result("sessions.list")[0]
+    assert row["last_message"] is None
+
+
+def test_last_message_none_without_a_transcript():
+    _woken_meta()
+    row = result("sessions.list")[0]
+    assert row["last_message"] is None
+
+
+def test_last_message_normalizes_whitespace_and_caps_at_240():
+    meta = _woken_meta()
+    long_text = ("word  \n\t" * 80).strip()  # collapses to space-joined, > 240 chars
+    _seed_rows(meta, [("user", long_text, "chat", 100.0)])
+    row = result("sessions.list")[0]
+    lm = row["last_message"]
+    assert lm["role"] == "user" and lm["ts"] == 100.0
+    assert "\n" not in lm["text"] and "\t" not in lm["text"]
+    assert len(lm["text"]) == 240
+
+
+def test_last_message_skips_malformed_speak_args():
+    meta = _woken_meta()
+    _seed_rows(meta, [
+        ("user", "real message", "chat", 100.0),
+        ("assistant", _speak_struct("{"), "struct", 101.0),  # broken JSON args
+        ("assistant", _speak_struct(json.dumps({"no_text": 1})), "struct", 102.0),
+    ])
+    row = result("sessions.list")[0]
+    assert row["last_message"] == {"text": "real message", "ts": 100.0, "role": "user"}
 
 
 def test_unknown_method_is_a_clean_rpc_error():

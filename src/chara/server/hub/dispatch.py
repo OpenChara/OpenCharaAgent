@@ -134,7 +134,6 @@ class HubDispatcher:
             "gateway.stop": self._gateway_stop,
             "gateway.status": self._gateway_status,
             "gateways.list": self._gateways_list,
-            "superchat.read": self._superchat_read,
             "session.delete": self._session_delete,
             "session.export": self._session_export,
             "session.wake": self._session_wake,
@@ -319,10 +318,6 @@ class HubDispatcher:
                 for m in S.list_sessions()
             ]}
         return _await_supervisor(self.supervisor, self.supervisor.gateways_all_live())
-
-    def _superchat_read(self, p: dict[str, Any]) -> Any:
-        meta = _meta(p)
-        return _sessions.set_superchat_read(meta, float(p.get("ts") or 0.0))
 
     def _session_delete(self, p: dict[str, Any]) -> Any:
         meta = _meta(p)

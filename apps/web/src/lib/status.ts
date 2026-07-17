@@ -27,11 +27,9 @@ export interface SessionSnapshot {
   paused?: boolean;
   last_active?: number;
   life?: LifeSnapshot;
-  /** newest-first `speak`-tool utterances (the Super Chat feed); speaks[0] is the
-   *  latest superchat the board headlines. */
-  speaks?: { text: string; ts: number }[];
-  /** count of superchats newer than the read watermark (>0 ⇒ show an unread mark). */
-  superchat_unread?: number;
+  /** the newest conversation message (user turn, chara reply, or speak text) —
+   *  the board's WeChat-style preview line. Absent/null until a real exchange. */
+  last_message?: { text: string; ts: number; role: "user" | "chara" } | null;
 }
 
 /** The one-line status descriptor a board card renders. */
@@ -132,16 +130,15 @@ export function statusOf(t: TFn, s: SessionSnapshot, now: number = Date.now()): 
   if (s.status === "crashed") return { dot: "err", line: s.error || "crashed", cls: "err" };
   if (s.error && (s.error_kind === "auth" || (s.status !== "attached" && s.status !== "running")))
     return { dot: "err", line: t("st-error"), cls: "err" };
-  // The board headlines the LATEST `speak` ONLY (the chara's deliberate utterance
-  // to you, newest-first via s.speaks; the card adds an unread mark from
-  // superchat_unread). Nothing else becomes a message line — in particular NOT
-  // the last transcript line, which would surface the card's opening `first_mes`
-  // (a kind='chat' row) on a chara that has only greeted and never actually
-  // spoken. With no speak, fall through to the factual life/idle status. The dot
+  // The board headlines the LAST CONVERSATION MESSAGE (WeChat semantics): the
+  // newest user turn, chara reply, or speak text — the backend's last_message.
+  // The backend already excludes the card's opening `first_mes` on a chara that
+  // has only greeted, so the opener never reads as a message line here. With no
+  // conversation yet, fall through to the factual life/idle status. The dot
   // still reflects autonomy: off = paused (mode chat), else live.
   const dot = s.paused ? "off" : "live";
-  const sc = s.speaks && s.speaks[0];
-  if (sc && sc.text) return { dot, line: sc.text, cls: "msg" };
+  const lm = s.last_message;
+  if (lm && lm.text) return { dot, line: lm.text, cls: "msg" };
   // OFF = autonomy off (mode chat). That is the ONLY "offline" the board shows:
   // the chara's on/off state IS its autonomy, decoupled from any process/PID.
   if (s.paused) return { dot: "off", line: t("st-paused"), cls: "" };

@@ -1,4 +1,4 @@
-"""Session/chara lifecycle: roster entries, transcript reads, superchat, the
+"""Session/chara lifecycle: roster entries, transcript reads, the
 messaging-gateway config, personal-WeChat QR login, wake/set_modules, the daemon
 start/stop, works browsing, and the session export bundle.
 """
@@ -99,30 +99,63 @@ def _speak_texts_from_struct(content: str) -> list[str]:
     return out
 
 
-def _transcript_speaks(meta: S.SessionMeta, limit: int = 3) -> list[dict[str, Any]]:
-    """Newest speak-tool utterances for the board Super Chat feed."""
+def _last_message(meta: S.SessionMeta) -> dict[str, Any] | None:
+    """The newest conversation message, for the board preview (WeChat semantics):
+    a user chat row, an assistant chat row with real content, or the text of a
+    `speak` tool call inside an assistant struct row. Tool results, summaries and
+    think rows are working noise, never conversation. The card's opening greeting
+    must not surface on a chara that has only greeted: at rest the greeting is an
+    assistant chat row with NO user row before it in the epoch (record_greeting
+    commits it before any exchange), so an assistant chat row only counts once a
+    user row precedes it — that also keeps pre-conversation self-talk off the
+    board, while a `speak` is always deliberate and always counts."""
     db = meta.sandbox_dir / "transcript.db"
     if not db.exists():
-        return []
+        return None
     try:
         conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=1.0)
         try:
+            try:
+                row = conn.execute("SELECT value FROM meta WHERE key='epoch'").fetchone()
+                epoch = int(row[0]) if row and row[0] else 0
+            except (sqlite3.Error, ValueError):
+                epoch = 0
+            first_user = conn.execute(
+                "SELECT MIN(id) FROM messages WHERE epoch=? AND role='user'",
+                (epoch,),
+            ).fetchone()
             rows = conn.execute(
-                "SELECT content, ts FROM messages "
-                "WHERE kind='struct' AND role='assistant' AND content LIKE '%speak%' "
-                "ORDER BY id DESC LIMIT 80"
+                # kind='replay' is compaction's tail re-append — the same rows sit
+                # earlier in the epoch, so scanning them would only duplicate hits.
+                "SELECT id, role, content, kind, ts FROM messages "
+                "WHERE epoch=? AND role IN ('user','assistant') AND kind IN ('chat','struct') "
+                "ORDER BY id DESC LIMIT 200",
+                (epoch,),
             ).fetchall()
         finally:
             conn.close()
     except sqlite3.Error:
-        return []
-    out: list[dict[str, Any]] = []
-    for content, ts in rows:
-        for text in reversed(_speak_texts_from_struct(str(content))):
-            out.append({"text": text, "ts": float(ts or 0.0)})
-            if len(out) >= limit:
-                return out
-    return out
+        return None
+    first_user_id = first_user[0] if first_user and first_user[0] is not None else None
+    for row_id, role, content, kind, ts in rows:
+        if kind == "struct":
+            # A struct row is a full message dict; only a speak's text is a message
+            # to the user (malformed speak args are skipped by the extractor).
+            if role != "assistant":
+                continue
+            texts = _speak_texts_from_struct(str(content))
+            if not texts:
+                continue
+            text = texts[-1]
+        else:
+            if role == "assistant" and (first_user_id is None or int(row_id) < int(first_user_id)):
+                continue  # the greeting / self-talk before any exchange
+            text = " ".join(str(content or "").split())[:240]
+        if not text:
+            continue
+        return {"text": text, "ts": float(ts or 0.0),
+                "role": "user" if role == "user" else "chara"}
+    return None
 
 
 def _last_error(meta: S.SessionMeta) -> str:
@@ -156,33 +189,6 @@ def board_error_kind(line: str) -> str:
     if any(s in low for s in ("timeout", "connect", "network", "unreachable", "connection failed")):
         return "network"
     return "provider" if line else ""
-
-
-def _superchat_path(meta: S.SessionMeta) -> Path:
-    return meta.root / "superchat.json"
-
-
-def superchat_read_ts(meta: S.SessionMeta) -> float:
-    try:
-        data = json.loads(_superchat_path(meta).read_text(encoding="utf-8"))
-        return float(data.get("read_ts") or 0.0) if isinstance(data, dict) else 0.0
-    except (OSError, json.JSONDecodeError, TypeError, ValueError):
-        return 0.0
-
-
-def set_superchat_read(meta: S.SessionMeta, ts: float) -> dict[str, Any]:
-    cur = superchat_read_ts(meta)
-    want = max(cur, float(ts or 0.0))
-    path = _superchat_path(meta)
-    _atomic_write_json(path, {"read_ts": want}, private=True)
-    return {"read_ts": want, "superchat_unread": superchat_unread(meta)}
-
-
-def superchat_unread(meta: S.SessionMeta) -> int:
-    read_ts = superchat_read_ts(meta)
-    return sum(1 for sp in _transcript_speaks(meta, limit=1000) if float(sp.get("ts") or 0.0) > read_ts)
-
-
 
 
 
@@ -225,10 +231,9 @@ def session_entry(meta: S.SessionMeta, supervisor: Any | None = None) -> dict[st
         "card_dirty": bool(cfg.get("card_dirty")),
         "created_at": meta.created_at,
         "last_active": meta.last_active or meta.created_at,
-        "speaks": _transcript_speaks(meta),
+        "last_message": _last_message(meta),
         "life": life,
         "gateway": gateway,
-        "superchat_unread": superchat_unread(meta),
         "error": error,
         "error_kind": board_error_kind(error),
     }
