@@ -89,7 +89,7 @@ def backend() -> str:
     ``admin`` resolution is clamped to ``sandbox`` HERE — the one authority every tool
     runner + permissions() read — so even a stale env/config can never run unconfined.
     """
-    raw = os.environ.get("CHARA_PY_BACKEND", os.environ.get("LUNAMOSS_PY_BACKEND", "sandbox")).strip().lower()
+    raw = os.environ.get("CHARA_PY_BACKEND", "sandbox").strip().lower()
     b = "admin" if raw in {"admin", "dir", "local", "docker"} else raw
     if b == "admin" and force_sandbox():
         return "sandbox"

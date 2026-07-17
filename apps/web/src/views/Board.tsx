@@ -163,7 +163,9 @@ export function Board() {
                   const st = statusOf(t, s);
                   const lm = s.last_message;
                   const preview =
-                    lm && lm.text && lm.role === "user" ? t("preview-you", { text: lm.text }) : st.line;
+                    st.cls !== "err" && lm && lm.text && lm.role === "user"
+                      ? t("preview-you", { text: lm.text })
+                      : st.line; // an error state outranks the conversation preview
                   return (
                     <CharaListRow
                       key={s.name}

@@ -139,14 +139,26 @@ def _last_message(meta: S.SessionMeta) -> dict[str, Any] | None:
     first_user_id = first_user[0] if first_user and first_user[0] is not None else None
     for row_id, role, content, kind, ts in rows:
         if kind == "struct":
-            # A struct row is a full message dict; only a speak's text is a message
-            # to the user (malformed speak args are skipped by the extractor).
+            # A struct row is a full message dict. A reasoning model's REPLY lands
+            # here too (transcript stores any message carrying reasoning_content /
+            # tool_calls as struct), so after speak extraction the row's own
+            # `content` counts like an assistant chat row — otherwise a thinking
+            # chara's replies never reach the preview and the board sticks on the
+            # user's last line forever.
             if role != "assistant":
                 continue
             texts = _speak_texts_from_struct(str(content))
-            if not texts:
-                continue
-            text = texts[-1]
+            if texts:
+                text = texts[-1]
+            else:
+                if first_user_id is None or int(row_id) < int(first_user_id):
+                    continue  # pre-exchange, same rule as chat rows
+                try:
+                    msg = json.loads(str(content))
+                    body = msg.get("content") if isinstance(msg, dict) else None
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                text = " ".join(str(body or "").split())[:240]
         else:
             if role == "assistant" and (first_user_id is None or int(row_id) < int(first_user_id)):
                 continue  # the greeting / self-talk before any exchange

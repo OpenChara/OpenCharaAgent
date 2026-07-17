@@ -19,7 +19,7 @@ def _default_config_dir() -> Path:
     return old if old.is_dir() and not new.is_dir() else new
 
 
-CONFIG_DIR = Path(os.getenv("CHARA_CONFIG_DIR", os.getenv("LUNAMOSS_CONFIG_DIR", _default_config_dir()))).resolve()
+CONFIG_DIR = Path(os.getenv("CHARA_CONFIG_DIR", _default_config_dir())).resolve()
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
 
@@ -384,11 +384,11 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "model": ("OPENAI_MODEL",),
     "temperature": ("LLM_TEMPERATURE",),
     "max_tokens": ("LLM_MAX_TOKENS",),
-    "character_path": ("CHARA_CHARACTER", "LUNAMOSS_CHARACTER"),
-    "user_name": ("CHARA_USER", "LUNAMOSS_USER"),
-    "tui_theme_path": ("CHARA_THEME", "LUNAMOSS_THEME"),
-    "toolpack": ("CHARA_TOOLPACK", "LUNAMOSS_TOOLPACK"),
-    "memory_chars": ("CHARA_MEMORY_CHARS", "LUNAMOSS_MEMORY_CHARS"),
+    "character_path": ("CHARA_CHARACTER",),
+    "user_name": ("CHARA_USER",),
+    "tui_theme_path": ("CHARA_THEME",),
+    "toolpack": ("CHARA_TOOLPACK",),
+    "memory_chars": ("CHARA_MEMORY_CHARS",),
     "user_chars": ("CHARA_USER_CHARS",),
     "mode": ("CHARA_MODE", "CHARA_PRESENCE"),
     "reasoning": ("LLM_REASONING",),

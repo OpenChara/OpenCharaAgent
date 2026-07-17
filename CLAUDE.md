@@ -206,7 +206,7 @@ only through `protocol/` (CharaHandle); `protocol/events.py`+`codec.py` have
 zero internal deps; `obs/` imports only `config`.
 
 - `config.py` — root constants (ROOT, SANDBOX_ROOT, LLMConfig) + `openrouter_attribution_headers()`
-  (the `HTTP-Referer`=lunamoth.ai + `X-Title`=OpenCharaAgent app-attribution headers sent on every
+  (the `HTTP-Referer`=agent.lunamoth.ai + `X-Title`=OpenCharaAgent app-attribution headers sent on every
   OpenRouter request — chat/llm.py, hub/models.py and image/_image_gen.py all use it; env-overridable).
   `updater.py` is the other deliberately-flat module (self-update; see Run/dev above).
 - `core/` — the agent backend:

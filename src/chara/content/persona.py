@@ -28,7 +28,7 @@ DEFAULT_TAG = "default"
 def system_language() -> str:
     """Best guess at the operator's language, used only to choose which bundled
     default card to pre-select. Once a card is chosen, language comes from the card."""
-    env = os.getenv("CHARA_LANG", os.getenv("LUNAMOSS_LANG", "")).strip().lower()
+    env = os.getenv("CHARA_LANG", "").strip().lower()
     if env:
         return "zh" if env.startswith("zh") else "en"
     try:

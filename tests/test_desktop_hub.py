@@ -858,6 +858,32 @@ def test_last_message_newest_wins_across_user_assistant_and_speak():
     assert row["last_message"] == {"text": "又来了", "ts": 105.0, "role": "user"}
 
 
+def test_last_message_surfaces_a_reasoning_models_reply():
+    """A thinking model's reply carries reasoning_content, so the transcript stores
+    it as a STRUCT row (not chat). The preview must still surface it — the audit
+    found every reasoning-mode chara's board stuck on the user's last line."""
+    meta = _woken_meta()
+    _seed_rows(meta, [
+        ("user", "早", "chat", 100.0),
+        ("assistant", json.dumps({"role": "assistant", "content": "早安。",
+                                  "reasoning_content": "the user greets me..."}),
+         "struct", 101.0),
+    ])
+    lm = H.session_entry(meta)["last_message"]
+    assert lm == {"text": "早安。", "ts": 101.0, "role": "chara"}
+
+
+def test_last_message_struct_reply_before_any_user_row_is_excluded():
+    """The greeting rule applies to struct replies too: assistant content (however
+    stored) counts only once a user row precedes it in the epoch."""
+    meta = _woken_meta()
+    _seed_rows(meta, [
+        ("assistant", json.dumps({"role": "assistant", "content": "opening muse",
+                                  "reasoning_content": "..."}), "struct", 100.0),
+    ])
+    assert H.session_entry(meta)["last_message"] is None
+
+
 def test_last_message_none_for_a_greeting_only_chara():
     # The card's first_mes greeting (an assistant chat row with no user row before
     # it) must NOT surface — a chara that has only greeted has no conversation yet.
