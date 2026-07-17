@@ -1,7 +1,7 @@
 {
   "name": "chara-web",
   "private": true,
-  "version": "0.1.13",
+  "version": "0.2.1",
   "type": "module",
   "description": "OpenCharaAgent desktop renderer — a React SPA, built to src/chara/front/webui and served by the Python supervisor (Electron points at it locally; a browser reaches it remotely).",
   "scripts": {
