@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a OpenCharaAgent wheel that BUNDLES the built frontend SPA.
+# Build an OpenCharaAgent wheel that BUNDLES the built frontend SPA.
 #
 # The frontend (apps/web/) is built at packaging time into the gitignored
 # src/chara/front/webui/, then `python -m build` (via uv) packs that dir into

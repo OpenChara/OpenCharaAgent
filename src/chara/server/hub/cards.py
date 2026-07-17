@@ -340,7 +340,7 @@ def _foreign_to_card(obj: dict[str, Any]) -> dict[str, Any]:
     if not (description or personality or first_mes or field("scenario")):
         raise RpcError(-32602, "this doesn't look like a character card (no persona, greeting, or scenario)")
 
-    # Start from the card's own chara extensions (so re-importing a OpenCharaAgent card keeps
+    # Start from the card's own chara extensions (so re-importing an OpenCharaAgent card keeps
     # its portable behavior config — force_roleplay, website, user_persona, prompt hooks),
     # then strip the keys that can't or shouldn't travel with a pasted JSON.
     se = src.get("extensions")

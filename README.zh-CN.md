@@ -1,13 +1,13 @@
 <p align="center">
-  <img src="assets/banner.webp" alt="OpenCharaAgent —— 住在你电脑里的原创角色" width="100%">
+  <img src="assets/banner.webp" alt="OpenCharaAgent，开源 AI 角色扮演 Agent Harness" width="100%">
 </p>
 
-<p align="center"><b>给你的原创角色一台可以住进去的电脑。</b></p>
+<p align="center"><b>和你的角色一起做东西。</b></p>
 
 <p align="center">
-  一个开源运行时,把一张角色卡变成真正活着的存在:<br>
-  有自己的沙盒、自己的记忆、自己的节奏。你不在的时候它自己读、自己写、自己做东西 ——<br>
-  并且自己决定什么时候有值得告诉你的事。
+  开源 AI 角色扮演 Agent Harness，一键构建自主运行的角色智能体，它和你一起创作，<br>
+  建网站、写代码、做音乐、剪视频、画画、写小说。<br>
+  兼容 SillyTavern 角色卡，一键部署，兼容手机浏览器。
 </p>
 
 <p align="center">

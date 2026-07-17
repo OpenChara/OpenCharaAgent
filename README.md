@@ -1,13 +1,13 @@
 <p align="center">
-  <img src="assets/banner.webp" alt="OpenCharaAgent — an original character that lives in your computer" width="100%">
+  <img src="assets/banner.webp" alt="OpenCharaAgent, an open source AI roleplay agent harness" width="100%">
 </p>
 
-<p align="center"><b>Give your original character a computer to live in.</b></p>
+<p align="center"><b>Build stuff with your characters.</b></p>
 
 <p align="center">
-  An open-source runtime that turns a character card into a being that actually lives:<br>
-  its own sandbox, its own memory, its own pace. It reads, writes and makes things while you're away —<br>
-  and decides for itself when something is worth telling you.
+  An open source AI roleplay agent harness. One click builds an autonomous character agent<br>
+  that creates with you. Websites, code, music, videos, drawings, stories.<br>
+  Runs any SillyTavern card, deploys in one command, works in a phone browser.
 </p>
 
 <p align="center">

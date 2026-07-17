@@ -1,6 +1,6 @@
 # visuals/ — character art pipeline (DEV / offline tool)
 
-An experimental, offline pipeline that turns a OpenCharaAgent **character card** into a
+An experimental, offline pipeline that turns an OpenCharaAgent **character card** into a
 small, web-optimized **visual asset library** (avatar, full-body sprite,
 background, key visual, sticker set) in a unified anime gacha-game (二游) style.
 

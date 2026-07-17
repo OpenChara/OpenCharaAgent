@@ -2,12 +2,15 @@
 
 ## What this is, and who it serves (the product philosophy — read first)
 
-OpenCharaAgent is a runtime that lets an original character (an OC, a **chara**)
+OpenCharaAgent is a runtime that lets an AI character (a **chara**)
 **live in a computer**: a persistent digital being with its own sandbox, memory,
 goals, pace of life, and real agency (shell, files, tools) behind an
 allowlisted, audited gateway. Three audiences, in priority order:
 
-1. **OC creators** — people who want their original character alive QUICKLY,
+1. **Character creators** — people who want their character alive QUICKLY
+   (POSITIONING, owner 2026-07-17: we no longer CLAIM "original character"
+   in outward copy — the market imports any card; tagline 「和你的角色一起做东西 /
+   Build stuff with your characters」, one-liner in README hero),
    to chat with it and to watch it do its own things. The path from
    *inspiration → living chara* must be short: AI-assisted card creation
    (draft the card, a small SVG avatar, a theme color — like the web deck

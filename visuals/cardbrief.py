@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Card -> visual brief (cached).
 
-An LLM (Gemini 3.1 Pro via OpenRouter) reads a OpenCharaAgent character card and
+An LLM (Gemini 3.1 Pro via OpenRouter) reads an OpenCharaAgent character card and
 translates its identity/personality/lore into a concrete, drawable VISUAL brief:
 appearance, palette, world scene, theme color. The brief is what the image
 pipeline consumes — so the generator never hardcodes who a character is, it

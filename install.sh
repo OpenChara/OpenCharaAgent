@@ -38,7 +38,7 @@ done
 say()  { printf '\033[1;36m[chara]\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31m[chara]\033[0m %s\n' "$*" >&2; exit 1; }
 
-# Browser tools are a OpenCharaAgent environment requirement (owner 2026-06-19): the
+# Browser tools are an OpenCharaAgent environment requirement (owner 2026-06-19): the
 # Node `agent-browser` CLI + its own Chromium back the browser_* tools, which now
 # run under the default `sandbox` isolation too. Best-effort + non-fatal: a failed
 # browser setup never blocks the core install. On Linux+apt we bootstrap Node 20
