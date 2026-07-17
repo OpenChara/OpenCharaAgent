@@ -275,11 +275,13 @@ zero internal deps; `obs/` imports only `config`.
 - `content/` — SillyTavern compat, pure data: `cards.py` (V2/V3 PNG/JSON; PHI
   exposed for the post-history slot, never folded into the persona;
   `merge_world_into_card` = the world-book IMPORT path), `worldinfo.py`
-  (world MEMORY, 2026-07-17: ONE recall seam `recall_entries(scan_text)` —
-  keyword entries match the shallow scan, keyword-less `constant` entries are
-  always candidates, everything lands in the capped volatile-tail block and
-  NOTHING rides the system prompt; no sticky state. The seam is the future GM
-  model's interface. The card's embedded `character_book` is the ONE world source), `persona.py`
+  (world MEMORY, 2026-07-17: `constant` entries are the fixed overview and ride
+  the CACHED stable prefix; keyword entries go through the ONE recall seam
+  `recall_entries(scan_text)` into the capped volatile-tail block — match the
+  shallow scan, appear, leave when the keyword scrolls out. NO sticky state
+  (the 4-turn tail-off was deleted; the scan window itself smooths recall).
+  The seam is the future GM model's interface. The card's embedded
+  `character_book` is the ONE world source), `persona.py`
   (default card = the localized card carrying the `"default"` tag),
   `rules.py` (the neutral Rules layer), `themes.py` (built-in TUI theme;
   theme files are user-supplied — no bundled themes dir),
@@ -545,15 +547,15 @@ Every API request is assembled as **three zones**:
    deliverable is a real artifact, never fabricate"), tool-use enforcement
    ("act through the tool now, don't describe it"), and the mandatory SKILLS
    guidance ("scan + load before you act"). Then toolpack note, frozen memory
-   snapshot, frozen SKILLS index. (World info NEVER rides the prefix — see the
-   volatile tail.)
+   snapshot, frozen SKILLS index, constant world-info entries (the fixed overview —
+   cached, cheap; everything keyword-shaped recalls into the tail instead).
 2. **History** — the append-only `ContextBuffer` view. Compaction is the one
    sanctioned rewrite: old head → one persisted structured summary + recent tail.
 3. **Volatile tail** — recomputed per turn, never persisted: live env facts
    (isolation/network/date — NO operator token; context is attach-independent),
-   world-memory recall (constants + keyword hits over the last ~4
-   messages, no stickiness, ≤10% of the window — this block sits past the cache
-   breakpoints, every token re-bills each turn), the read-only aspiration block, the active-task block (the chara's
+   world-memory recall (keyword hits over the last ~4 messages, no
+   stickiness, ≤10% of the window — this block sits past the cache breakpoints,
+   every token re-bills each turn), the read-only aspiration block, the active-task block (the chara's
    own life-threads), then exactly one **post-history slot**
    as the final message: card `post_history_instructions` >
    card `extensions.chara.rules_closer` > bundled rules closer (the latter

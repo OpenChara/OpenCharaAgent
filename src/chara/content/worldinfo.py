@@ -118,23 +118,29 @@ class Lorebook:
         data = json.loads(p.read_text(encoding="utf-8"))
         return cls.from_dict(data, name=p.stem)
 
-    def recall_entries(self, scan_text: str) -> list[WorldEntry]:
-        """World memory recall: the entries relevant to the recent context.
+    def constant_blocks(self, char: str, user: str) -> list[str]:
+        """Stable always-on entries — the world's fixed overview. These belong in
+        the CACHED prefix: they are the cheap, permanent base layer, while
+        everything keyword-shaped goes through ``recall_entries``."""
+        hits = [e for e in self.entries if e.enabled and e.constant and e.content.strip()]
+        hits.sort(key=lambda e: e.order)
+        return [apply_macros(e.content, char, user).strip() for e in hits]
 
-        The ONE retrieval seam for world information — a future GM model
+    def recall_entries(self, scan_text: str) -> list[WorldEntry]:
+        """World memory recall: the keyword entries relevant to the recent context.
+
+        The retrieval seam for DYNAMIC world information — a future GM model
         replaces the matching below without touching the prompt assembly.
-        Today's matcher: an entry with keywords activates when a primary key
-        appears in *scan_text*; an entry with no keyword trigger (SillyTavern's
-        ``constant``) is always a candidate. Everything returns through the
-        same capped volatile-tail block — no world text rides the system
-        prompt, so a large imported book costs tokens only while the scene
-        touches it."""
+        Today's matcher: an entry activates when a primary key appears in
+        *scan_text*. No sticky state: the shallow scan window itself smooths
+        recall across turns. Constant entries are the static base layer and
+        live in the cached prefix instead (``constant_blocks``)."""
         haystack = scan_text.lower()  # one pass per scan, not one per entry
         out: list[WorldEntry] = []
         for entry in self.entries:
             if not entry.enabled or not entry.content.strip():
                 continue
-            if entry.constant or entry.keyword_matches(haystack, lowered=True):
+            if entry.keyword_matches(haystack, lowered=True):
                 out.append(entry)
         return out
 

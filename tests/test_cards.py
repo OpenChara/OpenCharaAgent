@@ -45,7 +45,7 @@ def test_every_bundled_card_carries_its_world_inside():
         assert card.character_book is not None, f"{path.name} has no embedded character_book"
         assert card.character_book.entries, f"{path.name} embeds an empty book"
         # Every bundled book has at least one constant (always-on) entry.
-        assert card.character_book.recall_entries(""), path.name  # constants recall on any scan
+        assert card.character_book.constant_blocks(card.name, "User"), path.name
 
 
 def test_plain_card_without_bundle_gets_empty_defaults(tmp_path):

@@ -735,9 +735,15 @@ class CharaAgent:
             if skills_block:
                 msgs.append(skills_block)
 
-        # World info never rides the system prompt — ALL of it (constants included)
-        # is recalled per turn into the capped volatile-tail block, so a large
-        # imported book costs tokens only while the scene touches it.
+        # Constant world info is the fixed overview and rides the CACHED prefix;
+        # keyword entries are recalled per turn into the capped volatile tail.
+        # The card's embedded character_book is the ONE world source.
+        world_blocks: list[str] = []
+        if self.character and self.character.character_book:
+            world_blocks += self.character.character_book.constant_blocks(char, user)
+        if world_blocks:
+            msgs.append("[World Info]\n" + "\n\n".join(world_blocks))
+
         self._stable_prefix_cache = msgs
         return msgs
 

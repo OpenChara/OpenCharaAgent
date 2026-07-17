@@ -147,20 +147,21 @@ def test_card_phi_is_last_and_absent_from_persona_block(agent_factory, tmp_path)
     assert messages[-1] == {"role": "system", "content": "PHI-LAST for TestCard/操作者"}
 
 
-def test_worldinfo_recall_constants_in_tail_keywords_by_scan(agent_factory, tmp_path):
+def test_worldinfo_constants_prefix_keywords_recalled_no_sticky(agent_factory, tmp_path):
     card = _write_card(tmp_path / "card.json", book=[
-        {"keys": ["always"], "content": "CONST-TAIL", "constant": True, "insertion_order": 1},
+        {"keys": ["always"], "content": "CONST-PREFIX", "constant": True, "insertion_order": 1},
         {"keys": ["spark"], "content": "KEY-TAIL", "insertion_order": 2},
     ])
     a = agent_factory(card=card)
     s = a.make_session()
 
-    # No world text rides the system prompt — constants included.
-    assert "CONST-TAIL" not in _blob(a._stable_prefix())
+    # Constants are the fixed overview and ride the CACHED prefix; keyword
+    # entries never do.
+    assert "CONST-PREFIX" in _blob(a._stable_prefix())
     assert "KEY-TAIL" not in _blob(a._stable_prefix())
 
-    # A constant entry is always recalled into the volatile tail.
-    assert "CONST-TAIL" in _blob(a._volatile_tail(a._scan_text(s, "anything"), s))
+    # Constants do not double into the volatile tail.
+    assert "CONST-PREFIX" not in _blob(a._volatile_tail(a._scan_text(s, "anything"), s))
 
     # A keyword entry recalls exactly while its key is in the scan window —
     # no sticky tail-off, the shallow window itself smooths recall.
