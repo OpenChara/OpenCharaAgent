@@ -64,7 +64,7 @@ class WorldEntry:
         also appear (a small subset of ST's AND/NOT logic — enough to be useful).
 
         ``lowered=True`` marks *scan_text* as already lowercased, so a caller
-        scanning many entries (``Lorebook.keyword_entries``) lowercases the —
+        scanning many entries (``Lorebook.recall_entries``) lowercases the —
         potentially large — scan text once per scan instead of once per entry.
         """
         if not self.enabled or self.constant or not self.keys:
@@ -118,62 +118,23 @@ class Lorebook:
         data = json.loads(p.read_text(encoding="utf-8"))
         return cls.from_dict(data, name=p.stem)
 
-    def constant_blocks(self, char: str, user: str) -> list[str]:
-        """Stable always-on entries. These belong in the cached prefix."""
-        hits = [e for e in self.entries if e.enabled and e.constant and e.content.strip()]
-        hits.sort(key=lambda e: e.order)
-        return [apply_macros(e.content, char, user).strip() for e in hits]
+    def recall_entries(self, scan_text: str) -> list[WorldEntry]:
+        """World memory recall: the entries relevant to the recent context.
 
-    def keyword_entries(
-        self,
-        scan_text: str,
-        *,
-        sticky: dict[str, int] | None = None,
-        namespace: str = "",
-        sticky_turns: int = 4,
-    ) -> list[WorldEntry]:
-        """Volatile keyword-activated entries.
-
-        `sticky` is caller-owned session state: activated entries remain active
-        for `sticky_turns` subsequent turns even if the keyword disappears.
-        """
-        state = sticky if sticky is not None else {}
-        prefix = namespace or self.name or "world"
-
+        The ONE retrieval seam for world information — a future GM model
+        replaces the matching below without touching the prompt assembly.
+        Today's matcher: an entry with keywords activates when a primary key
+        appears in *scan_text*; an entry with no keyword trigger (SillyTavern's
+        ``constant``) is always a candidate. Everything returns through the
+        same capped volatile-tail block — no world text rides the system
+        prompt, so a large imported book costs tokens only while the scene
+        touches it."""
         haystack = scan_text.lower()  # one pass per scan, not one per entry
-        hits: set[int] = set()
+        out: list[WorldEntry] = []
         for entry in self.entries:
-            if entry.keyword_matches(haystack, lowered=True):
-                hits.add(entry.entry_id)
-                state[f"{prefix}:{entry.entry_id}"] = int(sticky_turns)
-
-        active: list[WorldEntry] = []
-        active_ids = {e.entry_id for e in self.entries if e.entry_id in hits}
-        for entry in self.entries:
-            if not entry.enabled or entry.constant or not entry.content.strip():
+            if not entry.enabled or not entry.content.strip():
                 continue
-            key = f"{prefix}:{entry.entry_id}"
-            if entry.entry_id in active_ids or state.get(key, 0) > 0:
-                active.append(entry)
-
-        # Consume one sticky turn for entries that did not freshly match. A
-        # fresh match resets the counter and is not consumed until the next scan.
-        known = {f"{prefix}:{e.entry_id}" for e in self.entries}
-        for key in list(state):
-            if key not in known:
-                continue
-            try:
-                entry_id = int(key.rsplit(":", 1)[1])
-            except ValueError:
-                continue
-            if entry_id in hits:
-                continue
-            remaining = int(state.get(key, 0) or 0)
-            if remaining > 1:
-                state[key] = remaining - 1
-            else:
-                state.pop(key, None)
-
-        active.sort(key=lambda e: e.order)
-        return active
+            if entry.constant or entry.keyword_matches(haystack, lowered=True):
+                out.append(entry)
+        return out
 

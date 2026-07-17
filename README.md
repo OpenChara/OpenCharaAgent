@@ -196,7 +196,6 @@ Done: ST-compatible cards with faithful import, the market, composable tools wit
 - **The chara curriculum.** Neutral prompt guidance for any worldview: how to use tools, treat goals, spend unattended time. Then cross-worldview eval cards.
 - **Card studio and market iteration.** A faster path from an idea to a living chara. A shareable card and pack index.
 - **A packaged app.** DMG and AppImage.
-- **World-info parity.** Recursive scan, cooldown, insertion depth, probability.
 - **A GM layer.** Scheduled world events shared across charas.
 
 ## 🤝 Contributing

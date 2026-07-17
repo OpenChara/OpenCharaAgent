@@ -87,7 +87,6 @@ class Session:
         trim_buffer_tokens=int(os.getenv("CHARA_CONTEXT_BUFFER_TOKENS", str(DEFAULT_TRIM_BUFFER_TOKENS))),
     ))
     ticks: int = 0
-    wi_sticky: dict[str, int] = field(default_factory=dict)
 
 
 class CharaAgent:
@@ -736,14 +735,9 @@ class CharaAgent:
             if skills_block:
                 msgs.append(skills_block)
 
-        # Constant world info is stable; keyword world info lives in the volatile tail.
-        # The card's embedded character_book is the ONE world source.
-        world_blocks: list[str] = []
-        if self.character and self.character.character_book:
-            world_blocks += self.character.character_book.constant_blocks(char, user)
-        if world_blocks:
-            msgs.append("[World Info]\n" + "\n\n".join(world_blocks))
-
+        # World info never rides the system prompt — ALL of it (constants included)
+        # is recalled per turn into the capped volatile-tail block, so a large
+        # imported book costs tokens only while the scene touches it.
         self._stable_prefix_cache = msgs
         return msgs
 
@@ -760,22 +754,24 @@ class CharaAgent:
             rules_layer.closer(card_closer, website=self.website_active()), char, user
         )
 
-    def _keyword_world_info_blocks(self, scan_text: str, session: Session) -> list[str]:
+    def _world_memory_blocks(self, scan_text: str, session: Session) -> list[str]:
+        # World memory: worldinfo.recall_entries is the retrieval seam (a future GM
+        # model takes it over). The scan window (last few messages) already smooths
+        # recall across turns, so there is no sticky state to track.
         char, user = self.char_name(), self.settings.user_name
         active: list[tuple[int, int, str]] = []
         seq = 0
         if self.character and self.character.character_book:
-            namespace = f"book:{self.character.name or 'card'}"
-            for entry in self.character.character_book.keyword_entries(
-                scan_text, sticky=session.wi_sticky, namespace=namespace
-            ):
+            for entry in self.character.character_book.recall_entries(scan_text):
                 block = apply_macros(entry.content, char, user).strip()
                 if block:
                     active.append((entry.order, seq, block))
                     seq += 1
         active.sort(key=lambda item: (item[0], item[1]))
 
-        budget = max(1, int(self.context_limit() * 0.25))
+        # A tight cap: this block sits PAST the cache breakpoints, so every token
+        # here is re-billed each turn — world info is a hint, never the meal.
+        budget = max(1, int(self.context_limit() * 0.10))
         out: list[str] = []
         used = 0
         for _order, _seq, block in active:
@@ -800,7 +796,7 @@ class CharaAgent:
                 f"date={today}."
             )
 
-        world_blocks = self._keyword_world_info_blocks(scan_text, session)
+        world_blocks = self._world_memory_blocks(scan_text, session)
         if world_blocks:
             msgs.append("[World Info]\n" + "\n\n".join(world_blocks))
 

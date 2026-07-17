@@ -147,26 +147,29 @@ def test_card_phi_is_last_and_absent_from_persona_block(agent_factory, tmp_path)
     assert messages[-1] == {"role": "system", "content": "PHI-LAST for TestCard/操作者"}
 
 
-def test_worldinfo_constant_stable_keyword_shallow_scan_and_sticky(agent_factory, tmp_path):
+def test_worldinfo_recall_constants_in_tail_keywords_by_scan(agent_factory, tmp_path):
     card = _write_card(tmp_path / "card.json", book=[
-        {"keys": ["always"], "content": "CONST-STABLE", "constant": True, "insertion_order": 1},
+        {"keys": ["always"], "content": "CONST-TAIL", "constant": True, "insertion_order": 1},
         {"keys": ["spark"], "content": "KEY-TAIL", "insertion_order": 2},
     ])
     a = agent_factory(card=card)
     s = a.make_session()
 
-    assert "CONST-STABLE" in _blob(a._stable_prefix())
+    # No world text rides the system prompt — constants included.
+    assert "CONST-TAIL" not in _blob(a._stable_prefix())
     assert "KEY-TAIL" not in _blob(a._stable_prefix())
 
+    # A constant entry is always recalled into the volatile tail.
+    assert "CONST-TAIL" in _blob(a._volatile_tail(a._scan_text(s, "anything"), s))
+
+    # A keyword entry recalls exactly while its key is in the scan window —
+    # no sticky tail-off, the shallow window itself smooths recall.
     s.context.add("user", "spark is too old")
     for i in range(5):
         s.context.add("assistant", f"neutral {i}")
     assert "KEY-TAIL" not in _blob(a._volatile_tail(a._scan_text(s, "neutral now"), s))
-
     assert "KEY-TAIL" in _blob(a._volatile_tail(a._scan_text(s, "spark now"), s))
-    for _ in range(4):
-        assert "KEY-TAIL" in _blob(a._volatile_tail(a._scan_text(s, "neutral"), s))
-    assert "KEY-TAIL" not in _blob(a._volatile_tail(a._scan_text(s, "neutral"), s))
+    assert "KEY-TAIL" not in _blob(a._volatile_tail(a._scan_text(s, "neutral again"), s))
 
 
 def test_worldinfo_budget_cap_truncates_by_order(agent_factory, tmp_path, monkeypatch):
@@ -176,7 +179,7 @@ def test_worldinfo_budget_cap_truncates_by_order(agent_factory, tmp_path, monkey
     ])
     a = agent_factory(card=card)
     s = a.make_session()
-    monkeypatch.setattr(a, "context_limit", lambda: 20)  # 25% cap ~= 5 rough tokens
+    monkeypatch.setattr(a, "context_limit", lambda: 50)  # 10% cap ~= 5 rough tokens
     tail = _blob(a._volatile_tail(a._scan_text(s, "cap"), s))
     assert "tiny" in tail
     assert "BBBB" not in tail
