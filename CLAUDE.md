@@ -28,8 +28,10 @@ allowlisted, audited gateway. Three audiences, in priority order:
    headless `run -p`, the JSON-RPC gateway.
 
 It draws on several projects — the clones under `reference/` (gitignored) are
-**hermes-agent, AstrBot, cc-switch, openclaw**; **always consult them when
-designing**. (SillyTavern is the card/world-book FORMAT spec we stay compatible
+**hermes-agent, AstrBot, cc-switch, openclaw, pi**; **always consult them when
+designing**. (pi = earendil-works/pi, added 2026-07-17: the minimal-harness
+counterpoint — the agent extends its own harness via runtime extensions instead
+of the core growing features; consult it on extensibility questions.) (SillyTavern is the card/world-book FORMAT spec we stay compatible
 with, not a clone on disk.)
 
 - **NousResearch/hermes-agent** — the most important. Agent runtime, context
