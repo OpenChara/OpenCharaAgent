@@ -13,11 +13,11 @@ import json
 
 import pytest
 
-from lunamoth.core.state import EnvState
-from lunamoth.obs.audit import AuditLog
-from lunamoth.tools.gateway import ToolGateway
-from lunamoth.tools.registry import registry, discover_builtin_tools, tool_result
-from lunamoth.tools.sandbox import Sandbox
+from chara.core.state import EnvState
+from chara.obs.audit import AuditLog
+from chara.tools.gateway import ToolGateway
+from chara.tools.registry import registry, discover_builtin_tools, tool_result
+from chara.tools.sandbox import Sandbox
 
 
 # A tiny no-arg schema shared by the fake tools.

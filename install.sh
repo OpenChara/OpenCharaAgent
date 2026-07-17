@@ -1,31 +1,45 @@
 #!/usr/bin/env bash
-# LunaMoth installer (macOS / Linux).
+# OpenCharaAgent installer (macOS / Linux).
 #
-#   curl -fsSL https://raw.githubusercontent.com/Lunamos/LunaMoth/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/OpenChara/OpenCharaAgent/main/install.sh | bash
 #
 # Two channels:
 #
 #   * USER (default) — install the prebuilt WHEEL from the latest GitHub Release
 #     via `uv tool install`. The wheel bundles the built frontend (front/webui/),
 #     so there's no node build and no source checkout. Update later with
-#     `lunamoth update` (uv tool upgrade).
+#     `chara update` (uv tool upgrade).
 #
-#   * DEV/edge — `LUNAMOTH_CHANNEL=dev` (or `--dev`) keeps the old git-checkout
-#     layout: a clone in $LUNAMOTH_HOME/app + `uv sync`. Developers have node and
+#   * DEV/edge — `CHARA_CHANNEL=dev` (or `--dev`) keeps the old git-checkout
+#     layout: a clone in $CHARA_HOME/app + `uv sync`. Developers have node and
 #     rebuild the served UI with `cd apps/web && npm run build`. Update later with
-#     `lunamoth update` (git pull + uv sync).
+#     `chara update` (git pull + uv sync).
 #
 # The repo is PUBLIC — no token needed. GITHUB_TOKEN is honoured if set (a bearer
 # header, to dodge the 60/hr anonymous API rate limit), but is never required.
 set -euo pipefail
 
-REPO_SLUG="${LUNAMOTH_REPO_SLUG:-Lunamos/LunaMoth}"
-REPO_URL="${LUNAMOTH_REPO:-https://github.com/${REPO_SLUG}.git}"
-LUNAMOTH_HOME="${LUNAMOTH_HOME:-$HOME/.lunamoth}"
-APP_DIR="$LUNAMOTH_HOME/app"
-BIN_DIR="$LUNAMOTH_HOME/bin"
-LINK_DIR="${LUNAMOTH_LINK_DIR:-$HOME/.local/bin}"
-CHANNEL="${LUNAMOTH_CHANNEL:-user}"
+# Every knob honours its LUNAMOTH_* twin — pre-rename fleets and shell profiles
+# still export those.
+REPO_SLUG="${CHARA_REPO_SLUG:-${LUNAMOTH_REPO_SLUG:-OpenChara/OpenCharaAgent}}"
+REPO_URL="${CHARA_REPO:-${LUNAMOTH_REPO:-https://github.com/${REPO_SLUG}.git}}"
+CHARA_HOME="${CHARA_HOME:-${LUNAMOTH_HOME:-$HOME/.chara}}"
+APP_DIR="$CHARA_HOME/app"
+BIN_DIR="$CHARA_HOME/bin"
+LINK_DIR="${CHARA_LINK_DIR:-${LUNAMOTH_LINK_DIR:-$HOME/.local/bin}}"
+CHANNEL="${CHARA_CHANNEL:-${LUNAMOTH_CHANNEL:-user}}"
+
+# One-shot data migration from the LunaMoth days. MUST run before any mkdir
+# below: if the installer seeds ~/.chara/bin first, the in-app migration would
+# find a non-empty target and (correctly) refuse, stranding the user's charas
+# in ~/.lunamoth. A symlink stays at the old path so a not-yet-restarted old
+# install keeps resolving. Skipped when *_HOME is pinned or the move happened.
+if [ "$CHARA_HOME" = "$HOME/.chara" ] && [ -d "$HOME/.lunamoth" ] \
+   && [ ! -L "$HOME/.lunamoth" ] && [ ! -e "$HOME/.chara" ]; then
+  say "migrating data dir: ~/.lunamoth -> ~/.chara (symlink left behind)"
+  mv "$HOME/.lunamoth" "$HOME/.chara" && ln -s "$HOME/.chara" "$HOME/.lunamoth" \
+    || fail "data-dir migration failed — move ~/.lunamoth to ~/.chara by hand and re-run"
+fi
 
 # --dev / --channel dev flag (works with `… | bash -s -- --dev`).
 for arg in "$@"; do
@@ -35,10 +49,10 @@ for arg in "$@"; do
   esac
 done
 
-say()  { printf '\033[1;36m[lunamoth]\033[0m %s\n' "$*"; }
-fail() { printf '\033[1;31m[lunamoth]\033[0m %s\n' "$*" >&2; exit 1; }
+say()  { printf '\033[1;36m[chara]\033[0m %s\n' "$*"; }
+fail() { printf '\033[1;31m[chara]\033[0m %s\n' "$*" >&2; exit 1; }
 
-# Browser tools are a LunaMoth environment requirement (owner 2026-06-19): the
+# Browser tools are a OpenCharaAgent environment requirement (owner 2026-06-19): the
 # Node `agent-browser` CLI + its own Chromium back the browser_* tools, which now
 # run under the default `sandbox` isolation too. Best-effort + non-fatal: a failed
 # browser setup never blocks the core install. On Linux+apt we bootstrap Node 20
@@ -57,11 +71,11 @@ browser_setup() {
        && agent-browser install --with-deps >/dev/null 2>&1; then
       say "  browser tools ready (agent-browser + Chromium)"
     else
-      say "  NOTE: browser setup incomplete — finish later with: lunamoth setup browser"
+      say "  NOTE: browser setup incomplete — finish later with: chara setup browser"
     fi
   else
     say "  NOTE: Node.js (node+npm) not found — the browser_* tools need it."
-    say "        Install Node 18+ ($([ "$(uname -s)" = Darwin ] && echo 'brew install node' || echo 'your package manager')), then: lunamoth setup browser"
+    say "        Install Node 18+ ($([ "$(uname -s)" = Darwin ] && echo 'brew install node' || echo 'your package manager')), then: chara setup browser"
   fi
 }
 
@@ -103,7 +117,7 @@ case "$(uname -s)" in
   *) fail "unsupported platform $(uname -s) (macOS and Linux only for now)" ;;
 esac
 
-mkdir -p "$LUNAMOTH_HOME" "$BIN_DIR" "$LINK_DIR"
+mkdir -p "$CHARA_HOME" "$BIN_DIR" "$LINK_DIR"
 
 # --- uv: prefer system uv, else install a managed copy into $BIN_DIR --------
 UV="$(command -v uv || true)"
@@ -133,14 +147,14 @@ if [ "$CHANNEL" = "dev" ]; then
   fi
 
   say "syncing python environment ..."
-  # server + messaging extras so `lunamoth desktop` (needs websockets) and
-  # `lunamoth gateway` (qrcode/websockets) work out of the box.
+  # server + messaging extras so `chara desktop` (needs websockets) and
+  # `chara gateway` (qrcode/websockets) work out of the box.
   (cd "$APP_DIR" && "$UV" sync -q --extra server --extra messaging) || fail "uv sync failed"
 
-  SHIM="$LINK_DIR/lunamoth"
+  SHIM="$LINK_DIR/chara"
   cat > "$SHIM" <<EOF
 #!/usr/bin/env bash
-exec "$APP_DIR/.venv/bin/lunamoth" "\$@"
+exec "$APP_DIR/.venv/bin/chara" "\$@"
 EOF
   chmod +x "$SHIM"
   say "installed dev shim: $SHIM"
@@ -154,7 +168,7 @@ EOF
   esac
   browser_setup
   ffmpeg_setup
-  say "done (dev channel). run: lunamoth"
+  say "done (dev channel). run: chara"
   exit 0
 fi
 
@@ -188,7 +202,7 @@ say "wheel: $WHEEL_URL"
 # additionally needs the token as a bearer header. The wheel lives in its own
 # temp DIR; the trap cleans it up on EVERY exit path (fail included).
 WHEEL_BASENAME="${WHEEL_URL##*/}"
-TMP_DIR="$(mktemp -d -t lunamoth-XXXXXX)"
+TMP_DIR="$(mktemp -d -t chara-XXXXXX)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 TMP_WHEEL="$TMP_DIR/$WHEEL_BASENAME"
 if [ -n "${GITHUB_TOKEN:-}" ]; then
@@ -231,10 +245,14 @@ else
   say "NOTE: this release publishes no checksum — wheel integrity NOT verified."
 fi
 
-say "installing lunamoth (server + messaging extras) ..."
+say "installing chara (server + messaging extras) ..."
+# A pre-rename install registered the tool under its old name; retire it so its
+# stale `lunamoth` bin can't shadow the fresh alias. Best-effort — absent is fine.
+"$UV" tool uninstall lunamoth >/dev/null 2>&1 || true
 # `uv tool install` puts an isolated venv under uv's data dir and links the
-# `lunamoth` entrypoint onto PATH. Re-running upgrades in place (--force).
-"$UV" tool install --force "lunamoth[server,messaging] @ ${INSTALL_TARGET}" \
+# `chara` entrypoint (+ the legacy `lunamoth` alias) onto PATH. Re-running
+# upgrades in place (--force).
+"$UV" tool install --force "opencharaagent[server,messaging] @ ${INSTALL_TARGET}" \
   || fail "uv tool install failed"
 
 # `uv tool install` links into uv's own bin dir; surface it on PATH if needed.
@@ -250,4 +268,4 @@ fi
 
 browser_setup
 ffmpeg_setup
-say "done. run: lunamoth"
+say "done. run: chara"

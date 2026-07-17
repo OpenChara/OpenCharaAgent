@@ -6,7 +6,7 @@ arguments mid-argument (~12KB).
 """
 from __future__ import annotations
 
-from lunamoth.core import providers
+from chara.core import providers
 
 
 def test_default_when_offline_or_non_openrouter():
@@ -79,8 +79,8 @@ def test_failed_catalogue_fetch_is_retried_not_memoized(monkeypatch):
 
 
 def test_max_tokens_param_routing(monkeypatch):
-    from lunamoth.core.llm import LLMClient
-    from lunamoth.config import LLMConfig
+    from chara.core.llm import LLMClient
+    from chara.config import LLMConfig
 
     # OpenAI-direct route → max_completion_tokens; everything else → max_tokens.
     monkeypatch.setattr(providers, "max_output_tokens", lambda *a, **k: 12345)

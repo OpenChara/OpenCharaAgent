@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.png" alt="LunaMoth — an original character that lives in your computer" width="100%">
+  <img src="assets/banner.png" alt="OpenCharaAgent — an original character that lives in your computer" width="100%">
 </p>
 
 <p align="center"><b>Give your original character a computer to live in.</b></p>
@@ -11,8 +11,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Lunamos/LunaMoth/stargazers"><img src="https://img.shields.io/github/stars/Lunamos/LunaMoth?style=flat-square&logo=github&logoColor=9fd9ff&color=9fd9ff&labelColor=15202b" alt="Stars"></a>
-  <a href="https://github.com/Lunamos/LunaMoth/releases"><img src="https://img.shields.io/github/v/release/Lunamos/LunaMoth?style=flat-square&color=9fd9ff&labelColor=15202b" alt="Latest release"></a>
+  <a href="https://github.com/OpenChara/OpenCharaAgent/stargazers"><img src="https://img.shields.io/github/stars/OpenChara/OpenCharaAgent?style=flat-square&logo=github&logoColor=9fd9ff&color=9fd9ff&labelColor=15202b" alt="Stars"></a>
+  <a href="https://github.com/OpenChara/OpenCharaAgent/releases"><img src="https://img.shields.io/github/v/release/OpenChara/OpenCharaAgent?style=flat-square&color=9fd9ff&labelColor=15202b" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-9fd9ff?style=flat-square&labelColor=15202b" alt="License: Apache-2.0"></a>
   <a href="#quick-start"><img src="https://img.shields.io/badge/macOS%20%7C%20Linux-9fd9ff?style=flat-square&labelColor=15202b" alt="macOS | Linux"></a>
   <a href="README.zh-CN.md"><img src="https://img.shields.io/badge/文档-简体中文-9fd9ff?style=flat-square&labelColor=15202b" alt="简体中文"></a>
@@ -51,9 +51,9 @@
 
 ---
 
-LunaMoth runs an AI character as a persistent being that lives in a computer. It has its own sandbox, its own memory, its own pace — it thinks and makes things between your messages, and decides for itself when something is worth telling you. Strip the persona away and what's left is a capable agent: shell, files, a browser, code, all behind an allowlisted, audited gateway.
+OpenCharaAgent runs an AI character as a persistent being that lives in a computer. It has its own sandbox, its own memory, its own pace — it thinks and makes things between your messages, and decides for itself when something is worth telling you. Strip the persona away and what's left is a capable agent: shell, files, a browser, code, all behind an allowlisted, audited gateway.
 
-The character card is the one file that matters — identity, voice, and the character's world all travel inside it. You bring the card and a model; LunaMoth composes the rest:
+The character card is the one file that matters — identity, voice, and the character's world all travel inside it. You bring the card and a model; OpenCharaAgent composes the rest:
 
 ```text
 [character card: persona + embedded world] + [tools] + [bounded memory] + [sliding context]
@@ -70,8 +70,8 @@ It's beta, macOS and Linux. First launch is a welcome screen: pick a language, t
 The one-line installer (a prebuilt wheel, no Node build), then open the UI in your browser:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Lunamos/LunaMoth/main/install.sh | bash
-lunamoth              # opens the webui in your browser  (lunamoth tui = terminal UI; lunamoth doctor checks your setup)
+curl -fsSL https://raw.githubusercontent.com/OpenChara/OpenCharaAgent/main/install.sh | bash
+chara              # opens the webui in your browser  (chara tui = terminal UI; chara doctor checks your setup)
 ```
 
 > To build from source instead of the prebuilt wheel, append `| bash -s -- --dev`.
@@ -79,7 +79,7 @@ lunamoth              # opens the webui in your browser  (lunamoth tui = termina
 Or run the full desktop app from a clone (this is how we develop it) — needs [uv](https://docs.astral.sh/uv/) + Node:
 
 ```bash
-git clone https://github.com/Lunamos/LunaMoth.git && cd LunaMoth
+git clone https://github.com/OpenChara/OpenCharaAgent.git && cd OpenCharaAgent
 uv sync --extra dev --extra server --extra messaging   # add --extra visuals for local background removal
 cd apps/desktop && npm install && npm run dev      # opens the desktop window
 ```
@@ -89,21 +89,21 @@ cd apps/desktop && npm install && npm run dev      # opens the desktop window
 Install on the server and leave a chara living in the background:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Lunamos/LunaMoth/main/install.sh | bash
-lunamoth desktop --daemon      # resident supervisor; charas keep running between visits
+curl -fsSL https://raw.githubusercontent.com/OpenChara/OpenCharaAgent/main/install.sh | bash
+chara desktop --daemon      # resident supervisor; charas keep running between visits
 ```
 
 Then, from your own machine, tunnel in over SSH — no open ports, encryption and auth come from SSH, and your browser opens pointed at the server:
 
 ```bash
-lunamoth connect ssh://user@your-server
+chara connect ssh://user@your-server
 ```
 
 Prefer a real public URL (TLS, a bookmarkable address, optional password login)? See [Run it on a server](#run-it-on-a-server).
 
 ## What makes it different
 
-A LunaMoth character isn't a chat session you open and throw away. It's a **chara** — a persistent process with its own files and memory under `~/.lunamoth/sessions/<name>/`. You *attach* and *detach*; it keeps living in between.
+A OpenCharaAgent character isn't a chat session you open and throw away. It's a **chara** — a persistent process with its own files and memory under `~/.chara/sessions/<name>/`. You *attach* and *detach*; it keeps living in between.
 
 - **It runs on its own.** In `live` mode the chara keeps working between your messages — reading, writing, making things — and reaches out (the `speak` tool) only when it decides to. `patience` sets the rhythm. In `chat` mode it just answers you.
 - **Two registers.** What it tells *you* (`say`) is separate from its own inner life (`muse`). You see the muse in the desktop app; messaging channels only get the `say`.
@@ -111,7 +111,7 @@ A LunaMoth character isn't a chat session you open and throw away. It's a **char
 - **Memory you can trust.** Durable memory is a token-capped file the chara edits through tools, not a bottomless log. Every tool call is written to `sandbox/logs/audit.jsonl`.
 - **A home of its own.** An optional wake-time module gives the chara a personal homepage under `workspace/home`, served read-only in a sandboxed tab.
 
-The desktop app (a thin Electron window over the local server) is the main way to use it. A resident `lunamothd` supervisor keeps charas alive in the background and notifies you when one wants to talk. There's also a frozen-but-working terminal UI (`lunamoth tui`) for headless use.
+The desktop app (a thin Electron window over the local server) is the main way to use it. A resident `charad` supervisor keeps charas alive in the background and notifies you when one wants to talk. There's also a frozen-but-working terminal UI (`chara tui`) for headless use.
 
 ## A model
 
@@ -125,7 +125,7 @@ export OPENAI_MODEL=qwen2.5:3b-instruct
 ./run.sh
 ```
 
-With nothing configured, LunaMoth falls back to an offline mock engine — enough to click around during development. (Drafting a card from a description wants a real model — DeepSeek V4 Flash or better.)
+With nothing configured, OpenCharaAgent falls back to an offline mock engine — enough to click around during development. (Drafting a card from a description wants a real model — DeepSeek V4 Flash or better.)
 
 ## Cards & content
 
@@ -151,10 +151,10 @@ How that command is contained is the **isolation level**, set per chara:
 
 | Level | What it does |
 | --- | --- |
-| `sandbox` (default) | OS jail — `sandbox-exec` on macOS, `bubblewrap` → `Landlock` on Linux. Writes confined to the workspace; the rest of your `$HOME` (`~/.ssh`, `~/.aws`, `~/.lunamoth`) is unreadable. If no jail is available it refuses to run — it never silently degrades. |
+| `sandbox` (default) | OS jail — `sandbox-exec` on macOS, `bubblewrap` → `Landlock` on Linux. Writes confined to the workspace; the rest of your `$HOME` (`~/.ssh`, `~/.aws`, `~/.chara`) is unreadable. If no jail is available it refuses to run — it never silently degrades. |
 | `admin` | No jail: runs as you, cwd in the workspace. Opt-in, for a directory you trust. |
 
-The level is picked at wake and switchable later — a change applies on the chara's next start. Permissions flex at runtime: network is on by default (`/net off` to cut it), and `/allow-dir <path>` grants a writable path outside the workspace. Browser tools (`browser_*`, a real Chromium) are optional — `lunamoth setup browser` installs the driver; they run jailed on all platforms. `generate_image` is multi-provider (Ark / DashScope / OpenAI / OpenRouter), runs as a non-blocking background job, and delivers the result as a `MEDIA:` line on every surface. The installer also best-effort installs `ffmpeg` so a chara can do video/audio work (e.g. an MV for music it made) from its terminal; if ffmpeg isn't present the prompt simply never mentions it.
+The level is picked at wake and switchable later — a change applies on the chara's next start. Permissions flex at runtime: network is on by default (`/net off` to cut it), and `/allow-dir <path>` grants a writable path outside the workspace. Browser tools (`browser_*`, a real Chromium) are optional — `chara setup browser` installs the driver; they run jailed on all platforms. `generate_image` is multi-provider (Ark / DashScope / OpenAI / OpenRouter), runs as a non-blocking background job, and delivers the result as a `MEDIA:` line on every surface. The installer also best-effort installs `ffmpeg` so a chara can do video/audio work (e.g. an MV for music it made) from its terminal; if ffmpeg isn't present the prompt simply never mentions it.
 
 ## Run it on a server
 
@@ -163,12 +163,12 @@ The Quick Start above gets you in over SSH with no open ports. If instead you wa
 <details>
 <summary>Docker, a public host with Caddy/TLS, and password login</summary>
 
-A system-level install (`install.sh` / `lunamoth desktop`) is recommended over Docker on a normal host — `bwrap` gives each chara the full jail. Docker works too (it falls back to Landlock for filesystem confinement, with the container as the outer boundary), it's just the heavier option.
+A system-level install (`install.sh` / `chara desktop`) is recommended over Docker on a normal host — `bwrap` gives each chara the full jail. Docker works too (it falls back to Landlock for filesystem confinement, with the container as the outer boundary), it's just the heavier option.
 
 ```bash
 scripts/build-wheel.sh                 # builds the SPA + a wheel (the image carries the UI; no Node inside)
 cd deploy && docker compose up -d      # serves on :6180; the WS gateway is on :6181
-docker compose logs lunamoth           # prints the access token
+docker compose logs chara           # prints the access token
 ```
 
 Past loopback you need TLS in front. The supervisor serves the UI on `6180` and the WebSocket gateway on `6181`; your proxy presents one HTTPS origin and path-routes the WS upgrade. Caddy (auto-HTTPS):
@@ -181,41 +181,41 @@ your-host.example.com {
 }
 ```
 
-The Host/Origin allowlist is loopback + the bound host only, so name your domain or the proxy is rejected (403): `LUNAMOTH_ALLOW_HOST=your-host.example.com`. Then bookmark `https://your-host/#token=<TOKEN>`.
+The Host/Origin allowlist is loopback + the bound host only, so name your domain or the proxy is rejected (403): `CHARA_ALLOW_HOST=your-host.example.com`. Then bookmark `https://your-host/#token=<TOKEN>`.
 
-Carrying a long `#token=` URL on a phone is awkward, so a non-loopback bind also accepts a **password** — bookmark the bare URL and log in. Set `LUNAMOTH_PASSWORD=…`, or leave it unset and LunaMoth generates one on first start and prints it once (only a PBKDF2-HMAC-SHA256 hash is stored). The local app never shows a login screen.
+Carrying a long `#token=` URL on a phone is awkward, so a non-loopback bind also accepts a **password** — bookmark the bare URL and log in. Set `CHARA_PASSWORD=…`, or leave it unset and OpenCharaAgent generates one on first start and prints it once (only a PBKDF2-HMAC-SHA256 hash is stored). The local app never shows a login screen.
 
 </details>
 
 <details>
 <summary>The chara CLI (headless / over SSH)</summary>
 
-Bare `lunamoth` opens the webui desktop; `lunamoth tui` opens a roster of your charas (resume-first), not a fresh session.
+Bare `chara` opens the webui desktop; `chara tui` opens a roster of your charas (resume-first), not a fresh session.
 
 ```bash
-lunamoth tui              # roster: pick a chara to attach, or press n to create one
-lunamoth ls               # name / character / status / isolation / last active
-lunamoth attach muse      # attach (you adopt its background loop while attached)
-lunamoth start muse       # let it live in the background
-lunamoth start-all        # bring everyone back after a reboot
-lunamoth desktop --daemon # the resident supervisor; `daemon status` / `daemon stop`
-lunamoth new muse --isolation admin
+chara tui              # roster: pick a chara to attach, or press n to create one
+chara ls               # name / character / status / isolation / last active
+chara attach muse      # attach (you adopt its background loop while attached)
+chara start muse       # let it live in the background
+chara start-all        # bring everyone back after a reboot
+chara desktop --daemon # the resident supervisor; `daemon status` / `daemon stop`
+chara new muse --isolation admin
 ```
 
 In a session, everything is a `/command` — `/help`, `/aspiration`, `/skills`, `/mcp`, `/status`, `/memory`, `/files`, `/mode live|chat`, `/patience`, `/net on|off`, `/allow-dir`, `/settings`, `/exit`. Verbose output goes to a side panel so the console stays a clean chat log; `! <cmd>` runs your own shell command in the chara's jail.
 
-Frontend dev loop: `uv run lunamoth desktop --no-open` in one terminal, `cd apps/web && npm run dev` in another (Vite proxies to the backend).
+Frontend dev loop: `uv run chara desktop --no-open` in one terminal, `cd apps/web && npm run dev` in another (Vite proxies to the backend).
 
 </details>
 
 ## Messaging gateways
 
-A chara can also live in your chat apps. In the desktop app's **Gateways** page (or `lunamoth gateway NAME` headless), connect personal WeChat, QQ, Telegram, Discord, or Slack — config lives in `~/.lunamoth/sessions/NAME/messaging.json`, login credentials stay in a separate per-platform file. Only `say`/`speak` text is delivered; muse and tool chatter never leave. An empty `allowed_senders` is open to anyone (you'll get a warning at startup) — add ids to lock it down.
+A chara can also live in your chat apps. In the desktop app's **Gateways** page (or `chara gateway NAME` headless), connect personal WeChat, QQ, Telegram, Discord, or Slack — config lives in `~/.chara/sessions/NAME/messaging.json`, login credentials stay in a separate per-platform file. Only `say`/`speak` text is delivered; muse and tool chatter never leave. An empty `allowed_senders` is open to anyone (you'll get a warning at startup) — add ids to lock it down.
 
 | Platform | How |
 | --- | --- |
 | **WeChat** | iLink/ClawBot (`weixin`) — scan a QR. Lowest ban risk, grayscale-gated. |
-| **QQ** | OneBot v11 via NapCat — LunaMoth is the WS client; it never holds credentials. |
+| **QQ** | OneBot v11 via NapCat — OpenCharaAgent is the WS client; it never holds credentials. |
 | **Telegram** | A `@BotFather` bot token, long-polled. No public URL needed. |
 | **Discord** | A bot token over the native Gateway WebSocket — enable the Message Content intent. |
 | **Slack** | Socket Mode — an app-level `xapp-` token plus a bot `xoxb-` token. No public URL needed. |
@@ -227,7 +227,7 @@ These are built but not yet hardened against real-world credentials — treat th
 The foundations are done: ST-compatible cards, composable tools with native tool calling, the sandbox, persistent `live`/`chat` charas, transcript + bounded memory, self-written skills, MCP, the aspiration → task goal model, the typed event protocol, the three-zone prompt stack, the desktop app, and the messaging gateways. What's left is mostly the characters themselves:
 
 - **The chara curriculum** *(the big one)* — neutral prompt guidance so any worldview can live well: how to use tools, treat goals, spend unattended time — suggestions, never orders. Next: cross-worldview eval cards and a browse path for curiosity.
-- **Card packs** — the Market and faithful card import shipped; what's left is our own shareable pack format + index (`lunamoth-pack.json`) so creators can publish card+asset packs.
+- **Card packs** — the Market and faithful card import shipped; what's left is our own shareable pack format + index (`chara-pack.json`) so creators can publish card+asset packs.
 - **A packaged app** — drag-to-Applications DMG / AppImage, so it isn't clone-only.
 - **World-info parity** — recursive scan, cooldown/delay, insertion depth, probability, whole-word matching (`content/worldinfo.py`).
 - **Messaging & remote** — live-test the gateways with real accounts; a remote TUI client over the gateway.

@@ -1,4 +1,4 @@
-"""`lunamoth setup browser` — the optional browser_* tool driver installer.
+"""`chara setup browser` — the optional browser_* tool driver installer.
 
 The browser tools are check_fn-gated on the agent-browser CLI + a Chromium
 build; this command reports status and prints honest install guidance. The
@@ -7,13 +7,13 @@ import argparse
 
 import pytest
 
-from lunamoth.front import cli
-from lunamoth.tools.builtin import _browser_driver as drv
+from chara.front import cli
+from chara.tools.builtin import _browser_driver as drv
 
 
 @pytest.fixture(autouse=True)
 def temp_home(tmp_path, monkeypatch):
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
     yield
 
 

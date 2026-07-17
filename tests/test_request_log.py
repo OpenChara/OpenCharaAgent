@@ -7,26 +7,26 @@ import json
 
 import pytest
 
-from lunamoth.session.settings import Settings
+from chara.session.settings import Settings
 
 
 @pytest.fixture
 def agent(tmp_path, monkeypatch):
     # SANDBOX_ROOT pins at import — set env BEFORE importing the runtime module.
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sandbox"))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    from lunamoth.core.agent import LunaMothAgent
+    monkeypatch.setenv("CHARA_SANDBOX", str(tmp_path / "sandbox"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    from chara.core.agent import CharaAgent
 
     def make(**kw):
         kw.setdefault("toolpack", "")
-        return LunaMothAgent(Settings(character_path="", **kw))
+        return CharaAgent(Settings(character_path="", **kw))
 
     return make
 
 
 def _requests_path():
-    from lunamoth.config import SANDBOX_ROOT
+    from chara.config import SANDBOX_ROOT
 
     return SANDBOX_ROOT / "logs" / "requests.jsonl"
 
@@ -55,7 +55,7 @@ def test_handle_logs_a_faithful_request(agent):
 
 
 def test_request_log_caps_at_200_lines(agent):
-    from lunamoth.core import request_log as agent_mod
+    from chara.core import request_log as agent_mod
 
     path = _requests_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -76,7 +76,7 @@ def test_request_log_caps_at_200_lines(agent):
 
 
 def test_request_log_never_raises(agent, monkeypatch):
-    from lunamoth.core import request_log as agent_mod
+    from chara.core import request_log as agent_mod
 
     # A non-serializable payload must be swallowed, not raised.
     agent_mod._append_request_log("send", ["sys"], [{"role": "user", "content": object()}], [], "m")
@@ -85,7 +85,7 @@ def test_request_log_never_raises(agent, monkeypatch):
 def test_request_log_redacts_secrets(agent):
     """A secret flowing through context (this file is bundled into the export
     ZIP) must be masked before it ever lands on disk — never cleartext."""
-    from lunamoth.core import request_log as agent_mod
+    from chara.core import request_log as agent_mod
 
     path = _requests_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -106,7 +106,7 @@ def test_request_log_redacts_secrets(agent):
 def test_request_log_stays_bounded_after_many_appends(agent):
     """Many appends keep the file bounded near the cap (no unbounded growth),
     and the file is never corrupted (every line parses) under repeated writes."""
-    from lunamoth.core import request_log as agent_mod
+    from chara.core import request_log as agent_mod
 
     path = _requests_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -134,7 +134,7 @@ def test_request_log_elides_inline_image_bytes(agent):
     the same image sits in context (and would be re-logged) EVERY turn, so the
     pixels are pure disk churn. The record's shape stays faithful and the input
     messages are never mutated."""
-    from lunamoth.core import request_log as agent_mod
+    from chara.core import request_log as agent_mod
 
     path = _requests_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -166,7 +166,7 @@ def test_request_log_trim_is_byte_bounded(agent, monkeypatch):
     """Oversized records are capped by BYTES, not just lines: the trim keeps a
     bounded tail (never reading the whole file), and every kept line is a
     complete, parseable record with the newest one intact."""
-    from lunamoth.core import request_log as agent_mod
+    from chara.core import request_log as agent_mod
 
     path = _requests_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -189,7 +189,7 @@ def test_request_log_keeps_the_log_when_a_single_record_exceeds_the_byte_cap(age
     """When the tail window holds no complete line (one record bigger than the
     byte cap), the trim used to rewrite the file to NOTHING. It must skip the
     rewrite instead — the newest record survives, even oversized."""
-    from lunamoth.core import request_log as agent_mod
+    from chara.core import request_log as agent_mod
 
     path = _requests_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -213,7 +213,7 @@ def test_request_log_keeps_the_log_when_a_single_record_exceeds_the_byte_cap(age
 
 def test_request_log_no_temp_files_left_behind(agent):
     """The atomic trim must not leave .tmp scratch files in the logs dir."""
-    from lunamoth.core import request_log as agent_mod
+    from chara.core import request_log as agent_mod
 
     path = _requests_path()
     path.parent.mkdir(parents=True, exist_ok=True)

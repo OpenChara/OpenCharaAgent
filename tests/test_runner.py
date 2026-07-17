@@ -3,7 +3,7 @@ import sys
 
 import pytest
 
-from lunamoth.tools.runner import (
+from chara.tools.runner import (
     os_sandbox_available,
     run_terminal,
     run_terminal_result,
@@ -90,7 +90,7 @@ def _capture_jail_builder(monkeypatch):
     """Stub build_jail_command in the runner's namespace, recording its kwargs.
     Pure argv-construction assert: the Linux bwrap tier (run_cwd=None, chdirs
     itself) must receive the validated workdir instead of silently dropping it."""
-    import lunamoth.tools.runner as R
+    import chara.tools.runner as R
     captured: dict = {}
 
     def fake_build(command, workspace, isolation, *, allow_network=False, writable=(),
@@ -117,7 +117,7 @@ def test_workdir_threaded_into_jail_builder(tmp_path, monkeypatch):
 
 
 def test_pty_workdir_threaded_into_jail_builder(tmp_path, monkeypatch):
-    from lunamoth.tools.runner import run_terminal_pty
+    from chara.tools.runner import run_terminal_pty
     captured = _capture_jail_builder(monkeypatch)
     ws = tmp_path / "workspace"
     (ws / "sub").mkdir(parents=True)
@@ -260,7 +260,7 @@ def test_sandbox_blocks_outside_write(tmp_path):
 def test_macos_sandbox_hides_user_home_secrets(tmp_path, monkeypatch):
     """Regression: the default macOS shell jail must NOT let a chara read the
     operator's home secrets (~/.ssh, ~/.aws, …) — previously it allowed all reads
-    and denied only ~/.lunamoth. Point HOME at a tmp dir, plant a fake ~/.ssh key,
+    and denied only ~/.chara. Point HOME at a tmp dir, plant a fake ~/.ssh key,
     and assert a sandbox `cat` can't read it while the workspace + system stay
     readable."""
     fake_home = tmp_path / "home"

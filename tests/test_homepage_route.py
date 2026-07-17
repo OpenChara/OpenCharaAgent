@@ -7,13 +7,13 @@ import http.client
 
 import pytest
 
-from lunamoth.server import supervisor as SV
-from lunamoth.session import sessions as S
+from chara.server import supervisor as SV
+from chara.session import sessions as S
 
 
 @pytest.fixture()
 def home_server(tmp_path, monkeypatch):
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
     meta = S.create_session("webby", isolation="sandbox")
     home = meta.sandbox_dir / "workspace" / "home"
     home.mkdir(parents=True, exist_ok=True)
@@ -79,7 +79,7 @@ def test_home_route_requires_auth(home_server):
 @pytest.fixture()
 def asset_server(tmp_path, monkeypatch):
     """A session with workspace files, served behind the /asset route."""
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
     meta = S.create_session("worky", isolation="sandbox")
     ws = meta.sandbox_dir / "workspace"
     ws.mkdir(parents=True, exist_ok=True)

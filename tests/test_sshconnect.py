@@ -1,4 +1,4 @@
-"""Unit tests for the `lunamoth connect ssh://…` SSH-tunnel orchestration.
+"""Unit tests for the `chara connect ssh://…` SSH-tunnel orchestration.
 
 Pure functions are tested directly; the subprocess seams are monkeypatched so
 no live SSH host is required.
@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from lunamoth.server import sshconnect as SC
+from chara.server import sshconnect as SC
 
 
 # ── ssh:// URL parse ──────────────────────────────────────────────────────────
@@ -111,12 +111,12 @@ def test_build_ssh_argv_default_port_omits_p():
 
 def test_build_remote_exec_argv():
     t = SC.SshTarget(host="h", user="u", port=2200)
-    argv = SC.build_remote_exec_argv(t, "cat ~/.lunamoth/daemon.json")
+    argv = SC.build_remote_exec_argv(t, "cat ~/.chara/daemon.json")
     assert argv[0] == "ssh"
     assert "BatchMode=yes" in argv
     assert "-p" in argv and "2200" in argv
     assert argv[-2] == "u@h"
-    assert argv[-1] == "cat ~/.lunamoth/daemon.json"
+    assert argv[-1] == "cat ~/.chara/daemon.json"
 
 
 # ── local URL build ───────────────────────────────────────────────────────────
@@ -145,7 +145,7 @@ def test_read_remote_daemon_present(monkeypatch):
 def test_read_remote_daemon_absent_returns_none(monkeypatch):
     monkeypatch.setattr(
         SC, "_ssh_exec",
-        lambda target, cmd, timeout=20.0: (1, "", "cat: ~/.lunamoth/daemon.json: No such file or directory"),
+        lambda target, cmd, timeout=20.0: (1, "", "cat: ~/.chara/daemon.json: No such file or directory"),
     )
     assert SC.read_remote_daemon(SC.SshTarget(host="h")) is None
 
@@ -168,11 +168,11 @@ def test_ensure_remote_daemon_starts_when_absent(monkeypatch):
     def fake_exec(target, cmd, timeout=20.0):
         calls.append(cmd)
         if cmd.startswith("cat"):
-            if "lunamoth desktop --daemon" in " ".join(calls):
+            if "chara desktop --daemon" in " ".join(calls):
                 # after start, the file exists
                 return (0, json.dumps({"http_port": 9, "ws_port": 10, "token": "z"}), "")
             return (1, "", "No such file or directory")
-        if cmd.startswith("lunamoth desktop --daemon"):
+        if cmd.startswith("chara desktop --daemon"):
             return (0, "started", "")
         raise AssertionError(f"unexpected command {cmd!r}")
 
@@ -182,13 +182,13 @@ def test_ensure_remote_daemon_starts_when_absent(monkeypatch):
     d = SC.ensure_remote_daemon(SC.SshTarget(host="h"), log=lambda *_a: None)
     assert d.token == "z"
     # the start command was issued
-    assert any(c.startswith("lunamoth desktop --daemon") for c in calls)
+    assert any(c.startswith("chara desktop --daemon") for c in calls)
 
 
 def test_start_remote_daemon_failure_raises(monkeypatch):
     monkeypatch.setattr(
         SC, "_ssh_exec",
-        lambda target, cmd, timeout=60.0: (127, "", "lunamoth: command not found"),
+        lambda target, cmd, timeout=60.0: (127, "", "chara: command not found"),
     )
     with pytest.raises(SC.ConnectError) as exc:
         SC.start_remote_daemon(SC.SshTarget(host="h"))

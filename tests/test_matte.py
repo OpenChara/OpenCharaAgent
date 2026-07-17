@@ -11,16 +11,16 @@ import json
 
 import pytest
 
-from lunamoth.visuals import matte
-from lunamoth.visuals.matte import MatteModel
+from chara.visuals import matte
+from chara.visuals.matte import MatteModel
 
 
 @pytest.fixture(autouse=True)
 def temp_dirs(tmp_path, monkeypatch):
     # Isolate both the rembg cache (U2NET_HOME) and the desktop.json home.
     monkeypatch.setenv("U2NET_HOME", str(tmp_path / "u2net"))
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
-    monkeypatch.delenv("LUNAMOTH_MATTE_MODEL", raising=False)
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("CHARA_MATTE_MODEL", raising=False)
     # Reset the module-global download state between tests.
     monkeypatch.setattr(matte, "_progress", {})
     monkeypatch.setattr(matte, "_active", set())
@@ -83,10 +83,10 @@ def test_selected_model_default_then_desktop_then_env(tmp_path, monkeypatch):
     home.mkdir(parents=True, exist_ok=True)
     (home / "desktop.json").write_text(json.dumps({"matte_model": "birefnet-general-lite"}), encoding="utf-8")
     assert matte.selected_model() == "birefnet-general-lite"
-    monkeypatch.setenv("LUNAMOTH_MATTE_MODEL", "birefnet-general")
+    monkeypatch.setenv("CHARA_MATTE_MODEL", "birefnet-general")
     assert matte.selected_model() == "birefnet-general"
     # an unknown id never wins — falls through to the desktop.json choice
-    monkeypatch.setenv("LUNAMOTH_MATTE_MODEL", "nope")
+    monkeypatch.setenv("CHARA_MATTE_MODEL", "nope")
     assert matte.selected_model() == "birefnet-general-lite"
 
 

@@ -11,11 +11,11 @@ import json
 
 import pytest
 
-from lunamoth.core.state import EnvState
-from lunamoth.obs.audit import AuditLog
-from lunamoth.tools.gateway import ToolGateway
-from lunamoth.tools.registry import registry, discover_builtin_tools, tool_error, tool_result
-from lunamoth.tools.sandbox import Sandbox
+from chara.core.state import EnvState
+from chara.obs.audit import AuditLog
+from chara.tools.gateway import ToolGateway
+from chara.tools.registry import registry, discover_builtin_tools, tool_error, tool_result
+from chara.tools.sandbox import Sandbox
 
 
 _SCHEMA = {"description": "fake", "parameters": {"type": "object", "properties": {}}}
@@ -59,7 +59,7 @@ def gw(tmp_path):
 def test_effective_tools_default_all_via_wildcard(gw):
     """hermes parity: the default pack is ['*'] = every registered tool. An
     explicit list narrows; None means a tool-less (pure-roleplay) chara."""
-    from lunamoth.tools.registry import registry as _reg
+    from chara.tools.registry import registry as _reg
     all_names = set(_reg.get_all_tool_names())
     assert all_names  # builtins are registered
 
@@ -130,7 +130,7 @@ def test_error_null_is_not_a_failure():
     """Regression: a success result that merely carries `"error": null` (the terminal
     background path) must NOT be classified as a failure. Gating on key presence
     turned such successes into a spurious 'ERROR: None'."""
-    from lunamoth.tools.gateway import _is_error_json
+    from chara.tools.gateway import _is_error_json
     assert _is_error_json(json.dumps({"output": "started", "pid": 1, "error": None})) is False
     assert _is_error_json(json.dumps({"error": ""})) is False
     assert _is_error_json(json.dumps({"error": "real failure"})) is True
@@ -144,7 +144,7 @@ def test_error_null_is_not_a_failure():
     assert _is_error_json(tool_result(ok=True, value=1)) is False
     # The explicit sentinel is authoritative: a tool_error is a failure even if a
     # caller passed error="" (the legacy heuristic alone would miss this).
-    from lunamoth.tools.registry import TOOL_ERROR_KEY
+    from chara.tools.registry import TOOL_ERROR_KEY
     assert TOOL_ERROR_KEY in tool_error("x")
     assert _is_error_json(json.dumps({TOOL_ERROR_KEY: True, "error": ""})) is True
     # A success result is never misread, even if it carries the key set falsy.

@@ -1,4 +1,4 @@
-/* UI-chrome i18n strings — a verbatim port of src/lunamoth/front/web/i18n.js.
+/* UI-chrome i18n strings — a verbatim port of src/chara/front/web/i18n.js.
    Each value is a [zh, en] tuple. The shell speaks zh/en; a chara's words always
    stay in the card's own language (language belongs to the card, never a setting).
 
@@ -467,7 +467,7 @@ export const I18N = {
   "fr-create-sub": ["描述你想象的世界与角色，AI 自动生成角色卡", "Describe your world & character — AI writes the card"],
   "btn-try": ["或者从我们提供的默认角色开始", "Or start from one of our characters"],
   "btn-try-sub": ["最快看到一个角色活过来的方式", "the fastest way to watch a character come alive"],
-  "bp-header": ["LunaMoth 内置的推荐角色——他们来自不同的背景与世界观，掌握并热爱不同的技能；自主运行时，他们都会着手构筑自己的个人网站。", "LunaMoth's recommended built-in characters — each from a different background and worldview, each loving a different craft. Left to run on their own, every one of them sets out to build their own personal website."],
+  "bp-header": ["OpenCharaAgent 内置的推荐角色——他们来自不同的背景与世界观，掌握并热爱不同的技能；自主运行时，他们都会着手构筑自己的个人网站。", "OpenCharaAgent's recommended built-in characters — each from a different background and worldview, each loving a different craft. Left to run on their own, every one of them sets out to build their own personal website."],
   "deck-pick": ["✨ 默认", "✨ Default"],
   "deck-unwoken": ["未唤醒", "Not awakened"],
   "deck-woken": ["已唤醒", "Awakened"],
@@ -603,7 +603,7 @@ export const I18N = {
   "conn-lost": ["连接断开，正在重连…", "Connection lost — reconnecting…"],
   "rejoin-gap": ["已重新连接——断线期间的部分消息可能未显示。", "Reconnected — some messages from while you were offline may be missing."],
   "compacted-here": ["以上对话已压缩进记忆", "earlier conversation condensed into memory"],
-  "login-title": ["登录 LunaMoth", "Sign in to LunaMoth"],
+  "login-title": ["登录 OpenCharaAgent", "Sign in to OpenCharaAgent"],
   "login-blurb": ["这是一个公开访问的实例，请输入密码继续。", "This instance is publicly reachable. Enter the password to continue."],
   "login-password": ["密码", "Password"],
   "login-submit": ["登录", "Sign in"],
@@ -734,7 +734,7 @@ export const I18N = {
   "upd-apply": ["立即更新", "Update now"],
   "upd-applying": ["更新中…", "Updating…"],
   "upd-done": ["更新完成", "Update complete"],
-  "upd-restart": ["更新已就绪，重启 LunaMoth 后生效", "Update ready — restart LunaMoth to apply"],
+  "upd-restart": ["更新已就绪，重启 OpenCharaAgent 后生效", "Update ready — restart OpenCharaAgent to apply"],
   "upd-failed": ["更新失败", "Update failed"],
   "upd-changelog": ["更新日志", "Changelog"],
   "upd-installed": ["当前", "Installed"],

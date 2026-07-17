@@ -241,9 +241,9 @@ export function Settings() {
 
           {pane === "about" && (
             <div className="settings-pane on">
-              <h2>LunaMoth</h2>
+              <h2>OpenCharaAgent</h2>
               <div className="about-block">
-                <div>{version ? `LunaMoth v${version}` : "LunaMoth"}</div>
+                <div>{version ? `OpenCharaAgent v${version}` : "OpenCharaAgent"}</div>
                 <div>{t("about-text")}</div>
               </div>
               <UpdatePane />

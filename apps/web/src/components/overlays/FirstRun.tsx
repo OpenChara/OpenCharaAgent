@@ -55,7 +55,7 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
 
       {pane === "welcome" ? (
         <div id="fr-welcome" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-          <div className="fr-word">LunaMoth</div>
+          <div className="fr-word">OpenCharaAgent</div>
           <Segmented
             className="fr-langseg"
             ariaLabel="Language / 语言"

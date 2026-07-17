@@ -3,9 +3,12 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lunamoth"
-version = "0.1.13"
-description = "LunaMoth: a local-first agentic character tavern."
+# Distribution name ≠ import/CLI name on purpose: PyPI's `chara` is squatted, and
+# the dist should match the repo/brand anyway. Import package + daily command stay
+# the short `chara`.
+name = "opencharaagent"
+version = "0.2.0"
+description = "OpenCharaAgent: a local-first agentic character tavern."
 license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
@@ -14,7 +17,10 @@ dependencies = [
 ]
 
 [project.scripts]
-lunamoth = "lunamoth.front.cli:main"
+chara = "chara.front.cli:main"
+# Legacy alias from the LunaMoth days — pre-rename systemd units and muscle
+# memory keep working across the upgrade. Remove after a deprecation cycle.
+lunamoth = "chara.front.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
@@ -26,7 +32,7 @@ messaging = [
 # Full skills nested-frontmatter parsing (flat SKILL.md works without it).
 tools = ["pyyaml>=6"]
 # The browser_* tools shell out to the Node `agent-browser` CLI + Chromium
-# (installed via `lunamoth setup`, not pip); only browser_cdp/dialog need a
+# (installed via `chara setup`, not pip); only browser_cdp/dialog need a
 # Python dep. The real weight is non-Python and per-host.
 browser = ["websockets>=12"]
 # Local matting (抠像) for the visuals pipeline (R9/R11). HEAVY ML stack — kept
@@ -46,8 +52,8 @@ where = ["src"]
 
 # Bundle the built frontend SPA into the wheel (hermes-agent's model:
 # reference/hermes-agent/pyproject.toml:303-304). `apps/web/` builds to
-# src/lunamoth/front/webui/ (gitignored), which `packages.find` above picks up
-# as part of the `lunamoth` package; this glob attaches that built dir as
+# src/chara/front/webui/ (gitignored), which `packages.find` above picks up
+# as part of the `chara` package; this glob attaches that built dir as
 # package-data so `python -m build` packs it into the wheel. No node and no
 # committed dist required at install — the wheel carries the prebuilt UI.
 [tool.setuptools.package-data]
@@ -56,7 +62,7 @@ where = ["src"]
 #                  WHEEL install ships the default personas + tool packs (config.content_dir
 #                  falls back here when there is no repo root). Without this a wheel
 #                  deploy has no toolpacks → charas lose all tools (2026-06-17 P0).
-lunamoth = ["front/webui/**/*", "_bundled/**/*"]
+chara = ["front/webui/**/*", "_bundled/**/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

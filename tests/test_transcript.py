@@ -1,8 +1,8 @@
 """Durable transcript: roundtrip across instances, epochs, and agent restore."""
 import pytest
 
-from lunamoth.session.settings import Settings
-from lunamoth.core.transcript import TranscriptStore
+from chara.session.settings import Settings
+from chara.core.transcript import TranscriptStore
 
 
 def test_roundtrip_across_instances(tmp_path):
@@ -243,13 +243,13 @@ def test_load_display_shows_full_history_past_a_summary(tmp_path):
 @pytest.fixture
 def agent(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sandbox"))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    from lunamoth.core.agent import LunaMothAgent
+    monkeypatch.setenv("CHARA_SANDBOX", str(tmp_path / "sandbox"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    from chara.core.agent import CharaAgent
 
     def make(**kw):
         kw.setdefault("toolpack", "")
-        return LunaMothAgent(Settings(character_path="", **kw))
+        return CharaAgent(Settings(character_path="", **kw))
 
     return make
 

@@ -6,7 +6,7 @@ Only TWO cutouts per character:
   - the whole sticker SHEET (表情包)  -> 1 API call, then cropped locally into cells
 
 remove.bg is a cloud call, so the runtime stays light (no onnxruntime/opencv/model
-weights). Key in ~/.lunamoth/removebg_key (or env REMOVEBG_API_KEY).
+weights). Key in ~/.chara/removebg_key (or env REMOVEBG_API_KEY).
 
   python removebg.py sprites [Names...]    # cut立绘 for the given chars (default: all)
   python removebg.py stickers [Names...]   # cut + 3x3-crop sticker sheets
@@ -25,11 +25,11 @@ ENDPOINT = "https://api.remove.bg/v1.0/removebg"
 def _key() -> str:
     k = os.environ.get("REMOVEBG_API_KEY")
     if not k:
-        p = Path.home() / ".lunamoth" / "removebg_key"
+        p = Path.home() / ".chara" / "removebg_key"
         if p.exists():
             k = p.read_text().strip()
     if not k:
-        sys.exit("no REMOVEBG_API_KEY (env or ~/.lunamoth/removebg_key)")
+        sys.exit("no REMOVEBG_API_KEY (env or ~/.chara/removebg_key)")
     return k
 
 

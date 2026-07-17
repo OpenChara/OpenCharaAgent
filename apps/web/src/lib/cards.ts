@@ -201,7 +201,7 @@ export function putSection(draft: Partial<NormalizedDraft>, key: string, text: s
 /** The plain field values that the wake/edit content step collects (the strings
  *  the contenteditable nodes hold), used to build the saved card payload.
  *
- *  Fields a surface ALWAYS edits are required strings ("" deletes the lunamoth
+ *  Fields a surface ALWAYS edits are required strings ("" deletes the chara
  *  key). Fields a surface may NOT edit are optional: `undefined` means "leave the
  *  card's existing value alone" — the card editor preserves user_name/user_persona
  *  it never shows. This is the data-safety contract that lets BOTH save paths share
@@ -226,7 +226,7 @@ export interface CardFields {
   worldEntries?: WorldEntryFull[];
   user_name?: string;
   user_persona?: string;
-  /** data.creator_notes (NOT under lunamoth). */
+  /** data.creator_notes (NOT under chara). */
   creator_notes?: string;
 }
 
@@ -237,7 +237,7 @@ export interface CardData {
   personality?: string;
   scenario?: string;
   first_mes?: string;
-  extensions?: { lunamoth?: Record<string, unknown>; [k: string]: unknown };
+  extensions?: { chara?: Record<string, unknown>; [k: string]: unknown };
   character_book?: { name?: string; entries?: unknown[] };
   [k: string]: unknown;
 }
@@ -245,7 +245,7 @@ export interface CardData {
 /** The pure core of collectCardData (app.js:1950): fold edited field strings into
  *  a card `data` block. The DOM-reading wrapper (which pulls textContent off the
  *  contenteditable nodes) lives in the view; this takes the already-read strings,
- *  so the serialization rules (lunamoth extensions, wishes split, world-book
+ *  so the serialization rules (chara extensions, wishes split, world-book
  *  assembly, legacy-key migration) are testable. Mutates and returns `data`. */
 export function serializeCardFields(
   data: CardData,
@@ -259,7 +259,7 @@ export function serializeCardFields(
   if (fields.first_mes !== undefined) data.first_mes = fields.first_mes;
   if (fields.creator_notes !== undefined) data.creator_notes = fields.creator_notes;
   data.extensions = data.extensions || {};
-  const lm = (data.extensions.lunamoth = data.extensions.lunamoth || {});
+  const lm = (data.extensions.chara = data.extensions.chara || {});
   // undefined → leave the card's value alone (surface doesn't edit it); "" → delete.
   const setOrDel = (k: string, raw: string | undefined): void => {
     if (raw === undefined) return;

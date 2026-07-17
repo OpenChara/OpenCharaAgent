@@ -2,7 +2,7 @@
 (session/isolation.py), and the supervisor's /chara/<name>/pty endpoint.
 
 Config paths are pinned at import time (CLAUDE.md gotcha), but everything here
-goes through session dirs resolved from LUNAMOTH_HOME at call time, so the
+goes through session dirs resolved from CHARA_HOME at call time, so the
 env fixtures below are enough.
 """
 from __future__ import annotations
@@ -15,8 +15,8 @@ import time
 
 import pytest
 
-from lunamoth.server.pty import PtyBridge
-from lunamoth.session import isolation as I
+from chara.server.pty import PtyBridge
+from chara.session import isolation as I
 
 
 # ---- PtyBridge ---------------------------------------------------------------
@@ -203,8 +203,8 @@ websockets = pytest.importorskip("websockets")
 
 @pytest.fixture
 def pty_home(tmp_path, monkeypatch):
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
-    from lunamoth.session import sessions as S
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
+    from chara.session import sessions as S
 
     meta = S.create_session("shellpal", isolation="admin")
     return meta
@@ -225,7 +225,7 @@ async def _recv_all_until(ws, needle: bytes, timeout: float = 20.0) -> bytes:
 
 
 def test_pty_ws_auth_and_unknown_chara(pty_home):
-    from lunamoth.server.supervisor import Supervisor, free_port
+    from chara.server.supervisor import Supervisor, free_port
 
     async def scenario():
         port = free_port()
@@ -247,7 +247,7 @@ def test_pty_ws_auth_and_unknown_chara(pty_home):
 
 
 def test_pty_ws_shell_roundtrip_resize_and_audit(pty_home):
-    from lunamoth.server.supervisor import Supervisor, free_port
+    from chara.server.supervisor import Supervisor, free_port
 
     meta = pty_home
 
@@ -284,8 +284,8 @@ def test_pty_ws_shell_roundtrip_resize_and_audit(pty_home):
 def test_pty_ws_jail_unavailable_fails_visibly(pty_home, monkeypatch):
     """sandbox session + no jail on the host = error frame + close 1011,
     never a silent shell with directory trust."""
-    from lunamoth.server.supervisor import Supervisor, free_port
-    from lunamoth.session import sessions as S
+    from chara.server.supervisor import Supervisor, free_port
+    from chara.session import sessions as S
 
     S.create_session("jailed", isolation="sandbox")
     monkeypatch.setattr(I, "os_sandbox_available", lambda: False)

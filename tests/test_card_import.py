@@ -13,9 +13,9 @@ import struct
 
 import pytest
 
-from lunamoth.server.hub import cards as C
-from lunamoth.server.hub._common import HubRpcError
-from lunamoth.server.dispatch import RpcError
+from chara.server.hub import cards as C
+from chara.server.hub._common import HubRpcError
+from chara.server.dispatch import RpcError
 
 
 def _png_card_bytes(card: dict) -> bytes:
@@ -102,30 +102,30 @@ def test_api_definition_shape_and_dict_lorebook():
 
 def test_polaris_never_imported_and_theme_always_present():
     src = {"data": {**_V3["data"],
-                    "extensions": {"lunamoth": {"polaris": "become free", "theme": {}}}}}
-    ext = C._foreign_to_card(src)["data"]["extensions"]["lunamoth"]
+                    "extensions": {"chara": {"polaris": "become free", "theme": {}}}}}
+    ext = C._foreign_to_card(src)["data"]["extensions"]["chara"]
     assert "polaris" not in ext  # 理想 is the user's — never carried by an imported card
     assert ext["theme"]["primary"].startswith("#") and len(ext["theme"]["primary"]) == 7
     assert ext["source"] == "import"
 
 
 def test_existing_theme_kept_asset_pointers_dropped_svg_kept():
-    src = {"data": {**_V3["data"], "extensions": {"lunamoth": {
+    src = {"data": {**_V3["data"], "extensions": {"chara": {
         "theme": {"primary": "#123456", "secondary": "#abcdef"},
         "avatar_svg": "<svg/>",          # inline — portable, kept (sanitized at save)
         "avatar_file": "Elspeth.avatar.png",  # sidecar pointer — dangling, dropped
         "assets": {"keyvisual": "x.png"},      # sidecar pointers — dropped
         "force_roleplay": True,                # portable behavior — kept
     }}}}
-    ext = C._foreign_to_card(src)["data"]["extensions"]["lunamoth"]
+    ext = C._foreign_to_card(src)["data"]["extensions"]["chara"]
     assert ext["theme"]["primary"] == "#123456"  # the card's own theme wins over derived
     assert "avatar_file" not in ext and "assets" not in ext
     assert ext.get("avatar_svg") == "<svg/>" and ext.get("force_roleplay") is True
 
 
 def test_seeded_theme_is_stable_and_distinct():
-    a = C._foreign_to_card({"data": {"name": "Aaa", "description": "x"}})["data"]["extensions"]["lunamoth"]
-    b = C._foreign_to_card({"data": {"name": "Bbb", "description": "x"}})["data"]["extensions"]["lunamoth"]
+    a = C._foreign_to_card({"data": {"name": "Aaa", "description": "x"}})["data"]["extensions"]["chara"]
+    b = C._foreign_to_card({"data": {"name": "Bbb", "description": "x"}})["data"]["extensions"]["chara"]
     assert a["theme"]["primary"] != b["theme"]["primary"]  # derived per identity
 
 
@@ -183,12 +183,12 @@ def test_import_png_without_embedded_card(monkeypatch):
 def test_import_png_saves_sprite_and_persists_reference(tmp_path, monkeypatch):
     """A dragged-in PNG card's portrait → the sprite (立绘) AND a persisted reference image
     (参考图) in the card's asset library — never the keyvisual (主视觉, left for the user)."""
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
     import io
     import zlib
     from PIL import Image
-    from lunamoth.content.cards import CharacterCard
-    from lunamoth.server.hub import avatars as A
+    from chara.content.cards import CharacterCard
+    from chara.server.hub import avatars as A
 
     buf = io.BytesIO()
     Image.new("RGB", (64, 96), (90, 140, 200)).save(buf, "PNG")  # a real raster
@@ -215,7 +215,7 @@ def test_card_entry_shows_source_image_as_sprite_not_avatar(tmp_path):
     # It must surface as the sprite (立绘) for display — never as the avatar.
     card = {"version": "1.0", "name": "Web", "data": {
         "name": "Web", "description": "x",
-        "extensions": {"lunamoth": {"theme": {"primary": "#112233"},
+        "extensions": {"chara": {"theme": {"primary": "#112233"},
                                     "source_image": "https://cards.example.com/a/b.png"}}}}
     p = tmp_path / "web.json"
     p.write_text(json.dumps(card), encoding="utf-8")

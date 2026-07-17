@@ -4,8 +4,8 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from lunamoth.protocol.api import AttachInfo, Reply, StateSnapshot
-from lunamoth.protocol.events import TextDelta
+from chara.protocol.api import AttachInfo, Reply, StateSnapshot
+from chara.protocol.events import TextDelta
 
 
 @dataclass
@@ -54,7 +54,7 @@ class DummyHandle:
         return Reply(True, f"ran {line}", {"line": line}, verbose=False)
 
     def command_is_exclusive(self, line: str) -> bool:
-        from lunamoth.core import commands
+        from chara.core import commands
 
         return commands.is_exclusive(line)
 
@@ -98,7 +98,7 @@ def make_dispatcher(handle=None):
             frames.append(frame)
         return True
 
-    from lunamoth.server.dispatch import JsonRpcDispatcher
+    from chara.server.dispatch import JsonRpcDispatcher
 
     dispatch = JsonRpcDispatcher(write, handle=handle or DummyHandle())
     return dispatch, frames
@@ -115,18 +115,18 @@ def wait_response(frames, rid, timeout=2.0):
 
 
 def test_hello_includes_protocol_version():
-    from lunamoth.server.dispatch import hello_frame
+    from chara.server.dispatch import hello_frame
 
     assert hello_frame()["params"]["protocol_version"] == 1
 
 
 def test_real_mock_handle_streams_protocol_events(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sandbox"))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("CHARA_SANDBOX", str(tmp_path / "sandbox"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
 
-    from lunamoth.protocol.api import CharaHandle
-    from lunamoth.session.settings import Settings
+    from chara.protocol.api import CharaHandle
+    from chara.session.settings import Settings
 
     handle = CharaHandle(Settings(provider="mock", character_path="", toolpack=""))
     dispatch, frames = make_dispatcher(handle)
@@ -275,7 +275,7 @@ def test_presence_set_is_idempotent():
 
 
 def test_ws_auth_query_and_first_message():
-    from lunamoth.server.ws import auth_message_ok, query_auth_ok
+    from chara.server.ws import auth_message_ok, query_auth_ok
 
     assert query_auth_ok("/api/ws?token=s3cr3t", "s3cr3t")
     assert not query_auth_ok("/api/ws?token=wrong", "s3cr3t")
@@ -406,7 +406,7 @@ def test_wssink_write_is_non_blocking_and_drains_via_task():
     background drain task performs the actual ws.send."""
     import asyncio
 
-    from lunamoth.server.ws import _WSSink
+    from chara.server.ws import _WSSink
 
     sent: list[str] = []
 
@@ -442,8 +442,8 @@ def test_wssink_stalled_client_does_not_block_writer_and_evicts():
     import asyncio
     import time as _time
 
-    from lunamoth.server import ws as WS
-    from lunamoth.server.ws import _WSSink
+    from chara.server import ws as WS
+    from chara.server.ws import _WSSink
 
     class StalledWS:
         async def send(self, raw):  # noqa: ANN001
@@ -618,7 +618,7 @@ def test_mutating_command_holds_the_stream_slot():
 
 
 def test_is_exclusive_classifier():
-    from lunamoth.core import commands
+    from chara.core import commands
 
     assert commands.is_exclusive("/compact")
     assert commands.is_exclusive("/model gpt-x")

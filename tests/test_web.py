@@ -11,9 +11,9 @@ import json
 
 from types import SimpleNamespace
 
-from lunamoth.tools.builtin import web
-from lunamoth.tools.builtin import _url_safety
-from lunamoth.tools.registry import registry, discover_builtin_tools
+from chara.tools.builtin import web
+from chara.tools.builtin import _url_safety
+from chara.tools.registry import registry, discover_builtin_tools
 
 
 # --------------------------------------------------------------------------- #
@@ -71,7 +71,7 @@ def test_schemas_match_hermes_shape():
 # --------------------------------------------------------------------------- #
 
 def test_search_blocked_when_network_off(monkeypatch):
-    monkeypatch.setenv("LUNAMOTH_SEARXNG_URL", "https://searx.example")
+    monkeypatch.setenv("CHARA_SEARXNG_URL", "https://searx.example")
     out = parse(web.web_search({"query": "hi"}, make_ctx(network=False)))
     assert "error" in out and "Network is off" in out["error"]
 
@@ -86,9 +86,9 @@ def test_extract_blocked_when_network_off():
 # --------------------------------------------------------------------------- #
 
 def _clear_backend_env(monkeypatch):
-    for k in ("LUNAMOTH_WEB_SEARCH_BACKEND", "LUNAMOTH_SEARXNG_URL", "SEARXNG_URL",
-              "LUNAMOTH_SERPER_API_KEY", "SERPER_API_KEY",
-              "LUNAMOTH_BRAVE_API_KEY", "BRAVE_API_KEY", "BRAVE_SEARCH_API_KEY"):
+    for k in ("CHARA_WEB_SEARCH_BACKEND", "CHARA_SEARXNG_URL", "SEARXNG_URL",
+              "CHARA_SERPER_API_KEY", "SERPER_API_KEY",
+              "CHARA_BRAVE_API_KEY", "BRAVE_API_KEY", "BRAVE_SEARCH_API_KEY"):
         monkeypatch.delenv(k, raising=False)
 
 
@@ -156,7 +156,7 @@ def test_ddg_falls_back_to_lite_endpoint(monkeypatch):
 
 def test_check_fn_true_when_searxng_set(monkeypatch):
     _clear_backend_env(monkeypatch)
-    monkeypatch.setenv("LUNAMOTH_SEARXNG_URL", "https://searx.example")
+    monkeypatch.setenv("CHARA_SEARXNG_URL", "https://searx.example")
     assert web.check_web_api_key() is True
     assert web._resolve_search_backend() == "searxng"
 
@@ -167,7 +167,7 @@ def test_check_fn_true_when_searxng_set(monkeypatch):
 
 def test_search_searxng(monkeypatch):
     _clear_backend_env(monkeypatch)
-    monkeypatch.setenv("LUNAMOTH_SEARXNG_URL", "https://searx.example")
+    monkeypatch.setenv("CHARA_SEARXNG_URL", "https://searx.example")
     payload = {"results": [
         {"title": "T1", "url": "https://a.com", "content": "desc1"},
         {"title": "T2", "url": "https://b.com", "content": "desc2"},
@@ -188,7 +188,7 @@ def test_search_searxng(monkeypatch):
 
 def test_search_limit_clamped(monkeypatch):
     _clear_backend_env(monkeypatch)
-    monkeypatch.setenv("LUNAMOTH_SEARXNG_URL", "https://searx.example")
+    monkeypatch.setenv("CHARA_SEARXNG_URL", "https://searx.example")
     results = [{"title": f"T{i}", "url": f"https://{i}.com", "content": "d"} for i in range(50)]
     monkeypatch.setattr(web, "_http_get",
                         lambda url, headers=None, timeout=web._HTTP_TIMEOUT:
@@ -236,7 +236,7 @@ def test_search_brave(monkeypatch):
 def test_search_http_error_surfaces(monkeypatch):
     import urllib.error
     _clear_backend_env(monkeypatch)
-    monkeypatch.setenv("LUNAMOTH_SEARXNG_URL", "https://searx.example")
+    monkeypatch.setenv("CHARA_SEARXNG_URL", "https://searx.example")
 
     def boom(url, headers=None, timeout=web._HTTP_TIMEOUT):
         raise urllib.error.HTTPError(url, 503, "down", {}, None)

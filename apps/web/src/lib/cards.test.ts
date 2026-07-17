@@ -135,12 +135,12 @@ describe("serializeCardFields", () => {
     world: "office, desk — a quiet room [constant]",
   });
 
-  it("folds fields into data + lunamoth extensions and a world book", () => {
+  it("folds fields into data + chara extensions and a world book", () => {
     const data: CardData = {};
     serializeCardFields(data, baseFields(), "fallback");
     expect(data.name).toBe("Quinn");
     expect(data.description).toBe("desc");
-    const lm = data.extensions!.lunamoth!;
+    const lm = data.extensions!.chara!;
     expect(lm.user_name).toBe("Sam");
     expect(lm.user_persona).toBe("the boss");
     expect(lm.tagline).toBe("a tagline");
@@ -163,7 +163,7 @@ describe("serializeCardFields", () => {
     const data: CardData = {};
     serializeCardFields(data, fields, "fallback");
     expect(data.name).toBe("fallback");
-    expect("polaris" in data.extensions!.lunamoth!).toBe(false);
+    expect("polaris" in data.extensions!.chara!).toBe(false);
     expect("character_book" in data).toBe(false);
   });
 
@@ -280,10 +280,10 @@ describe("serializeCardFields", () => {
     fields.user_name = undefined;
     fields.user_persona = undefined;
     const data: CardData = {
-      extensions: { lunamoth: { user_name: "Keep", user_persona: "keep too" } },
+      extensions: { chara: { user_name: "Keep", user_persona: "keep too" } },
     };
     serializeCardFields(data, fields, "fallback");
-    const lm = data.extensions!.lunamoth!;
+    const lm = data.extensions!.chara!;
     expect(lm.user_name).toBe("Keep");
     expect(lm.user_persona).toBe("keep too");
   });
@@ -291,9 +291,9 @@ describe("serializeCardFields", () => {
   it("an empty-string surface-specific field DELETES it (the surface edited it to blank)", () => {
     const fields = baseFields();
     fields.user_name = ""; // the wake sheet rendered it and the user cleared it
-    const data: CardData = { extensions: { lunamoth: { user_name: "Old" } } };
+    const data: CardData = { extensions: { chara: { user_name: "Old" } } };
     serializeCardFields(data, fields, "fallback");
-    expect("user_name" in data.extensions!.lunamoth!).toBe(false);
+    expect("user_name" in data.extensions!.chara!).toBe(false);
   });
 
   it("REGRESSION (data-loss): undefined core fields PRESERVE the card, never blank it", () => {
@@ -307,7 +307,7 @@ describe("serializeCardFields", () => {
       scenario: "an office",
       first_mes: "hello!",
       character_book: { name: "Quinn", entries: [{ keys: ["desk"], content: "a quiet room" }] },
-      extensions: { lunamoth: { polaris: "ship it", tagline: "keeper of records" } },
+      extensions: { chara: { polaris: "ship it", tagline: "keeper of records" } },
     };
     // every field undefined = nothing on this surface was edited (e.g. saved from 视觉)
     serializeCardFields(data, {}, "fallback");
@@ -317,8 +317,8 @@ describe("serializeCardFields", () => {
     expect(data.scenario).toBe("an office");
     expect(data.first_mes).toBe("hello!");
     expect(data.character_book?.entries?.length).toBe(1);
-    expect(data.extensions!.lunamoth!.polaris).toBe("ship it");
-    expect(data.extensions!.lunamoth!.tagline).toBe("keeper of records");
+    expect(data.extensions!.chara!.polaris).toBe("ship it");
+    expect(data.extensions!.chara!.tagline).toBe("keeper of records");
   });
 
   it("writes data.creator_notes when provided, preserves it when undefined", () => {

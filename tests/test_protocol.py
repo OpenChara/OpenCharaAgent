@@ -1,7 +1,7 @@
 """The protocol layer: event types, channels, JSON codec round-trips."""
 import pytest
 
-from lunamoth.protocol import (
+from chara.protocol import (
     MUSE, SAY, Notice, TextDelta, ThinkDelta, ToolEnd, ToolStart,
     from_dict, from_json, to_dict, to_json,
 )

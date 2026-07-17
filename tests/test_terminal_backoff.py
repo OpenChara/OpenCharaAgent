@@ -1,6 +1,6 @@
 import pytest
 
-from lunamoth.front import terminal
+from chara.front import terminal
 
 
 class DummyHandle:

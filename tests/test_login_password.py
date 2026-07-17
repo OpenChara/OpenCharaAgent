@@ -14,8 +14,8 @@ import time
 
 import pytest
 
-from lunamoth.server import authpw as A
-from lunamoth.server import supervisor as SV
+from chara.server import authpw as A
+from chara.server import supervisor as SV
 
 
 # ---- password store: PBKDF2 round-trip, never plaintext ---------------------
@@ -99,7 +99,7 @@ def test_client_ip_trusts_xff_only_from_a_loopback_peer():
     non-loopback peer — a direct hit to the published port could spoof it to mint a
     fresh bucket per request and defeat the per-IP brute-force throttle. XFF is
     honored ONLY when the socket peer is loopback (the same-host reverse proxy)."""
-    from lunamoth.server.supervisor import WebHandler
+    from chara.server.supervisor import WebHandler
 
     class _H:
         def __init__(self, peer, xff):
@@ -241,16 +241,16 @@ def test_loopback_bind_generates_no_password(tmp_path, monkeypatch):
     path is what proves the local app stays inert."""
     import argparse
 
-    from lunamoth.front import cli as CLI
+    from chara.front import cli as CLI
 
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
-    monkeypatch.delenv("LUNAMOTH_PASSWORD", raising=False)
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("CHARA_PASSWORD", raising=False)
     # Short-circuit before actually serving: reuse-our-daemon path returns 0.
     fake = {"pid": 1, "http_port": 0, "ws_port": 0, "token": "t", "path": "x"}
     # Make serve_desktop a no-op so we only exercise the password-resolution branch.
     captured = {}
     monkeypatch.setattr(
-        "lunamoth.server.desktop.serve_desktop",
+        "chara.server.desktop.serve_desktop",
         lambda *a, **k: captured.setdefault("pw", k.get("pw_record")) or 0,
     )
     ns = argparse.Namespace(

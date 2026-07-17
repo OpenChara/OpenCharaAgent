@@ -11,14 +11,14 @@ from pathlib import Path
 
 import pytest
 
-from lunamoth.core.attachments import (
+from chara.core.attachments import (
     SHRINK_TARGET_BYTES,
     RawAttachment,
     build_user_content,
     ingest_attachments,
     shrink_data_url,
 )
-from lunamoth.tools.sandbox import Sandbox
+from chara.tools.sandbox import Sandbox
 
 
 def _wire(name, mime, data: bytes):
@@ -190,7 +190,7 @@ def test_empty_text_with_image_still_builds_list():
 # ---- context.pairs flattening + transcript round-trip ------------------------
 
 def test_context_pairs_flattens_list_content():
-    from lunamoth.core.context import ContextBuffer
+    from chara.core.context import ContextBuffer
     buf = ContextBuffer()
     buf.add_message({"role": "user", "content": [
         {"type": "text", "text": "look"},
@@ -205,7 +205,7 @@ def test_transcript_roundtrips_multimodal_message_stripping_image_bytes():
     # NOT persisted (commit 79eac31 "never persist bytes", extended to the upload
     # path): the text handle round-trips, the data: URL is stripped. A remote http
     # image URL is tiny and kept.
-    from lunamoth.core.transcript import TranscriptStore
+    from chara.core.transcript import TranscriptStore
     db = Path(tempfile.mkdtemp()) / "t.db"
     t = TranscriptStore(db)
     if not t.available:
@@ -245,8 +245,8 @@ def test_transcript_roundtrips_multimodal_message_stripping_image_bytes():
 def test_vision_supported_heuristic(model, expected):
     from dataclasses import replace
 
-    from lunamoth.config import LLMConfig
-    from lunamoth.core.llm import LLMClient
+    from chara.config import LLMConfig
+    from chara.core.llm import LLMClient
     client = LLMClient(replace(LLMConfig(), model=model, vision="auto"))
     assert client.vision_supported() is expected
 
@@ -254,8 +254,8 @@ def test_vision_supported_heuristic(model, expected):
 def test_vision_override_on_off():
     from dataclasses import replace
 
-    from lunamoth.config import LLMConfig
-    from lunamoth.core.llm import LLMClient
+    from chara.config import LLMConfig
+    from chara.core.llm import LLMClient
     off = LLMClient(replace(LLMConfig(), model="gpt-4o", vision="off"))
     on = LLMClient(replace(LLMConfig(), model="deepseek/deepseek-v4-flash", vision="on"))
     assert off.vision_supported() is False
@@ -265,7 +265,7 @@ def test_vision_override_on_off():
 # ---- WeChat media recognition ------------------------------------------------
 
 def test_wechat_text_and_voice_still_extracted():
-    from lunamoth.messaging.weixin import item_list_to_parts
+    from chara.messaging.weixin import item_list_to_parts
     items = [
         {"type": 1, "text_item": {"text": "hi"}},
         {"type": 3, "voice_item": {"text": "transcribed"}},
@@ -275,7 +275,7 @@ def test_wechat_text_and_voice_still_extracted():
 
 
 def test_wechat_image_with_url_is_attached():
-    from lunamoth.messaging.weixin import item_list_to_parts
+    from chara.messaging.weixin import item_list_to_parts
     items = [{"type": 2, "image_item": {"url": "https://x/y.jpg"}}]
     text, atts = item_list_to_parts(items)
     assert "[图片" in text and "https://x/y.jpg" in text
@@ -283,33 +283,33 @@ def test_wechat_image_with_url_is_attached():
 
 
 def test_wechat_cdn_image_without_url_is_marker_only():
-    from lunamoth.messaging.weixin import item_list_to_parts
+    from chara.messaging.weixin import item_list_to_parts
     items = [{"type": 2, "image_item": {"cdn_key": "encrypted-blob"}}]
     text, atts = item_list_to_parts(items)
     assert text == "[图片]" and atts == []  # recognized, not dropped; nothing fetchable
 
 
 def test_wechat_file_marker_carries_name_and_size():
-    from lunamoth.messaging.weixin import item_list_to_parts
+    from chara.messaging.weixin import item_list_to_parts
     items = [{"type": 6, "file_item": {"file_name": "report.pdf", "file_size": 2048}}]
     text, atts = item_list_to_parts(items)
     assert "report.pdf" in text and "2048 bytes" in text
 
 
 def test_wechat_sticker_marker():
-    from lunamoth.messaging.weixin import item_list_to_parts
+    from chara.messaging.weixin import item_list_to_parts
     text, atts = item_list_to_parts([{"type": 5, "emoji_item": {}}])
     assert text == "[表情]"
 
 
 def test_wechat_unknown_type_is_generic_marker_not_dropped():
-    from lunamoth.messaging.weixin import item_list_to_parts
+    from chara.messaging.weixin import item_list_to_parts
     text, atts = item_list_to_parts([{"type": 99, "mystery_item": {}}])
     assert text == "[媒体]"
 
 
 def test_wechat_junk_never_crashes():
-    from lunamoth.messaging.weixin import item_list_to_parts
+    from chara.messaging.weixin import item_list_to_parts
     # Not a list → empty. Non-dict items skipped. A malformed-but-present dict
     # item is recognized as generic media ([媒体]), never silently dropped.
     assert item_list_to_parts("nope") == ("", [])
@@ -324,7 +324,7 @@ def test_wechat_junk_never_crashes():
 # honest no-vision note stands. Unit-tests the agent helper in isolation.
 import types as _types
 
-from lunamoth.core.agent import LunaMothAgent
+from chara.core.agent import CharaAgent
 
 
 class _StubLLM:
@@ -344,7 +344,7 @@ def _agent_stub(sandbox, vision, describe=None):
     # _image_vision_followup delegates to _vision_followup_for_path on self; bind the
     # real core so the unbound-method-with-stub-self calls resolve.
     stub._vision_followup_for_path = (
-        lambda fp, label, question="": LunaMothAgent._vision_followup_for_path(stub, fp, label, question))
+        lambda fp, label, question="": CharaAgent._vision_followup_for_path(stub, fp, label, question))
     return stub
 
 
@@ -355,7 +355,7 @@ def _png(nbytes=64):
 def test_image_vision_followup_injects_user_image_when_vision():
     sb = _sandbox()
     rel = sb.write_bytes("look.png", _png())
-    out = LunaMothAgent._image_vision_followup(_agent_stub(sb, True), rel)
+    out = CharaAgent._image_vision_followup(_agent_stub(sb, True), rel)
     assert out is not None
     note, follow = out
     assert "attached" in note.lower()
@@ -369,7 +369,7 @@ def test_image_vision_followup_none_without_vision_or_vision_model():
     # main model can't see AND no vision_model describes it → None (honest note)
     sb = _sandbox()
     rel = sb.write_bytes("look.png", _png())
-    assert LunaMothAgent._image_vision_followup(_agent_stub(sb, False), rel) is None
+    assert CharaAgent._image_vision_followup(_agent_stub(sb, False), rel) is None
 
 
 def test_vision_followup_for_absolute_path_inlines_with_question(tmp_path):
@@ -377,7 +377,7 @@ def test_vision_followup_for_absolute_path_inlines_with_question(tmp_path):
     # inline the pixels with the question folded into the follow-up text.
     fp = tmp_path / "shot.png"
     fp.write_bytes(_png())
-    out = LunaMothAgent._vision_followup_for_path(
+    out = CharaAgent._vision_followup_for_path(
         _agent_stub(None, True), fp, "shot.png", "what is on screen?")
     assert out is not None
     note, follow = out
@@ -391,7 +391,7 @@ def test_image_vision_followup_describes_via_vision_model_without_vision():
     # as the note, with NO pixels inlined (follow is None).
     sb = _sandbox()
     rel = sb.write_bytes("look.png", _png())
-    out = LunaMothAgent._image_vision_followup(
+    out = CharaAgent._image_vision_followup(
         _agent_stub(sb, False, describe="a small red square on white"), rel)
     assert out is not None
     note, follow = out
@@ -406,7 +406,7 @@ def test_image_vision_followup_inlines_oversized_full_size():
     sb = _sandbox()
     big = _png(SHRINK_TARGET_BYTES + 1)
     rel = sb.write_bytes("big.png", big)
-    out = LunaMothAgent._image_vision_followup(_agent_stub(sb, True), rel)
+    out = CharaAgent._image_vision_followup(_agent_stub(sb, True), rel)
     assert out is not None
     _note, follow = out
     url = follow["content"][-1]["image_url"]["url"]
@@ -416,7 +416,7 @@ def test_image_vision_followup_inlines_oversized_full_size():
 def test_image_vision_followup_none_for_nonimage():
     sb = _sandbox()
     rel = sb.write_bytes("notes.txt", b"hello, not an image")
-    assert LunaMothAgent._image_vision_followup(_agent_stub(sb, True), rel) is None
+    assert CharaAgent._image_vision_followup(_agent_stub(sb, True), rel) is None
 
 
 def test_read_file_image_vision_followup(tmp_path, monkeypatch):
@@ -424,11 +424,11 @@ def test_read_file_image_vision_followup(tmp_path, monkeypatch):
     model has vision; without vision (or for non-images) it returns None so the
     honest 'can't see it' note stands. (R2 — on-disk image vision.)"""
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sandbox"))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    from lunamoth.session.settings import Settings
-    from lunamoth.core.agent import LunaMothAgent
-    a = LunaMothAgent(Settings(character_path="", toolpack="sandbox"))
+    monkeypatch.setenv("CHARA_SANDBOX", str(tmp_path / "sandbox"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    from chara.session.settings import Settings
+    from chara.core.agent import CharaAgent
+    a = CharaAgent(Settings(character_path="", toolpack="sandbox"))
     ws = a.sandbox.workspace_dir
     ws.mkdir(parents=True, exist_ok=True)
     (ws / "pic.png").write_bytes(bytes.fromhex("89504e470d0a1a0a") + b"\x00" * 64)
@@ -455,11 +455,11 @@ def test_execute_tool_browser_vision_native_inlines(tmp_path, monkeypatch):
     inlines the screenshot pixels on a follow-up user message + keeps the MEDIA path."""
     import json as _json
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sandbox"))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    from lunamoth.session.settings import Settings
-    from lunamoth.core.agent import LunaMothAgent
-    a = LunaMothAgent(Settings(character_path="", toolpack="sandbox"))
+    monkeypatch.setenv("CHARA_SANDBOX", str(tmp_path / "sandbox"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    from chara.session.settings import Settings
+    from chara.core.agent import CharaAgent
+    a = CharaAgent(Settings(character_path="", toolpack="sandbox"))
     monkeypatch.setattr(a.llm, "vision_supported", lambda: True)
     shot = tmp_path / "shot.png"
     shot.write_bytes(b"\x89PNG\r\n\x1a\n" + b"x" * 64)
@@ -478,8 +478,8 @@ def test_execute_tool_browser_vision_native_inlines(tmp_path, monkeypatch):
 
 # ---- strip_old_images: keep newest image's pixels, collapse older to text ----
 def test_strip_old_images_keeps_only_the_newest():
-    from lunamoth.core.context import ContextBuffer
-    from lunamoth.core import compaction
+    from chara.core.context import ContextBuffer
+    from chara.core import compaction
 
     def img(ref):
         return {"role": "user", "content": [
@@ -499,8 +499,8 @@ def test_strip_old_images_keeps_only_the_newest():
 
 
 def test_strip_old_images_noop_without_images():
-    from lunamoth.core.context import ContextBuffer
-    from lunamoth.core import compaction
+    from chara.core.context import ContextBuffer
+    from chara.core import compaction
     ctx = ContextBuffer()
     ctx.messages = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}]
     assert compaction.strip_old_images(ctx) is False
@@ -509,7 +509,7 @@ def test_strip_old_images_noop_without_images():
 def test_summarizer_does_not_leak_image_base64():
     """A surviving image in the summarized HEAD must collapse to its text handle,
     never dump ~2MB of base64 into the text summarizer prompt (audit HIGH)."""
-    from lunamoth.core import compaction
+    from chara.core import compaction
     msgs = [
         {"role": "user", "content": "hello"},
         {"role": "user", "content": [
@@ -523,7 +523,7 @@ def test_summarizer_does_not_leak_image_base64():
 
 
 def test_msg_text_flattens_image_content_not_base64():
-    from lunamoth.core.context import _msg_text
+    from chara.core.context import _msg_text
     m = {"role": "user", "content": [
         {"type": "text", "text": "[image: p.png]"},
         {"type": "image_url", "image_url": {"url": "data:image/png;base64," + "A" * 5000}}]}

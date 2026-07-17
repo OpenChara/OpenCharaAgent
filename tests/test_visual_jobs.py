@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from lunamoth.visuals import jobs
+from chara.visuals import jobs
 
 
 def _await(job_id: str, tries: int = 200) -> dict:

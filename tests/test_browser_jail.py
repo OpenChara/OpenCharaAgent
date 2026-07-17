@@ -3,13 +3,13 @@
 A real Chromium needs more latitude than the deny-default shell profile, so the
 browser path uses an inverted jail: permissive by default, but with writes
 confined to the workspace (+ the temp dirs the browser scratches in) and the
-secret home (~/.lunamoth) unreadable. Validated end-to-end on macOS 2026-06-19
+secret home (~/.chara) unreadable. Validated end-to-end on macOS 2026-06-19
 (agent-browser + system Chrome under sandbox-exec). These unit tests exercise the
 argv/profile BUILDERS directly, so they run on any platform without a real jail.
 """
 from __future__ import annotations
 
-from lunamoth.session import isolation
+from chara.session import isolation
 
 
 # ---- macOS Seatbelt profile -------------------------------------------------
@@ -21,7 +21,7 @@ def test_macos_browser_profile_confines_writes_and_hides_secret(tmp_path):
     # Inverted: allow-by-default so Chromium gets iokit/posix-shm/mach latitude.
     assert "(allow default)" in prof
     # ...but the secret home is unreadable and the workspace re-allowed over it.
-    assert f'(deny file-read* (subpath "{isolation._lunamoth_home()}"))' in prof
+    assert f'(deny file-read* (subpath "{isolation._chara_home()}"))' in prof
     assert f'(allow file-read* (subpath "{ws}"))' in prof
     # ...and writes are confined: deny-all then re-allow workspace + the temp
     # dirs Chrome's user-data-dir / ProcessSingleton socket / agent-browser
@@ -40,7 +40,7 @@ def test_macos_browser_profile_allows_metadata_traversal_not_data(tmp_path):
     wins in Seatbelt), and read-data is NEVER re-allowed on the home."""
     ws = tmp_path / "workspace"
     ws.mkdir()
-    home = isolation._lunamoth_home()
+    home = isolation._chara_home()
     prof = isolation._macos_profile(ws, True, [], browser=True)
     assert f'(allow file-read-metadata (subpath "{home}"))' in prof
     # deny-data precedes allow-metadata (the broad deny is not overridden for data).
@@ -77,7 +77,7 @@ def test_linux_browser_jail_preserves_daemon_and_hides_secret(tmp_path):
     assert "--ro-bind" in argv
     # Secret home hidden by an empty tmpfs, workspace re-bound rw over it.
     assert "--tmpfs" in argv
-    assert str(isolation._lunamoth_home()) in argv
+    assert str(isolation._chara_home()) in argv
     assert str(ws) in argv
 
 
@@ -159,8 +159,8 @@ def test_macos_browser_profile_denies_secret_contents_behaviorally(tmp_path, mon
     if sys.platform != "darwin" or shutil.which("sandbox-exec") is None:
         pytest.skip("needs macOS sandbox-exec")
 
-    # conftest points LUNAMOTH_HOME at a tmp dir; plant a fake secret there.
-    home = isolation._lunamoth_home()
+    # conftest points CHARA_HOME at a tmp dir; plant a fake secret there.
+    home = isolation._chara_home()
     home.mkdir(parents=True, exist_ok=True)
     secret = home / "auth.json"
     secret.write_text("SECRET-SHOULD-NOT-LEAK", encoding="utf-8")

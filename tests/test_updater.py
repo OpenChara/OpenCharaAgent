@@ -1,7 +1,7 @@
-"""The shared self-update core (lunamoth/updater.py).
+"""The shared self-update core (chara/updater.py).
 
 The headline regression: a wheel install is URL-PINNED (install.sh:
-`uv tool install "lunamoth @ <wheel-url>"`), so `uv tool upgrade` is a no-op —
+`uv tool install "chara @ <wheel-url>"`), so `uv tool upgrade` is a no-op —
 the update must REINSTALL from the latest release wheel URL. These pin that, plus
 the uv-not-found and no-release error paths, and wheel-URL extraction.
 """
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from lunamoth import updater
+from chara import updater
 
 
 def _completed(cmd, code=0, out="", err=""):
@@ -27,7 +27,7 @@ def test_apply_wheel_reinstalls_from_latest_url_never_upgrade(monkeypatch):
     monkeypatch.setattr(updater, "is_dev", lambda: False)
     monkeypatch.setattr(updater, "find_uv", lambda: "/fake/uv")
     monkeypatch.setattr(updater, "_latest_wheel_assets",
-                        lambda: ("https://x/lunamoth-0.9.0-py3-none-any.whl", None))
+                        lambda: ("https://x/chara-0.9.0-py3-none-any.whl", None))
     seen = {}
 
     def fake_run(cmd, **kw):
@@ -39,7 +39,7 @@ def test_apply_wheel_reinstalls_from_latest_url_never_upgrade(monkeypatch):
     assert res["ok"] and res["restart_required"]
     # reinstall from the latest URL — NOT `uv tool upgrade` (the no-op that never worked)
     assert seen["cmd"] == ["/fake/uv", "tool", "install", "--force",
-                           "lunamoth[server,messaging] @ https://x/lunamoth-0.9.0-py3-none-any.whl"]
+                           "opencharaagent[server,messaging] @ https://x/chara-0.9.0-py3-none-any.whl"]
     assert "upgrade" not in seen["cmd"]
     assert "NOT verified" in res["output"]  # no manifest → say so plainly
 
@@ -50,11 +50,11 @@ def test_apply_wheel_verifies_checksum_and_installs_the_local_file(monkeypatch):
     monkeypatch.setattr(updater, "is_dev", lambda: False)
     monkeypatch.setattr(updater, "find_uv", lambda: "/fake/uv")
     monkeypatch.setattr(updater, "_latest_wheel_assets",
-                        lambda: ("https://x/lunamoth-1.0.0-py3-none-any.whl",
+                        lambda: ("https://x/chara-1.0.0-py3-none-any.whl",
                                  "https://x/SHA256SUMS"))
     blob = b"wheel-bytes"
     digest = hashlib.sha256(blob).hexdigest()
-    sums = f"{digest}  lunamoth-1.0.0-py3-none-any.whl\n".encode()
+    sums = f"{digest}  chara-1.0.0-py3-none-any.whl\n".encode()
     monkeypatch.setattr(updater, "_http_get",
                         lambda url, timeout=0: blob if url.endswith(".whl") else sums)
     seen = {}
@@ -82,11 +82,11 @@ def test_apply_shares_one_wall_budget_across_download_and_install(monkeypatch):
     monkeypatch.setattr(updater, "is_dev", lambda: False)
     monkeypatch.setattr(updater, "find_uv", lambda: "/fake/uv")
     monkeypatch.setattr(updater, "_latest_wheel_assets",
-                        lambda: ("https://x/lunamoth-1.0.0-py3-none-any.whl",
+                        lambda: ("https://x/chara-1.0.0-py3-none-any.whl",
                                  "https://x/SHA256SUMS"))
     blob = b"wheel-bytes"
     digest = hashlib.sha256(blob).hexdigest()
-    sums = f"{digest}  lunamoth-1.0.0-py3-none-any.whl\n".encode()
+    sums = f"{digest}  chara-1.0.0-py3-none-any.whl\n".encode()
 
     clock = {"t": 1000.0}
 
@@ -126,9 +126,9 @@ def test_apply_wheel_checksum_mismatch_never_installs(monkeypatch):
     monkeypatch.setattr(updater, "is_dev", lambda: False)
     monkeypatch.setattr(updater, "find_uv", lambda: "/fake/uv")
     monkeypatch.setattr(updater, "_latest_wheel_assets",
-                        lambda: ("https://x/lunamoth-1.0.0-py3-none-any.whl",
+                        lambda: ("https://x/chara-1.0.0-py3-none-any.whl",
                                  "https://x/SHA256SUMS"))
-    sums = ("0" * 64 + "  lunamoth-1.0.0-py3-none-any.whl\n").encode()
+    sums = ("0" * 64 + "  chara-1.0.0-py3-none-any.whl\n").encode()
     monkeypatch.setattr(updater, "_http_get",
                         lambda url, timeout=0: b"tampered" if url.endswith(".whl") else sums)
     calls = []
@@ -145,11 +145,11 @@ def test_download_verified_wheel_picks_the_hash_by_basename(monkeypatch):
     blob = b"the-wheel"
     digest = hashlib.sha256(blob).hexdigest()
     manifest = ("1" * 64 + "  other-2.0.0-py3-none-any.whl\n"
-                + digest + "  lunamoth-1.0.0-py3-none-any.whl\n").encode()
+                + digest + "  chara-1.0.0-py3-none-any.whl\n").encode()
     monkeypatch.setattr(updater, "_http_get",
                         lambda url, timeout=0: blob if url.endswith(".whl") else manifest)
     path, sha = updater.download_verified_wheel(
-        "https://x/lunamoth-1.0.0-py3-none-any.whl", "https://x/SHA256SUMS")
+        "https://x/chara-1.0.0-py3-none-any.whl", "https://x/SHA256SUMS")
     try:
         assert sha == digest and path.read_bytes() == blob
     finally:
@@ -226,7 +226,7 @@ def test_fetch_releases_extracts_the_wheel_asset_url(monkeypatch):
         "html_url": "https://h", "draft": False, "prerelease": False,
         "assets": [
             {"name": "SHA256SUMS", "browser_download_url": "https://x/SHA256SUMS"},
-            {"name": "lunamoth-0.9.0-py3-none-any.whl", "browser_download_url": "https://x/w.whl"},
+            {"name": "chara-0.9.0-py3-none-any.whl", "browser_download_url": "https://x/w.whl"},
         ],
     }]).encode()
 
@@ -259,9 +259,9 @@ def test_latest_wheel_url_uses_newest_release_only(monkeypatch):
 def test_find_uv_falls_back_to_known_location(tmp_path, monkeypatch):
     import shutil as _sh
 
-    from lunamoth.config import find_uv
+    from chara.config import find_uv
     monkeypatch.setattr(_sh, "which", lambda n: None)  # not on PATH (the GUI-launch case)
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path))
     (tmp_path / "bin").mkdir(parents=True)
     uv = tmp_path / "bin" / "uv"
     uv.write_text("#!/bin/sh\n")

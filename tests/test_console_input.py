@@ -15,9 +15,9 @@ import pytest
 @pytest.fixture
 def tui_env(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sandbox"))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    from lunamoth.session.settings import config_path
+    monkeypatch.setenv("CHARA_SANDBOX", str(tmp_path / "sandbox"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    from chara.session.settings import config_path
 
     config_path().parent.mkdir(parents=True, exist_ok=True)
     config_path().write_text(json.dumps({"provider": "mock"}))
@@ -25,10 +25,10 @@ def tui_env(tmp_path, monkeypatch):
 
 
 def test_cursor_lands_on_insertion_cell(tui_env):
-    from lunamoth.front.tui import LunaMothTUI
+    from chara.front.tui import OpenCharaAgentTUI
 
     async def scenario():
-        app = LunaMothTUI(patience=999, mode_override="chat")
+        app = OpenCharaAgentTUI(patience=999, mode_override="chat")
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
             inp = app.input
@@ -62,10 +62,10 @@ def test_cursor_lands_on_insertion_cell(tui_env):
 def test_console_input_has_no_placeholder(tui_env):
     # The cursor cell is styled as plain text, so any placeholder's first
     # character renders bright — a typed-looking glyph you can't delete.
-    from lunamoth.front.tui import LunaMothTUI
+    from chara.front.tui import OpenCharaAgentTUI
 
     async def scenario():
-        app = LunaMothTUI(patience=999, mode_override="chat")
+        app = OpenCharaAgentTUI(patience=999, mode_override="chat")
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
             assert app.input.placeholder == ""

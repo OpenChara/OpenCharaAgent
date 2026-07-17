@@ -1,8 +1,8 @@
-# LunaMoth — project memory for Claude Code
+# OpenCharaAgent — project memory for Claude Code
 
 ## What this is, and who it serves (the product philosophy — read first)
 
-LunaMoth is a runtime that lets an original character (an OC, a **chara**)
+OpenCharaAgent is a runtime that lets an original character (an OC, a **chara**)
 **live in a computer**: a persistent digital being with its own sandbox, memory,
 goals, pace of life, and real agency (shell, files, tools) behind an
 allowlisted, audited gateway. Three audiences, in priority order:
@@ -99,13 +99,13 @@ flagship example, Mars, Quinn 小Q, Vale, Vesper, Yan); only Quinn carries the
 
 - **The card is the soul — and the ONE external file.** Identity, voice, world
   (embedded `character_book`), rules hooks, the seed Polaris
-  (`extensions.lunamoth.polaris` — the user-owned north-star; the old
+  (`extensions.chara.polaris` — the user-owned north-star; the old
   chara-mutable `wishes`/`goals` lists are gone, no migration)
   all live in the card. The
   engine injects no identity and ships ZERO default flavor text: a card that
   doesn't declare a prompt gets silence, not a default.
 - **No specific character anywhere in src/** — not in code, comments, or
-  defaults. Frontend branding ("LunaMoth" the product) is allowed.
+  defaults. Frontend branding ("OpenCharaAgent" the product) is allowed.
 - **No failure fallbacks, ever.** No fallback model, no fabricated output.
   Failed request = visible error (retry 5s×5 for transient connect errors,
   then surface). Best-effort no-ops exist only where a backstop exists
@@ -145,22 +145,22 @@ flagship example, Mars, Quinn 小Q, Vale, Vesper, Yan); only Quinn carries the
 
 ```bash
 uv sync --extra dev --extra server   # plain `uv sync` REMOVES pytest — always use extras
-uv run lunamoth            # bare = opens the webui desktop (web/desktop hub); the editable CLI reflects the working tree
-uv run lunamoth tui        # the terminal roster (resume-first launcher); --plain = legacy plain terminal (native cursor + IME; good for CJK)
-uv run lunamoth desktop    # explicit web/desktop hub; --daemon = resident lunamothd (stop/status: `lunamoth daemon`)
-uv run lunamoth serve NAME --stdio   # one chara over JSON-RPC (wire format)
-uv run lunamoth run NAME -p "hi" [--stream-json]   # headless one-shot
+uv run chara            # bare = opens the webui desktop (web/desktop hub); the editable CLI reflects the working tree
+uv run chara tui        # the terminal roster (resume-first launcher); --plain = legacy plain terminal (native cursor + IME; good for CJK)
+uv run chara desktop    # explicit web/desktop hub; --daemon = resident charad (stop/status: `chara daemon`)
+uv run chara serve NAME --stdio   # one chara over JSON-RPC (wire format)
+uv run chara run NAME -p "hi" [--stream-json]   # headless one-shot
 uv run python -m pytest -q # tests live in tests/, confined via pyproject testpaths
-uvx ruff check --select F src/lunamoth tests   # lint (unused imports, undefined names)
+uvx ruff check --select F src/chara tests   # lint (unused imports, undefined names)
 ```
 
 - Install is CHANNEL-AWARE (`install.sh`, `curl | bash`, macOS/Linux only, uv-based):
   default `user` channel = the release WHEEL via `uv tool install` (the wheel bundles
   the built webui + cards + toolpacks — `scripts/build-wheel.sh` self-asserts this);
-  `--dev` channel = the git checkout at `~/.lunamoth/app`. `src/lunamoth/updater.py`
+  `--dev` channel = the git checkout at `~/.chara/app`. `src/chara/updater.py`
   (flat module) is the ONE self-update implementation (GitHub-Releases-driven; wheel =
   reinstall from the latest release URL since `uv tool upgrade` no-ops on URL pins),
-  shared by CLI `lunamoth update` and the `update.status/apply/restart` RPCs
+  shared by CLI `chara update` and the `update.status/apply/restart` RPCs
   (`server/hub/updates.py`; after apply the instance relaunches into the new code).
 - Extras: `--extra server` (hub/ws), `--extra messaging` (IM adapters — install.sh
   syncs both), `--extra visuals` (rembg/onnxruntime matte stack), `--extra dev`.
@@ -193,7 +193,7 @@ uvx ruff check --select F src/lunamoth tests   # lint (unused imports, undefined
   this file, the code, and git history. Work logs belong in git history and
   agent memory, never in docs.
 
-## Module map (src/lunamoth/ — domain subpackages)
+## Module map (src/chara/ — domain subpackages)
 
 Dependency direction is ENFORCED by `tests/test_architecture.py`: nothing
 outside `front/` imports `front/` or textual/rich; `front/` reaches the backend
@@ -201,15 +201,15 @@ only through `protocol/` (CharaHandle); `protocol/events.py`+`codec.py` have
 zero internal deps; `obs/` imports only `config`.
 
 - `config.py` — root constants (ROOT, SANDBOX_ROOT, LLMConfig) + `openrouter_attribution_headers()`
-  (the `HTTP-Referer`=lunamoth.ai + `X-Title`=LunaMoth app-attribution headers sent on every
+  (the `HTTP-Referer`=lunamoth.ai + `X-Title`=OpenCharaAgent app-attribution headers sent on every
   OpenRouter request — chat/llm.py, hub/models.py and image/_image_gen.py all use it; env-overridable).
   `updater.py` is the other deliberately-flat module (self-update; see Run/dev above).
 - `core/` — the agent backend:
-  - `agent.py` — `LunaMothAgent`: three-zone prompt assembly (`_stable_prefix`
+  - `agent.py` — `CharaAgent`: three-zone prompt assembly (`_stable_prefix`
     cached per session / `_volatile_tail` per turn), streaming loop, tool exec,
     time sense (timestamp idle ticks — the tick text itself says no one is
     present, don't greet — and gap notes), card task seeding
-    (`extensions.lunamoth.task` → one starter task), `stream_react` (drains a
+    (`extensions.chara.task` → one starter task), `stream_react` (drains a
     pending background-job notice as a synthetic user turn — the react wake).
   - `llm.py` — OpenAI-compatible streaming client + tool-calling loop. **Yields
     protocol events** (TextDelta say|muse /ThinkDelta/ToolStart/ToolEnd/Notice),
@@ -248,7 +248,7 @@ zero internal deps; `obs/` imports only `config`.
     snapshot (`EnvState.permissions()`) every tool runner reads via
     `ctx.permissions()` so fg/bg/PTY can't resolve env facts differently.
     ISOLATION is NOT stored in env_status (2026-06-21): session.json's `isolation`
-    field is the ONE authority — `SessionMeta.env()` derives `LUNAMOTH_PY_BACKEND`
+    field is the ONE authority — `SessionMeta.env()` derives `CHARA_PY_BACKEND`
     from it at launch, and config.json holds NO derived py_backend copy (dropped
     2026-06-26); `permissions().isolation` + the snapshot + the prompt tail all read
     the env. A stale env_status copy used to silently sandbox an `admin` chara; the
@@ -266,7 +266,7 @@ zero internal deps; `obs/` imports only `config`.
     protocol event: each delivery edge extracts MEDIA lines itself — this module
     for Python surfaces, its TS mirror `apps/web/src/lib/media.ts` for the SPA,
     and `messaging/media.py` for gateway upload (honest-note fallback).
-- `messaging/` — external chat gateways: personal WeChat (iLink/ClawBot — the WeChatPadPro adapter was DROPPED 2026-06-17, iLink is the one WeChat path), QQ OneBot, Telegram, and native Discord + Slack (2026-06-25: `discord.py` = raw Gateway WS, no discord.py dep; `slack.py` = Socket Mode WS + Web API) adapters behind the sync `Adapter` seam; `media.py` = outbound MEDIA upload per platform (honest-note fallback, `DeliveryDeferred`). A gateway is NOT a separate agent: the adapters run INSIDE the chara's `serve --stdio` child via `server/messaging_host.py` (`MessagingHost` + `dispatch.run_stream_sync`), sharing its ONE handle — a WeChat turn streams into the desktop window live AND replies to WeChat. The host has no idle loop (the supervisor owns self-work). `MessagingGateway` (own handle + idle) remains the standalone `lunamoth gateway NAME` path for headless use/tests. Per-chara toggle = `messaging.start/stop` RPC to the child (`GatewayChild` is now a thin controller, not a process). Shared seams: `access.py` (the allow-list + refusal throttle — ONE copy gating BOTH the standalone gateway and the in-child host, so "empty allow-list = open" can't drift between them), `text.py` (`split_text`, sentence-aware splitting for platform length caps), and `filters.py` (`is_silence_narration` — the outbound silence-token drop both send paths apply).
+- `messaging/` — external chat gateways: personal WeChat (iLink/ClawBot — the WeChatPadPro adapter was DROPPED 2026-06-17, iLink is the one WeChat path), QQ OneBot, Telegram, and native Discord + Slack (2026-06-25: `discord.py` = raw Gateway WS, no discord.py dep; `slack.py` = Socket Mode WS + Web API) adapters behind the sync `Adapter` seam; `media.py` = outbound MEDIA upload per platform (honest-note fallback, `DeliveryDeferred`). A gateway is NOT a separate agent: the adapters run INSIDE the chara's `serve --stdio` child via `server/messaging_host.py` (`MessagingHost` + `dispatch.run_stream_sync`), sharing its ONE handle — a WeChat turn streams into the desktop window live AND replies to WeChat. The host has no idle loop (the supervisor owns self-work). `MessagingGateway` (own handle + idle) remains the standalone `chara gateway NAME` path for headless use/tests. Per-chara toggle = `messaging.start/stop` RPC to the child (`GatewayChild` is now a thin controller, not a process). Shared seams: `access.py` (the allow-list + refusal throttle — ONE copy gating BOTH the standalone gateway and the in-child host, so "empty allow-list = open" can't drift between them), `text.py` (`split_text`, sentence-aware splitting for platform length caps), and `filters.py` (`is_silence_narration` — the outbound silence-token drop both send paths apply).
 - `content/` — SillyTavern compat, pure data: `cards.py` (V2/V3 PNG/JSON; PHI
   exposed for the post-history slot, never folded into the persona;
   `merge_world_into_card` = the world-book IMPORT path), `worldinfo.py`
@@ -288,7 +288,7 @@ zero internal deps; `obs/` imports only `config`.
   - `context.py` — `ToolContext`: the runtime touchpoints a handler reaches
     (sandbox/workspace, state, run_terminal, llm, transcript, memory, polaris,
     skills, mcp, permission_hook, clarify_hook, dispatch, + ephemeral per-session
-    todo/processes/browser). hermes' per-task env → LunaMoth's one-per-chara ctx.
+    todo/processes/browser). hermes' per-task env → OpenCharaAgent's one-per-chara ctx.
   - `gateway.py` — `ToolGateway` is now a THIN shim over the registry: the SECURITY
     audit trail, the #24 loop guardrails (warn@2/refuse@5/streak-block@8), the
     gate, MCP dispatch, and the `{ok,data}` result the agent loop consumes. The
@@ -306,7 +306,7 @@ zero internal deps; `obs/` imports only `config`.
     the process registry), `memory.py`, `skills.py` (skills_list/skill_view/
     skill_manage), `todo.py`, `session_search.py`, `execute_code.py`,
     `delegate_task.py`, `browser.py` (12 browser_*, check_fn-gated on the
-    agent-browser driver). LunaMoth's OWN chara-life tools: `chara_life.py` —
+    agent-browser driver). OpenCharaAgent's OWN chara-life tools: `chara_life.py` —
     speak, rest — and `task.py` (the `task` tool). THE THREE-LAYER GOAL MODEL
     (settled 2026-06-30): **aspiration** (codename `polaris`, `tools/polaris.py`
     store + `polaris.json` — USER-owned, read-only to the chara, never
@@ -314,12 +314,12 @@ zero internal deps; `obs/` imports only `config`.
     **task** (`tools/task.py` TaskStore + `task.json` — the chara's OWN
     persistent life-threads advanced toward its aspiration: chara-editable and
     chara-completable, max 12 active / 280 chars each, completing SEALS a task
-    immutable; seeded once from card `extensions.lunamoth.task`; rendered into
+    immutable; seeded once from card `extensions.chara.task`; rendered into
     the volatile tail after the aspiration block) → **todo** (ephemeral,
     in-session only). The old chara-mutable `wish`/goal tool stays gone
     (removed 2026-06-21). CODENAME vs DISPLAY: code keeps the stable codename
     `polaris` everywhere — the store, `polaris.json`, the card field
-    `extensions.lunamoth.polaris`, the data key — but the USER-FACING term is
+    `extensions.chara.polaris`, the data key — but the USER-FACING term is
     理想 / "Aspiration" (2026-06-22); all model/UI text says aspiration, never the
     codename. `media.py` (builtin) = the `generate_image` tool (check_fn-gated on
     an image key; non-blocking background job → completion notice → react wake).
@@ -354,7 +354,7 @@ zero internal deps; `obs/` imports only `config`.
     `_atomic.py` = the shared atomic-write helper), `toolpacks.py`.
     Network is ON by default (`/net off` to disable). Browser tools need the
     installed driver (agent-browser CLI + Chromium; check_fn-gated; a deploy
-    requirement now — install.sh / Dockerfile / `lunamoth setup browser`) and run
+    requirement now — install.sh / Dockerfile / `chara setup browser`) and run
     UNDER `sandbox` isolation on ALL THREE platforms — `build_jail_command(browser=True)`
     is a Chromium-capable jail (writes confined to workspace+temp, secret home
     unreadable, `--no-sandbox` auto-injected). VALIDATED end-to-end 2026-06-19 with
@@ -362,7 +362,7 @@ zero internal deps; `obs/` imports only `config`.
     Linux/Docker (Landlock — needs `--rw /proc` for Chrome's renderer + a crashpad
     `--database` shim, `_browser_driver.ensure_crashpad_db_fix`). Details + the
     per-platform jail recipes in docs/OPEN-WORK.md. `admin` isolation also works.
-- `obs/` — diagnostics (leaf infra): `log.py` (rotating sandbox/logs/lunamoth.log
+- `obs/` — diagnostics (leaf infra): `log.py` (rotating sandbox/logs/chara.log
   + errors.log, credential redaction, session tag, `--debug`), `broker.py`
   (in-memory ring → `/panel log`), `audit.py` (the SECURITY trail — separate
   from diagnostics; never merge them). transcript/audit/logs = three records,
@@ -401,9 +401,9 @@ zero internal deps; `obs/` imports only `config`.
   image is deferred (no OpenAI-compat images endpoint — needs the native TC3 API).
   The same backend serves both the chara's `generate_image` tool and the visuals
   pipeline.
-- `session/` — `sessions.py` (named charas under ~/.lunamoth/sessions/<name>/;
+- `session/` — `sessions.py` (named charas under ~/.chara/sessions/<name>/;
   `SessionMeta.env()` is the COMPLETE activation interface — it emits
-  `LUNAMOTH_PY_BACKEND` itself via the ONE `isolation_to_backend` map, so callers
+  `CHARA_PY_BACKEND` itself via the ONE `isolation_to_backend` map, so callers
   never re-derive the jail), `settings.py`, `cleanup.py`,
   `isolation.py` (stdlib-only OS jail builders — shared by tools/runner and the
   supervisor's PTY shell; `interactive_shell_argv` never degrades to dir trust),
@@ -420,10 +420,10 @@ zero internal deps; `obs/` imports only `config`.
   core/tools directly): `dispatch.py` (per-session JSON-RPC over CharaHandle; incl.
   the `react` RPC — the background-job wake, low-priority like `idle`: a real send
   supersedes it, it never supersedes a real turn), `stdio.py`/`ws.py` (transports
-  for `lunamoth serve <name>`), `netsec.py` (Host/Origin allowlist, the `lm_auth`
+  for `chara serve <name>`), `netsec.py` (Host/Origin allowlist, the `lm_auth`
   cookie minted by the `?token=` handshake, loopback classification — AstrBot-shaped),
   `authpw.py` (optional PBKDF2 password login for public binds, per-IP rate limit),
-  `sshconnect.py` (`lunamoth connect ssh://[user@]host` — reads the remote daemon
+  `sshconnect.py` (`chara connect ssh://[user@]host` — reads the remote daemon
   token/ports, opens an `ssh -L` tunnel), `hub/` — a PACKAGE
   since 2026-06-20 (split from the old 2844-line `hub.py` god-module): `config.py`
   (defaults/keys — the KEYRING is the ONLY api_key store since 2026-06-26: `keys`
@@ -461,7 +461,7 @@ zero internal deps; `obs/` imports only `config`.
   `core.py` Supervisor + WS/PTY routing, `http.py` WebHandler + start_http +
   serve_home/asset, `children.py` CharaChild/GatewayChild, `lifestate.py` the
   policy classes, `observability.py` shutdown forensics, `daemon.py`, `paths.py`;
-  `from ..server import supervisor` unchanged) (lunamothd: long-lived `serve
+  `from ..server import supervisor` unchanged) (charad: long-lived `serve
   --stdio` child registry; the messaging host now runs INSIDE that child sharing
   its agent, so `GatewayChild` just toggles it over RPC — no separate gateway
   process; seq/rejoin, life.state,
@@ -470,10 +470,10 @@ zero internal deps; `obs/` imports only `config`.
   chara's jail behind a pty, streamed as binary WS frames), `desktop.py` (thin
   foreground/daemon entry for static HTTP + WS routing).
 - `front/` — ALL frontends; the only textual/rich importers:
-  - `cli.py` — the `lunamoth` command (bare = webui desktop; `tui` = the terminal
+  - `cli.py` — the `chara` command (bare = webui desktop; `tui` = the terminal
     roster; new/ls/attach/start/start-all/stop/rm/setup/update/doctor/run/serve/
     gateway/desktop/daemon/connect/version; `start` delegates to a live
-    lunamothd; `connect ssh://…` = the remote tunnel).
+    charad; `connect ssh://…` = the remote tunnel).
   - `tui/` — FROZEN (owner decision 2026-06-12: crash fixes only, no new
     features; web(=Electron) is the product face, terminal.py stays as the
     daemon driver). The split TUI (app.py + welcome.py): character stream /
@@ -486,7 +486,7 @@ zero internal deps; `obs/` imports only `config`.
     as bare Esc and quit the launcher).
   - `wizard.py` — plain-terminal first-run setup. `art.py` — the blue wordmark.
   - `webui/` — the BUILT desktop renderer (gitignored; emitted by `apps/web`'s
-    Vite build, bundled into the wheel via package-data, served by `lunamoth
+    Vite build, bundled into the wheel via package-data, served by `chara
     desktop` and loaded by the Electron shell at `apps/desktop/` — a THIN shell,
     `electron/main.cjs`, no SPA-side Electron APIs). The SOURCE is the React+TS SPA
     at repo-root `apps/web/` (NOT under src/): `src/rpc.ts`+`protocol.ts` (the ported
@@ -509,7 +509,7 @@ zero internal deps; `obs/` imports only `config`.
     self-host); the image key rides the same keyring, no separate row). Card
     import = the create flow (`CreateFlow.tsx` → `cards.import_foreign`) + the
     Market view. Dev: `cd apps/web && npm run dev` (proxies /rpc+ws to a
-    running `lunamoth desktop`); build: `npm run build` → `front/webui/`. Hash
+    running `chara desktop`); build: `npm run build` → `front/webui/`. Hash
     routing (no server SPA-fallback needed). The gateway deck surfaces all FIVE
     platforms (weixin/qq/telegram/discord/slack — one row per chara×platform,
     independent switches). UI chrome bilingual zh/en + light/dark; a
@@ -546,12 +546,12 @@ Every API request is assembled as **three zones**:
    the window), the read-only aspiration block, the active-task block (the chara's
    own life-threads), then exactly one **post-history slot**
    as the final message: card `post_history_instructions` >
-   card `extensions.lunamoth.rules_closer` > bundled rules closer (the latter
+   card `extensions.chara.rules_closer` > bundled rules closer (the latter
    two only when tools are enabled).
 
-Card override hooks: `extensions.lunamoth.{rules,practice,tool_use,rules_closer,
+Card override hooks: `extensions.chara.{rules,practice,tool_use,rules_closer,
 force_roleplay,embodiment_bridge,polaris,task,website,website_prompt,patience}`;
-global `~/.lunamoth/rules.md` overrides `rules`. (The `on_attach`/`on_detach` hooks were
+global `~/.chara/rules.md` overrides `rules`. (The `on_attach`/`on_detach` hooks were
 REMOVED 2026-06-18 along with the rest of presence — there is no enter/leave
 marker to override.) (The old `world` path pointer is retired — it
 violated one-file; the embedded `character_book` replaced it, and a session
@@ -590,7 +590,7 @@ into the session's card, key stripped.)
 - **Its own pace**: `patience` (seconds between spontaneous cycles —
   `Settings.patience`, default 3600 (`knobs.DEFAULT_PATIENCE`, the ONE source;
   `agent.patience_resolved` owns precedence), card hook
-  `extensions.lunamoth.patience`,
+  `extensions.chara.patience`,
   `/patience`; precedence operator > card > default. NEVER reintroduce tiny
   defaults: a 2 s daemon default once burned a real key's daily limit),
   `/quiet` (engagement:
@@ -614,7 +614,7 @@ into the session's card, key stripped.)
   CLOSER fragment (folded into the single post-history slot), gated on tools. Two
   exist: **force_roleplay** (= the actor embodiment stance, kept on the embodiment
   axis) and **personal_website** (`Settings.website_override` "on"|"off"|"",
-  precedence operator > card `extensions.lunamoth.website` > off; card hooks
+  precedence operator > card `extensions.chara.website` > off; card hooks
   `website`/`website_prompt`). Like embodiment they're WAKE-TIME choices that ride
   the cache-stable prefix — but editable via `session.set_modules` (writes the
   override, applies on NEXT start, never hot-swapped). personal_website gives the
@@ -634,7 +634,7 @@ into the session's card, key stripped.)
   plain 沙盒 on/off switch — `admin` = off) and is now ALSO switchable post-wake via
   the `chara.set_isolation` RPC (the chat settings 沙盒 toggle): like the prompt
   modules it writes the session config and applies on the chara's NEXT process start
-  — `LUNAMOTH_PY_BACKEND` is pinned at launch, so isolation is never hot-swapped under
+  — `CHARA_PY_BACKEND` is pinned at launch, so isolation is never hot-swapped under
   a running chara; turning the sandbox OFF is confirm-gated. Network is ON by default
   (`/net off` to disable; `/net on` re-enables). The `sandbox` jail is
   an isolation LADDER (`session/isolation.py` + `tools/runner.py`): native OS jail
@@ -643,12 +643,12 @@ into the session's card, key stripped.)
   namespace) → **refuse** (the `terminal` tool NEVER silently degrades to directory
   trust — only an explicit `admin` runs unconfined). Confinement = read workspace+assets
   (+ opted-in writable paths) + system libs, write workspace only; the chara can't
-  read the operator's whole `$HOME` — `~/.ssh`, `~/.aws`, `~/.lunamoth` (the global
+  read the operator's whole `$HOME` — `~/.ssh`, `~/.aws`, `~/.chara` (the global
   key/login hash), other charas' sessions — nor `/proc/<pid>/environ`. (macOS shell
   jail tightened 2026-06-20 to deny all of `$HOME`, matching Linux bwrap which never
   exposes it; the browser jail, allow-default for Chromium, surgically denies the
   high-value secret dirs.) **Servers: prefer a SYSTEM-LEVEL install** (install.sh /
-  `lunamoth desktop`) so bwrap gives the full jail; Docker is also supported (Landlock
+  `chara desktop`) so bwrap gives the full jail; Docker is also supported (Landlock
   confines the chara, the container is the outer boundary) but is the heavier option.
   Verified on a Landlock kernel 2026-06-17; minor follow-ups (no `/proc` ergonomics,
   PTY network-caveat) in `docs/OPEN-WORK.md`.
@@ -663,7 +663,7 @@ into the session's card, key stripped.)
    no-autogen landed 2026-06-14; further polish tracked in `docs/OPEN-WORK.md` Part 2).
 2. Card/persona market: SHIPPED as a character-tavern.com catalog proxy (Market
    v2: browse/sort/filter/preview + faithful import, 2026-06-27..07-01). OPEN
-   remainder: our OWN pack format + index (`lunamoth-pack.json` + git-repo index,
+   remainder: our OWN pack format + index (`chara-pack.json` + git-repo index,
    Claude Code marketplace model) so creators can publish card+assets packs.
 
 **B. For the charas (the biggest design effort: the chara curriculum)**
@@ -684,7 +684,7 @@ into the session's card, key stripped.)
    with real credentials (budget a fix round — iLink endpoints shifted once
    already). (Enterprise WeChat/WeCom was dropped 2026-06-14; WeChatPadPro was
    dropped 2026-06-17 — iLink is the WeChat path we keep.)
-2. Remote access: `lunamoth connect ssh://` (tunnel → browser) + password login
+2. Remote access: `chara connect ssh://` (tunnel → browser) + password login
    SHIPPED; a remote TUI client stays deferred (the browser is the remote face).
 
 (SHIPPED, moved out of the roadmap per "OPEN work only": the hermes apple-to-apple

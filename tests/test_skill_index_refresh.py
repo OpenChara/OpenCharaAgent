@@ -6,20 +6,20 @@ The agent is given an ISOLATED, empty skills store (SANDBOX_ROOT is pinned at im
 time, so the env-based sandbox dir can't be relied on under a full-suite run)."""
 import pytest
 
-from lunamoth.session.settings import Settings
-from lunamoth.tools.skills import SkillStore
+from chara.session.settings import Settings
+from chara.tools.skills import SkillStore
 
 
 @pytest.fixture
 def agent(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sandbox"))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    from lunamoth.core.agent import LunaMothAgent
+    monkeypatch.setenv("CHARA_SANDBOX", str(tmp_path / "sandbox"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    from chara.core.agent import CharaAgent
 
     def make(**kw):
         kw.setdefault("toolpack", "sandbox")  # tools on → the skill index is in the prompt
-        a = LunaMothAgent(Settings(character_path="", **kw))
+        a = CharaAgent(Settings(character_path="", **kw))
         # Isolate skills to a clean tmp dir so the test is deterministic regardless
         # of the import-pinned SANDBOX_ROOT / any bundled library.
         a.skills = SkillStore(skills_dir=tmp_path / "iso-skills", external_dirs=[])

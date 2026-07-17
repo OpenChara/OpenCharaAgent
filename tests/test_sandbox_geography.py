@@ -17,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from lunamoth.tools.builtin import file_tools, search
-from lunamoth.tools.sandbox import Sandbox, SandboxViolation
+from chara.tools.builtin import file_tools, search
+from chara.tools.sandbox import Sandbox, SandboxViolation
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 """Code-level secret redaction (core/redact.py) + its use as the compaction
 summary backstop. Apple-to-apple with the upstream reference's redact.py."""
-from lunamoth.core.redact import mask_secret, redact_sensitive_text
+from chara.core.redact import mask_secret, redact_sensitive_text
 
 
 # ---- the patterns --------------------------------------------------------------
@@ -59,7 +59,7 @@ def test_short_token_fully_masked_long_keeps_ends():
 
 def test_force_redacts_even_when_globally_disabled(monkeypatch):
     # Simulate the global flag off; force=True must still redact (safety boundary).
-    import lunamoth.core.redact as R
+    import chara.core.redact as R
     monkeypatch.setattr(R, "_REDACT_ENABLED", False)
     leaky = "key sk-or-v1-abcdef0123456789abcdef end"
     assert "sk-or-v1-abcdef0123456789abcdef" in R.redact_sensitive_text(leaky)          # disabled → passes
@@ -84,7 +84,7 @@ class _FakeLLM:
 
 
 def test_compaction_redacts_secret_in_and_out():
-    from lunamoth.core import compaction
+    from chara.core import compaction
     head = [
         {"role": "user", "content": "deploy with OPENAI_API_KEY=topsecretkey1234567890 please"},
         {"role": "assistant", "content": "done"},

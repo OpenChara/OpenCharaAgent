@@ -19,9 +19,9 @@ from pathlib import Path
 
 import pytest
 
-from lunamoth.tools.builtin import _image_gen, media
-from lunamoth.tools.registry import discover_builtin_tools, registry
-from lunamoth.tools.sandbox import Sandbox
+from chara.tools.builtin import _image_gen, media
+from chara.tools.registry import discover_builtin_tools, registry
+from chara.tools.sandbox import Sandbox
 
 
 # ---------------------------------------------------------------------------
@@ -61,16 +61,16 @@ def _write_desktop(home: Path, **fields):
 def _key_present(monkeypatch, tmp_path, *, provider="volcano",
                  model="doubao-seedream-4-0-250828", key="sk-test-key"):
     """Configure a complete, unified image selection: provider + model + a keyring
-    entry for that provider, in a temp LUNAMOTH_HOME."""
+    entry for that provider, in a temp CHARA_HOME."""
     home = tmp_path / "home"
-    monkeypatch.setenv("LUNAMOTH_HOME", str(home))
+    monkeypatch.setenv("CHARA_HOME", str(home))
     _write_desktop(home, image_provider=provider, image_model=model,
                    keys={provider: {"provider": provider, "api_key": key}})
 
 
 def _no_key(monkeypatch, tmp_path):
-    # Point LUNAMOTH_HOME at an empty dir so nothing resolves (no provider/key).
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "empty_home"))
+    # Point CHARA_HOME at an empty dir so nothing resolves (no provider/key).
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "empty_home"))
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +88,7 @@ def test_tool_registers():
 
 def test_discover_imports_media():
     imported = discover_builtin_tools()
-    assert "lunamoth.tools.builtin.media" in imported
+    assert "chara.tools.builtin.media" in imported
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +110,7 @@ def test_check_fn_false_with_no_key_and_empty_home(monkeypatch, tmp_path):
 # ---------------------------------------------------------------------------
 def test_active_provider_is_the_selected_one(monkeypatch, tmp_path):
     home = tmp_path / "home"
-    monkeypatch.setenv("LUNAMOTH_HOME", str(home))
+    monkeypatch.setenv("CHARA_HOME", str(home))
     _write_desktop(home, image_provider="dashscope", image_model="wan2.6-image")
     assert _image_gen.active_provider() == "dashscope"
 
@@ -118,14 +118,14 @@ def test_active_provider_is_the_selected_one(monkeypatch, tmp_path):
 def test_active_provider_blank_when_unset(monkeypatch, tmp_path):
     # a model id alone NEVER infers a provider — selection is explicit
     home = tmp_path / "home"
-    monkeypatch.setenv("LUNAMOTH_HOME", str(home))
+    monkeypatch.setenv("CHARA_HOME", str(home))
     _write_desktop(home, image_model="doubao-seedream-4-0-250828")
     assert _image_gen.active_provider() == ""
 
 
 def test_image_key_resolves_from_keyring(monkeypatch, tmp_path):
     home = tmp_path / "home"
-    monkeypatch.setenv("LUNAMOTH_HOME", str(home))
+    monkeypatch.setenv("CHARA_HOME", str(home))
     _write_desktop(home, image_provider="volcano", image_model="m",
                    keys={"火山": {"provider": "volcano", "api_key": "ark-from-keyring"}})
     assert _image_gen.image_key() == "ark-from-keyring"
@@ -133,13 +133,13 @@ def test_image_key_resolves_from_keyring(monkeypatch, tmp_path):
 
 def test_image_model_is_the_selected_model(monkeypatch, tmp_path):
     home = tmp_path / "home"
-    monkeypatch.setenv("LUNAMOTH_HOME", str(home))
+    monkeypatch.setenv("CHARA_HOME", str(home))
     _write_desktop(home, image_provider="volcano", image_model="doubao-seedream-custom")
     assert _image_gen.image_model() == "doubao-seedream-custom"
 
 
 def test_image_model_blank_when_unset(monkeypatch, tmp_path):
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "empty"))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "empty"))
     assert _image_gen.image_model() == ""
 
 

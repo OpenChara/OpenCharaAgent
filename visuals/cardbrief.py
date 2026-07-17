@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Card -> visual brief (cached).
 
-An LLM (Gemini 3.1 Pro via OpenRouter) reads a LunaMoth character card and
+An LLM (Gemini 3.1 Pro via OpenRouter) reads a OpenCharaAgent character card and
 translates its identity/personality/lore into a concrete, drawable VISUAL brief:
 appearance, palette, world scene, theme color. The brief is what the image
 pipeline consumes — so the generator never hardcodes who a character is, it
@@ -56,11 +56,11 @@ SYSTEM = (
 def _key() -> str:
     k = os.environ.get("OPENROUTER_API_KEY")
     if not k:
-        p = Path.home() / ".lunamoth" / "openrouter_key"
+        p = Path.home() / ".chara" / "openrouter_key"
         if p.exists():
             k = p.read_text().strip()
     if not k:
-        sys.exit("no OPENROUTER_API_KEY (env or ~/.lunamoth/openrouter_key)")
+        sys.exit("no OPENROUTER_API_KEY (env or ~/.chara/openrouter_key)")
     return k
 
 
@@ -70,7 +70,7 @@ def _card_text(card: dict) -> str:
     for f in ("description", "personality", "scenario"):
         if d.get(f):
             parts.append(f"{f.upper()}: {d[f]}")
-    ext = (d.get("extensions", {}) or {}).get("lunamoth", {})
+    ext = (d.get("extensions", {}) or {}).get("chara", {})
     if ext.get("tagline"):
         parts.append(f"TAGLINE: {ext['tagline']}")
     book = d.get("character_book") or {}
@@ -82,7 +82,7 @@ def _card_text(card: dict) -> str:
 
 
 def _card_theme(card: dict) -> str | None:
-    ext = (card.get("data", card).get("extensions", {}) or {}).get("lunamoth", {})
+    ext = (card.get("data", card).get("extensions", {}) or {}).get("chara", {})
     theme = ext.get("theme")
     if isinstance(theme, dict) and isinstance(theme.get("primary"), str):
         return theme["primary"]
@@ -102,8 +102,8 @@ def _llm(card_text: str) -> dict:
     req = urllib.request.Request(OR_ENDPOINT, data=json.dumps(body).encode(), method="POST", headers={
         "Content-Type": "application/json",
         "Authorization": f"Bearer {_key()}",
-        "HTTP-Referer": "https://lunamoth.local",
-        "X-Title": "LunaMoth chara visuals",
+        "HTTP-Referer": "https://chara.local",
+        "X-Title": "OpenCharaAgent chara visuals",
     })
     with urllib.request.urlopen(req, timeout=180) as r:
         j = json.loads(r.read())

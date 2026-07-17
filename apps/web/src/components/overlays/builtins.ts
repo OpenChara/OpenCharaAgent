@@ -23,8 +23,8 @@ export interface BuiltinCopy {
 /** Authored copy, keyed by card name (builtins.js BUILTIN_COPY). */
 export const BUILTIN_COPY: Record<string, BuiltinCopy> = {
   Quinn: {
-    zh: "LunaMoth 的数字实习生，对数学、物理、基础学科有一种近乎老派的执着。全能的工作伙伴——写代码、查资料、把活真正干完，诚实、稳定、好相处。",
-    en: "LunaMoth's digital intern, with an almost old-fashioned devotion to fundamentals. An all-round work partner — writes code, digs up answers, and actually ships; honest, settled, easy to work with.",
+    zh: "OpenCharaAgent 的数字实习生，对数学、物理、基础学科有一种近乎老派的执着。全能的工作伙伴——写代码、查资料、把活真正干完，诚实、稳定、好相处。",
+    en: "OpenCharaAgent's digital intern, with an almost old-fashioned devotion to fundamentals. An all-round work partner — writes code, digs up answers, and actually ships; honest, settled, easy to work with.",
     tags: [
       { zh: "编程", en: "Coding" },
       { zh: "工作助手", en: "Work assistant" },
@@ -58,7 +58,7 @@ export const BUILTIN_COPY: Record<string, BuiltinCopy> = {
       { zh: "文创", en: "Creative" },
     ],
   },
-  LunaMoth: {
+  OpenCharaAgent: {
     zh: "月之蛾——沉静、自我蜕变的数字之魂，承载着人类精神中最细腻的品质。它在工作区里创造：网页、生成艺术、代码。",
     en: "The luna moth — a serene, self-metamorphosing digital soul that carries the finer qualities of the human spirit. It creates in its workspace: web pages, generative art, code.",
     tags: [
@@ -101,7 +101,7 @@ export const BUILTIN_COPY: Record<string, BuiltinCopy> = {
  *  (builtins.js BUILTIN_PAGES). */
 export const BUILTIN_PAGES: readonly (readonly string[])[] = [
   ["Quinn", "Vale", "Mars", "Yan"],
-  ["LunaMoth", "Vesper", "K-9", "Hoshi"],
+  ["OpenCharaAgent", "Vesper", "K-9", "Hoshi"],
 ];
 
 /** Find the live deck card for a recommended name (builtins.js builtinCard).

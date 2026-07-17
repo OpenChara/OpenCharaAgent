@@ -7,12 +7,12 @@
  * animation (GPU-cheap), and a DELAYED fade-in (.brand-loader .mk in
  * global.css) — if the snapshot comes back fast the loader unmounts before it
  * ever paints, so we never trade a blank flash for a loader flash. The mark
- * mirrors the product wordmark (LunaMoth = 月蛾); reduced-motion drops the flit.
+ * mirrors the product wordmark (OpenCharaAgent = 月蛾); reduced-motion drops the flit.
  */
 export function BrandLoader() {
   return (
     <div className="brand-loader" role="status" aria-live="polite" aria-busy="true">
-      <svg className="mk" viewBox="262 290 500 520" fill="currentColor" role="img" aria-label="LunaMoth">
+      <svg className="mk" viewBox="262 290 500 520" fill="currentColor" role="img" aria-label="OpenCharaAgent">
         <defs>
           <g id="bl-half">
             <path d="M 506 402 C 490 360 470 328 442 308 C 470 318 496 352 510 394 Z" />

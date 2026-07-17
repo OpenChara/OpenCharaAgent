@@ -9,20 +9,20 @@ from __future__ import annotations
 
 import pytest
 
-from lunamoth.session.settings import Settings
+from chara.session.settings import Settings
 
 
 @pytest.fixture
 def agent(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
-    from lunamoth.core import agent as agent_mod
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
+    from chara.core import agent as agent_mod
 
     monkeypatch.setattr(agent_mod, "SANDBOX_ROOT", tmp_path / "sandbox")
-    from lunamoth.core.agent import LunaMothAgent
+    from chara.core.agent import CharaAgent
 
-    a = LunaMothAgent(Settings(provider="mock", character_path="", toolpack=""))
+    a = CharaAgent(Settings(provider="mock", character_path="", toolpack=""))
     a.transcript.reset()
     return a
 
@@ -78,7 +78,7 @@ def test_swap_model_strips_reasoning_continuity(agent):
 
 
 def _pin_windows(monkeypatch, windows: dict[str, int]) -> None:
-    from lunamoth.core import providers
+    from chara.core import providers
 
     def fake_resolved(provider, base_url, model, api_key, override=0):
         return windows.get(model, 200_000), True

@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from lunamoth.tools.builtin import file_tools
-from lunamoth.tools.registry import registry, discover_builtin_tools
+from chara.tools.builtin import file_tools
+from chara.tools.registry import registry, discover_builtin_tools
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +71,7 @@ def test_result_caps():
 
 def test_discovery_imports_file_tools():
     mods = discover_builtin_tools()
-    assert "lunamoth.tools.builtin.file_tools" in mods
+    assert "chara.tools.builtin.file_tools" in mods
 
 
 # ---------------------------------------------------------------------------

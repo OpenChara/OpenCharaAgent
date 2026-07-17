@@ -128,12 +128,12 @@ export function assetUrlForPath(absPath: string): string {
   return assetUrl(`/asset?p=${encodeURIComponent(absPath)}`);
 }
 
-/** True only in the Electron desktop shell (its preload exposes window.lunamothNative).
+/** True only in the Electron desktop shell (its preload exposes window.charaNative).
  *  Desktop-LOCAL actions (open-in-system, reveal-in-Finder) make sense ONLY there —
  *  in a browser they'd run on the SERVER machine, so the webui downloads/previews
  *  instead. The split the user asked for: webui vs. mac/desktop. */
 export function isDesktopShell(): boolean {
-  return typeof window !== "undefined" && !!(window as { lunamothNative?: unknown }).lunamothNative;
+  return typeof window !== "undefined" && !!(window as { charaNative?: unknown }).charaNative;
 }
 
 interface Pending {

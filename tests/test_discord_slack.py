@@ -8,14 +8,14 @@ import queue
 
 import pytest
 
-from lunamoth.messaging.base import DeliveryDeferred, InboundMessage
-from lunamoth.messaging.discord import (
+from chara.messaging.base import DeliveryDeferred, InboundMessage
+from chara.messaging.discord import (
     INTENTS,
     DiscordAdapter,
     parse_message_create,
 )
-from lunamoth.messaging.gateway import make_adapters
-from lunamoth.messaging.slack import SlackAdapter, parse_event
+from chara.messaging.gateway import make_adapters
+from chara.messaging.slack import SlackAdapter, parse_event
 
 
 class _FakeResp:

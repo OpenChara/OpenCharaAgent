@@ -1,4 +1,4 @@
-# LunaMoth — one-click server image (plan Track E / Track F).
+# OpenCharaAgent — one-click server image (plan Track E / Track F).
 #
 # We install the prebuilt WHEEL, which carries the built frontend (front/webui/)
 # via package-data — so this image needs NO node and NO source/dist tree, just
@@ -6,7 +6,7 @@
 # dist/*.whl), then build this image from the repo root:
 #
 #   scripts/build-wheel.sh
-#   docker build -f deploy/Dockerfile -t lunamoth:latest .
+#   docker build -f deploy/Dockerfile -t chara:latest .
 #
 # Single-stage python:3.12-slim, mirroring reference/AstrBot/Dockerfile but
 # leaner (AstrBot copies source + installs node; we don't have to).
@@ -28,7 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # its own Chromium + Chromium's runtime libraries. We install the libs EXPLICITLY
 # (python:3.12-slim is too bare; `agent-browser install --with-deps` does NOT pull
 # them on slim, so Chrome would fail with `libglib-2.0.so.0: cannot open ...`).
-# Chromium installs under /root/.agent-browser (outside the ~/.lunamoth volume, so
+# Chromium installs under /root/.agent-browser (outside the ~/.chara volume, so
 # it bakes into the image).
 #
 # ISOLATION CAVEAT (Docker, owner 2026-06-19): inside Docker the chara's `sandbox`
@@ -53,7 +53,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 # Copy the prebuilt wheel(s) produced by scripts/build-wheel.sh. The wheel
 # bundles front/webui/, so the served UI is inside the install — no extra steps.
 # Install with the server + messaging extras (websockets/qrcode) straight from
-# the wheel file so `lunamoth desktop` and the gateways work out of the box.
+# the wheel file so `chara desktop` and the gateways work out of the box.
 COPY dist/*.whl /tmp/wheels/
 RUN set -eux; \
     whl="$(ls /tmp/wheels/*.whl | head -n1)"; \
@@ -64,20 +64,20 @@ RUN set -eux; \
 # omits it and the handler exits, killing Chrome under the in-container Landlock
 # jail). Harmless where Chrome supplies its own. Required for the jailed browser
 # in Docker (validated 2026-06-19).
-RUN python -c "from lunamoth.tools.builtin._browser_driver import ensure_crashpad_db_fix; ensure_crashpad_db_fix()"
+RUN python -c "from chara.tools.builtin._browser_driver import ensure_crashpad_db_fix; ensure_crashpad_db_fix()"
 
-# Sessions, cards and config live under ~/.lunamoth — persist it via a volume.
-ENV LUNAMOTH_HOME=/root/.lunamoth
-VOLUME ["/root/.lunamoth"]
+# Sessions, cards and config live under ~/.chara — persist it via a volume.
+ENV CHARA_HOME=/root/.chara
+VOLUME ["/root/.chara"]
 
 # The supervisor's HTTP renderer (6180) + WS gateway (6181 = http+1, the
 # deterministic non-loopback default so a reverse proxy can pin it). Bound to
 # 0.0.0.0 by the entrypoint; put a TLS reverse proxy in front past loopback (README).
 EXPOSE 6180 6181
 
-# The entrypoint generates an access token if LUNAMOTH_TOKEN is unset and prints
+# The entrypoint generates an access token if CHARA_TOKEN is unset and prints
 # it (the wildcard bind needs a token — the gate), then serves headless. Set
-# LUNAMOTH_TOKEN to pin a known token; LUNAMOTH_PORT to change the port.
-COPY deploy/entrypoint.sh /usr/local/bin/lunamoth-entrypoint
-RUN chmod +x /usr/local/bin/lunamoth-entrypoint
-ENTRYPOINT ["/usr/local/bin/lunamoth-entrypoint"]
+# CHARA_TOKEN to pin a known token; CHARA_PORT to change the port.
+COPY deploy/entrypoint.sh /usr/local/bin/chara-entrypoint
+RUN chmod +x /usr/local/bin/chara-entrypoint
+ENTRYPOINT ["/usr/local/bin/chara-entrypoint"]

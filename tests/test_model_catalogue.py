@@ -6,13 +6,13 @@ import json
 
 import pytest
 
-from lunamoth.server import hub as H
-from lunamoth.server.hub import models as M
+from chara.server import hub as H
+from chara.server.hub import models as M
 
 
 @pytest.fixture(autouse=True)
 def home(tmp_path, monkeypatch):
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
     M._models_cache.clear()  # isolate the in-process memo between tests
     yield
     M._models_cache.clear()

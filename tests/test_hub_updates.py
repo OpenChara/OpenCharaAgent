@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from lunamoth.server.hub import updates as U
+from chara.server.hub import updates as U
 
 
 def test_norm_orders_versions():
@@ -26,7 +26,7 @@ class _StubSupervisor:
 
 
 def test_update_restart_schedules_on_the_supervisor():
-    from lunamoth.server import hub as H
+    from chara.server import hub as H
     sv = _StubSupervisor()
     d = H.HubDispatcher(lambda f: True, supervisor=sv)
     out = d._update_restart({"delay": 0.5})
@@ -35,28 +35,28 @@ def test_update_restart_schedules_on_the_supervisor():
 
 
 def test_update_restart_without_supervisor_tells_client_to_do_it_by_hand():
-    from lunamoth.server import hub as H
+    from chara.server import hub as H
     d = H.HubDispatcher(lambda f: True)  # no resident supervisor (e.g. a foreground tui)
     out = d._update_restart({})
     assert out["ok"] is False and "manual" in out["error"].lower()
 
 
 def test_relaunch_argv_pins_resolved_ports():
-    from lunamoth.server.supervisor.core import Supervisor
+    from chara.server.supervisor.core import Supervisor
     # The launch uses --port 0 / --ws-port 0 (OS-assigned); the re-exec MUST substitute
     # the actually-bound ports, else the new process rebinds random ports and strands clients.
     argv = Supervisor._relaunch_argv(
         8123, 9456,
         ["desktop", "--host", "127.0.0.1", "--port", "0", "--ws-port", "0", "--no-open"],
     )
-    assert argv[1:3] == ["-m", "lunamoth.front.cli"]  # re-run the new code
+    assert argv[1:3] == ["-m", "chara.front.cli"]  # re-run the new code
     assert "0" not in argv  # the placeholder ports are gone
     assert argv[-4:] == ["--port", "8123", "--ws-port", "9456"]  # resolved ports pinned
 
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
-    monkeypatch.setattr(U.S, "lunamoth_home", lambda: tmp_path)
+    monkeypatch.setattr(U.S, "chara_home", lambda: tmp_path)
     return tmp_path
 
 

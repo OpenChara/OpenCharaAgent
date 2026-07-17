@@ -1,10 +1,10 @@
 # visuals/ — character art pipeline (DEV / offline tool)
 
-An experimental, offline pipeline that turns a LunaMoth **character card** into a
+An experimental, offline pipeline that turns a OpenCharaAgent **character card** into a
 small, web-optimized **visual asset library** (avatar, full-body sprite,
 background, key visual, sticker set) in a unified anime gacha-game (二游) style.
 
-> **This is a developer/offline tool, NOT part of the LunaMoth runtime.** It has
+> **This is a developer/offline tool, NOT part of the OpenCharaAgent runtime.** It has
 > heavy dependencies (see below) and costs real API spend when run. Nothing here
 > is imported by `src/`. The runtime only ever consumes the finished `web/`
 > assets a human copies into a card folder — it never generates art itself.
@@ -52,18 +52,18 @@ background is last.
 
 | key | used by | source |
 |-----|---------|--------|
-| `OPENROUTER_API_KEY` | the visual brief LLM | env, else `~/.lunamoth/openrouter_key` |
-| `ARK_API_KEY` | Volcano Ark image gen | env, else `~/.lunamoth/ark_api_key` |
+| `OPENROUTER_API_KEY` | the visual brief LLM | env, else `~/.chara/openrouter_key` |
+| `ARK_API_KEY` | Volcano Ark image gen | env, else `~/.chara/ark_api_key` |
 
 The Volcano key is a **separate, explicit dev-only key** for this tool. It is not
-required to run LunaMoth; the runtime never calls Ark. (`removebg.py` offers a
+required to run OpenCharaAgent; the runtime never calls Ark. (`removebg.py` offers a
 cloud matting alternative keyed by `REMOVEBG_API_KEY` if you'd rather not run
 BiRefNet locally.)
 
 ## Heavy dependencies (why this is dev/offline only)
 
 The matting step pulls in serious weight, which is exactly why it is **not**
-bundled into the LunaMoth runtime:
+bundled into the OpenCharaAgent runtime:
 
 - `rembg` + `onnxruntime`
 - the **BiRefNet model is ~970 MB** (downloaded on first use)

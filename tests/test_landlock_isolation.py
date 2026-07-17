@@ -4,9 +4,9 @@ These cover the 2026-06-17 hardening: a chara's `terminal` must not silently run
 unconfined when the OS jail is unavailable (the no-userns case), and when
 Landlock IS available it must confine reads to workspace+assets.
 """
-import lunamoth.session.isolation as ISO
-from lunamoth.session import landlock
-from lunamoth.tools.runner import run_terminal
+import chara.session.isolation as ISO
+from chara.session import landlock
+from chara.tools.runner import run_terminal
 
 import pytest
 
@@ -41,8 +41,8 @@ def test_background_sandbox_refuses_when_no_jail_available(tmp_path, monkeypatch
     """
     monkeypatch.setattr(ISO, "os_sandbox_available", lambda: False)
     monkeypatch.setattr(ISO, "landlock_available", lambda: False)
-    from lunamoth.session.isolation import JailUnavailableError
-    from lunamoth.tools.builtin._process_registry import ProcessRegistry
+    from chara.session.isolation import JailUnavailableError
+    from chara.tools.builtin._process_registry import ProcessRegistry
 
     ws = tmp_path / "ws"
     reg = ProcessRegistry()
@@ -60,9 +60,9 @@ def test_background_sandbox_refusal_surfaces_as_tool_error(tmp_path, monkeypatch
 
     monkeypatch.setattr(ISO, "os_sandbox_available", lambda: False)
     monkeypatch.setattr(ISO, "landlock_available", lambda: False)
-    from lunamoth.tools.builtin.terminal import terminal
+    from chara.tools.builtin.terminal import terminal
 
-    from lunamoth.core.state import Permissions
+    from chara.core.state import Permissions
 
     class _State:
         def load(self):

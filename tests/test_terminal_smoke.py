@@ -1,7 +1,7 @@
 """Headless smoke test for the plain-terminal driver (front/terminal.py).
 
 front/terminal.py is BOTH the legacy plain terminal AND the background daemon
-driver (`lunamoth start` spawns `python -m lunamoth.front.terminal`). A crash
+driver (`chara start` spawns `python -m chara.front.terminal`). A crash
 here breaks every daemon, so this drives main() end-to-end against a fake
 CharaHandle: a real attach, an operator turn, a couple shared /commands, the
 /mode + /patience runtime-mirror sync, and a clean detach — with NO network and
@@ -9,9 +9,9 @@ NO real agent. It is the regression net for backend-surface drift.
 """
 from __future__ import annotations
 
-from lunamoth.front import terminal
-from lunamoth.protocol import TextDelta
-from lunamoth.protocol.api import AttachInfo, Reply, StateSnapshot
+from chara.front import terminal
+from chara.protocol import TextDelta
+from chara.protocol.api import AttachInfo, Reply, StateSnapshot
 
 
 def _snap(**over):

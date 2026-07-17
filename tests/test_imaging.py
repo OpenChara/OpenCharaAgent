@@ -4,7 +4,7 @@ import io
 
 from PIL import Image
 
-from lunamoth.content import imaging
+from chara.content import imaging
 
 
 def _png_bytes(size, color=(120, 80, 200, 255), mode="RGBA"):

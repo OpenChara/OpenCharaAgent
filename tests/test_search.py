@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from lunamoth.tools.builtin import search as search_mod
-from lunamoth.tools.builtin.search import search_files
-from lunamoth.tools.registry import registry, discover_builtin_tools
+from chara.tools.builtin import search as search_mod
+from chara.tools.builtin.search import search_files
+from chara.tools.registry import registry, discover_builtin_tools
 
 
 HAS_RG = shutil.which("rg") is not None
@@ -30,7 +30,7 @@ class FakeCtx:
         return list(self._writable)
 
     def run_terminal(self, command: str, *, timeout: int = 60, workdir=None) -> str:
-        from lunamoth.tools.runner import run_terminal as _run
+        from chara.tools.runner import run_terminal as _run
         return _run(command, self._workspace, isolation="admin",
                     allow_network=False, writable_paths=self._writable,
                     timeout=timeout)
@@ -298,13 +298,13 @@ import pytest as _pytest
 
 @_pytest.mark.parametrize("raw,expect", [
     ("[timed out after 60s]", "timed out"),
-    ("[lunamoth: refused — no jail available]", "refused"),
+    ("[chara: refused — no jail available]", "refused"),
     ("[runner error: broken]", "runner error"),
 ])
 def test_search_incomplete_run_is_an_error_not_zero_matches(ws, raw, expect):
     import json as _json
 
-    from lunamoth.tools.builtin import search as search_mod
+    from chara.tools.builtin import search as search_mod
 
     ctx = _DeadTerminalCtx(ws, raw)
     search_mod._loop_state["last_key"] = None
@@ -318,7 +318,7 @@ def test_search_incomplete_run_is_an_error_not_zero_matches(ws, raw, expect):
 
 
 def test_incomplete_probe_is_not_cached(ws):
-    from lunamoth.tools.builtin import search as search_mod
+    from chara.tools.builtin import search as search_mod
 
     search_mod._cmd_cache.clear()
     ctx = _DeadTerminalCtx(ws, "[timed out after 60s]")
@@ -333,12 +333,12 @@ def test_refused_jail_probe_surfaces_as_tool_error_not_py_fallback(ws):
     (the test above) may still fall back to the py path."""
     import json as _json
 
-    from lunamoth.tools.builtin import search as search_mod
+    from chara.tools.builtin import search as search_mod
 
     search_mod._cmd_cache.clear()
     search_mod._loop_state["last_key"] = None
     search_mod._loop_state["consecutive"] = 0
-    ctx = _DeadTerminalCtx(ws, "[lunamoth: refused — no jail available]")
+    ctx = _DeadTerminalCtx(ws, "[chara: refused — no jail available]")
     out = _json.loads(search_mod.search_files({"pattern": "TODO", "path": "."}, ctx))
     assert "error" in out, f"must surface an error, got: {out}"
     assert "refused" in out["error"]

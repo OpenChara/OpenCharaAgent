@@ -1,8 +1,8 @@
 """Context management: interrupt-safe commits, uniform self-work turns, tool-aware trim."""
 import pytest
 
-from lunamoth.core.context import ContextBuffer
-from lunamoth.session.settings import Settings
+from chara.core.context import ContextBuffer
+from chara.session.settings import Settings
 
 
 def test_render_sanitizes_and_withholds_reasoning():
@@ -95,7 +95,7 @@ def test_trim_after_summary_never_strands_tool_results():
 
 # ---- token_count memoization (perf optimization, must stay byte-exact) --------
 
-from lunamoth.core.context import _msg_text, estimate_tokens  # noqa: E402
+from chara.core.context import _msg_text, estimate_tokens  # noqa: E402
 
 
 def _fresh_count(messages):
@@ -203,13 +203,13 @@ def test_token_count_is_thread_safe_against_trim():
 @pytest.fixture
 def agent(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sandbox"))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    from lunamoth.core.agent import LunaMothAgent
+    monkeypatch.setenv("CHARA_SANDBOX", str(tmp_path / "sandbox"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    from chara.core.agent import CharaAgent
 
     def make(**kw):
         kw.setdefault("toolpack", "")
-        return LunaMothAgent(Settings(character_path="", **kw))
+        return CharaAgent(Settings(character_path="", **kw))
 
     return make
 
@@ -244,7 +244,7 @@ def test_interrupted_think_cycle_is_committed(agent):
 def test_commit_keeps_speech_and_drops_machinery_events(agent, monkeypatch):
     # Typed events replace the old in-band markers: only TextDelta is speech;
     # thinking and tool chatter must never leak into the committed context.
-    from lunamoth.protocol import Notice, TextDelta, ThinkDelta, ToolEnd
+    from chara.protocol import Notice, TextDelta, ThinkDelta, ToolEnd
 
     a = agent()
     a.transcript.reset()
@@ -268,8 +268,8 @@ def test_commit_keeps_speech_and_drops_machinery_events(agent, monkeypatch):
 
 
 def test_reasoning_policy_openrouter_and_deepseek():
-    from lunamoth.config import LLMConfig
-    from lunamoth.core.llm import LLMClient
+    from chara.config import LLMConfig
+    from chara.core.llm import LLMClient
 
     def client(base_url, model):
         return LLMClient(LLMConfig(provider="openai_compatible", base_url=base_url, model=model))
@@ -347,8 +347,8 @@ def test_render_passes_reasoning_details_unmodified_both_modes():
 
 def test_reasoning_echoback_host_match_not_substring():
     """Host-matched, so a lookalike path can't false-trigger the echo gate."""
-    from lunamoth.config import LLMConfig
-    from lunamoth.core.llm import LLMClient
+    from chara.config import LLMConfig
+    from chara.core.llm import LLMClient
 
     def client(base_url, model, provider="openai_compatible"):
         return LLMClient(LLMConfig(provider=provider, base_url=base_url, model=model))
@@ -364,7 +364,7 @@ def test_reasoning_echoback_host_match_not_substring():
 
 
 def test_model_keeps_thought_signature_gate():
-    from lunamoth.core.llm import _model_keeps_thought_signature
+    from chara.core.llm import _model_keeps_thought_signature
     assert _model_keeps_thought_signature("google/gemini-3-pro")
     assert _model_keeps_thought_signature("gemma-3-27b")
     assert not _model_keeps_thought_signature("deepseek/deepseek-v4")
@@ -377,7 +377,7 @@ def test_refuses_known_small_context_live_model(agent, monkeypatch):
     """A live model whose REAL window is known to be < 64K is refused (hermes
     raises at init below MINIMUM_CONTEXT_LENGTH). Only when DETERMINED — an
     unmeasured/offline model that fell back to DEFAULT_WINDOW is allowed."""
-    from lunamoth.core import providers
+    from chara.core import providers
 
     a = agent(toolpack="")
     monkeypatch.setattr(a.llm, "is_live", lambda: True)
@@ -402,7 +402,7 @@ def test_refuses_known_small_context_live_model(agent, monkeypatch):
 def test_mock_provider_never_refused_for_small_window(agent, monkeypatch):
     """A non-live (mock/offline) agent is never refused, even at a small window —
     the guard is live-only."""
-    from lunamoth.core import providers
+    from chara.core import providers
     a = agent(toolpack="")  # mock provider → is_live() False
     monkeypatch.setattr(providers, "context_window_resolved", lambda *x, **k: (8_000, True))
     a._ctx_window_key = None

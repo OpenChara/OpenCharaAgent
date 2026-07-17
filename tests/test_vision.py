@@ -2,9 +2,9 @@
 handing it to a SEPARATE vision model on the GLOBAL read-image route
 (session.settings.global_vision_route) and feeding the text back — hermes' auxiliary
 task=vision shape, decoupled from the chara's own provider."""
-from lunamoth.config import LLMConfig
-from lunamoth.core.attachments import RawAttachment, ingest_attachments
-from lunamoth.core.llm import LLMClient
+from chara.config import LLMConfig
+from chara.core.attachments import RawAttachment, ingest_attachments
+from chara.core.llm import LLMClient
 
 
 def _client(live=True):
@@ -32,7 +32,7 @@ _VIS_ROUTE = {"model": "google/gemini-3-flash", "provider": "openai_compatible",
 
 
 def _patch_route(monkeypatch, route=_VIS_ROUTE):
-    import lunamoth.session.settings as S
+    import chara.session.settings as S
     monkeypatch.setattr(S, "global_vision_route", lambda: dict(route))
 
 

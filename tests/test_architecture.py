@@ -8,7 +8,7 @@ Violations here mean a layer boundary broke:
 import ast
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parents[1] / "src" / "lunamoth"
+SRC = Path(__file__).resolve().parents[1] / "src" / "chara"
 
 UI_LIBS = {"textual", "rich"}
 
@@ -21,17 +21,17 @@ def _modules():
 
 
 def _internal_imports(path: Path, package: str):
-    """Top-level lunamoth package/module names this file imports."""
+    """Top-level chara package/module names this file imports."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             if node.level == 0:
-                if node.module and node.module.split(".")[0] == "lunamoth":
+                if node.module and node.module.split(".")[0] == "chara":
                     parts = node.module.split(".")
                     yield parts[1] if len(parts) > 1 else node.names[0].name
             elif node.level == 1 and package:
                 yield package  # sibling within the same package
-            else:  # relative to the lunamoth root
+            else:  # relative to the chara root
                 if node.module:
                     yield node.module.split(".")[0]
                 else:  # from .. import x, y
@@ -39,7 +39,7 @@ def _internal_imports(path: Path, package: str):
                         yield alias.name
         elif isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name.split(".")[0] == "lunamoth":
+                if alias.name.split(".")[0] == "chara":
                     parts = alias.name.split(".")
                     yield parts[1] if len(parts) > 1 else ""
 

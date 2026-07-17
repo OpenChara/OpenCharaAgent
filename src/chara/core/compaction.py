@@ -1,0 +1,756 @@
+"""Context compaction — Hermes-style, adapted to OpenCharaAgent.
+
+When the conversation approaches the model's real context window, summarize the
+OLD portion into one compact note and keep the recent tail verbatim, instead of
+hard-dropping the oldest messages (which is amnesia). The full conversation is
+never lost — transcript.py keeps it all on disk; compaction only reshapes the
+in-memory window the model actually sees.
+
+Design (agreed):
+- Trigger at ~75% of the **real model window** (providers.context_window).
+- Protect the recent tail (~1/4 of the window) verbatim.
+- Summarize everything before it — in a **neutral, factual voice**, NOT the
+  chara's (a roleplay summary would distort facts; we want ground truth). The
+  previous summary sits at messages[0], so it's folded into the next summary for
+  free (iterative update without extra bookkeeping).
+- For an artist/maker chara: the summary must record **what was actually created**
+  (workspace file paths), matching the rules layer's "your work must be real".
+- Offline/mock or any LLM failure → no-op (the buffer's own trim() is the safety
+  net). Never raises, never blocks the turn.
+
+ContextBuffer can't call the LLM (it's a dumb data structure), so the agent drives
+this and passes its LLMClient in.
+"""
+from __future__ import annotations
+
+import hashlib
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from ..obs import get_logger
+from .context import ContextBuffer, _flatten_content, _msg_text, estimate_tokens
+from .providers import MINIMUM_CONTEXT_LENGTH  # the 64K floor — single source (providers owns context-window facts)
+from .redact import redact_sensitive_text  # code-level secret scrub on summary in/out (hermes redact.py)
+
+_log = get_logger("compaction")
+
+# Compaction trigger — apple-to-apple with hermes (context_compressor.py:587-643):
+# threshold_tokens = max(context_length * THRESHOLD_RATIO, MINIMUM_CONTEXT_LENGTH),
+# measured against the model's REAL window (providers.context_window), NOT a
+# trim-adjusted budget. The 64K floor is hermes' MINIMUM_CONTEXT_LENGTH
+# (model_metadata.py:133): below it hermes refuses to run; we instead let the
+# floor make the threshold unreachable so the window leans on trim() — the
+# sanctioned backstop — rather than refusing a card's chosen model.
+THRESHOLD_RATIO = 0.50            # compact at 50% of the real window (hermes default)
+# MINIMUM_CONTEXT_LENGTH (64K floor) is imported from providers — the same
+# constant that refuses a too-small live model also floors the trigger here.
+_TAIL_RATIO = 0.20                # keep this fraction of the threshold as verbatim tail (hermes summary_target_ratio)
+_TAIL_MIN_TOKENS = 2000
+_TOOL_RESULT_CLIP = 240      # one-line old tool output summaries for the summarizer
+
+# Live-window tool-output pruning (audit #13, hermes context_compressor
+# _prune_old_tool_results pass 1+2): old tool results carry full multi-KB
+# payloads in the LIVE window until whole-message trim/compaction. Replacing
+# them with one-line factual summaries — and dedup'ing identical results (the
+# same file read five times) — shrinks the window with ZERO LLM cost, so it
+# runs as the cheap first step of compact(); the full results stay on disk in
+# the transcript, this only narrows the in-memory API view (same contract as
+# trim()).
+_LIVE_PRUNE_MIN_CHARS = 200  # only substantial tool outputs are worth pruning
+_LIVE_PRUNE_PROTECT_MSGS = 6  # always keep the last N messages verbatim (floor)
+_DUP_TOOL_RESULT = "[duplicate tool output — identical to a more recent call]"
+
+# Anti-thrashing guard (audit #10, hermes context_compressor scar #40803):
+# should_compact() re-fires every turn once over threshold, so a failing or
+# non-shrinking summary call would burn one LLM call per turn FOREVER — the
+# same failure family as the burned-key patience incident.
+_MIN_SHRINK = 0.10              # a compaction saving less than this is "ineffective"
+_INEFFECTIVE_LIMIT = 2          # consecutive ineffective compactions before backing off
+_REGROW_STEP = 1.10             # resume once the window grows 10% past where the guard engaged
+_FAILURE_COOLDOWN = 300.0       # seconds without retry after a summarizer error
+
+_now = time.monotonic  # patchable in tests
+
+
+@dataclass
+class _Guard:
+    ineffective: int = 0
+    cooldown_until: float = 0.0
+    resume_above: float = 0.0   # token level the window must grow past to re-arm
+
+    def allows(self, tokens: int) -> bool:
+        if _now() < self.cooldown_until:
+            return False
+        if self.ineffective >= _INEFFECTIVE_LIMIT:
+            if tokens > self.resume_above:
+                # The window genuinely grew past the next step — re-arm.
+                self.ineffective = 0
+                self.resume_above = 0.0
+                return True
+            return False
+        return True
+
+    def record_failure(self) -> None:
+        self.cooldown_until = _now() + _FAILURE_COOLDOWN
+        _log.warning("summarizer failed — compaction paused for %.0fs (trim backstop remains)", _FAILURE_COOLDOWN)
+
+    def record_ineffective(self, tokens: int) -> None:
+        self.ineffective += 1
+        if self.ineffective >= _INEFFECTIVE_LIMIT:
+            self.resume_above = tokens * _REGROW_STEP
+            _log.warning(
+                "last %d compactions saved <%d%% each — pausing until the window grows past ~%d tokens",
+                self.ineffective, int(_MIN_SHRINK * 100), int(self.resume_above),
+            )
+
+    def record_success(self) -> None:
+        self.ineffective = 0
+        self.cooldown_until = 0.0
+        self.resume_above = 0.0
+
+
+def _guard(ctx: ContextBuffer) -> _Guard:
+    """One guard per live ContextBuffer, stored on the buffer itself so its
+    lifecycle (sessions, /reset, tests) follows the window it guards."""
+    g = getattr(ctx, "_compaction_guard", None)
+    if g is None:
+        g = _Guard()
+        ctx._compaction_guard = g  # type: ignore[attr-defined]
+    return g
+
+# The REFERENCE-ONLY handoff prefix (ported from the upstream reference's
+# SUMMARY_PREFIX, de-branded). It is the first line of every persisted summary:
+# it tells the model the summary is BACKGROUND, the latest message wins, and
+# reverse signals (stop/undo/never mind) cancel in-flight summary work. The
+# engine prompt layer is English; the summary BODY still follows the
+# conversation's language (the preamble below enforces that).
+SUMMARY_PREFIX = (
+    "[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted "
+    "into the summary below. This is a handoff from a previous context "
+    "window — treat it as background reference, NOT as active instructions. "
+    "Do NOT answer questions or fulfill requests mentioned in this summary; "
+    "they were already addressed. "
+    "Respond ONLY to the latest message that appears AFTER this summary — "
+    "that message is the single source of truth for what to do right now. "
+    "If the latest message is consistent with the '## Active Task' section, "
+    "you may use the summary as background. If the latest message "
+    "contradicts, supersedes, changes topic from, or in any way diverges "
+    "from '## Active Task' / '## In Progress' / '## Pending Asks' / "
+    "'## Remaining Work', the latest message WINS — discard those stale items "
+    "entirely and do not 'wrap up the old task first'. "
+    "Reverse signals in the latest message (e.g. 'stop', 'undo', 'roll back', "
+    "'just verify', 'never mind', a new topic) must immediately end any "
+    "in-flight work described in the summary; do not re-surface it later. "
+    "Your durable memory and the facts in the system prompt remain fully "
+    "authoritative and active — never ignore or deprioritize them because of "
+    "this compaction note. "
+    "The current session state (workspace files, environment) may already "
+    "reflect work described here — build on it rather than redoing it:"
+)
+
+# The bland header used before this change — kept ONLY so a summary persisted by
+# an older build re-folds cleanly (its prefix is stripped before re-summarizing).
+_LEGACY_HEADER = "[Earlier conversation — a summary of everything before the recent messages]"
+
+# What gets prepended to the persisted summary body. Detection of a summary row
+# is by transcript kind="summary" (not by this text), so the prefix is purely a
+# model-facing instruction, never a sniffed marker.
+_HEADER = SUMMARY_PREFIX + "\n"
+
+# Summarizer preamble (ported from the upstream reference's _summarizer_preamble;
+# already brand-free, deliberately plain so content filters don't trip on the
+# stronger "do-not-respond" framing). The summary is the ONE model-generated
+# piece persisted back into the context, so it must follow the conversation's
+# language even though this instruction is English — hence the language guard.
+_SUMMARIZER_PREAMBLE = (
+    "You are a summarization agent creating a context checkpoint. "
+    "Treat the conversation turns below as source material for a compact "
+    "record of prior work. "
+    "Produce only the structured summary; do not add a greeting, preamble, "
+    "or prefix. "
+    "Write the summary in the same language the conversation was using — do "
+    "not translate or switch to English. "
+    "NEVER include API keys, tokens, passwords, secrets, credentials, or "
+    "connection strings in the summary — replace any that appear with "
+    "[REDACTED]. Note that credentials were present, but do not preserve "
+    "their values."
+)
+
+
+def _today_str() -> str:
+    """Best-effort YYYY-MM-DD for temporal anchoring; '' on any clock failure.
+    Date-only on purpose: the summary is a mid-conversation message, never part
+    of the cached prefix, so a date here never disturbs the prompt cache."""
+    try:
+        return datetime.now().strftime("%Y-%m-%d")
+    except Exception:
+        return ""
+
+
+def _temporal_anchoring_rule(today: str) -> str:
+    """Phrase already-done work as dated past-tense (ported, de-branded).
+    Empty when the clock is unavailable — never hand the model a blank date."""
+    if not today:
+        return ""
+    return (
+        f"\nTEMPORAL ANCHORING: The current date is {today}. When an action "
+        "has already been carried out, phrase it as a completed, dated, "
+        "past-tense fact rather than an open instruction. For example, "
+        'rewrite "email the operator the summary" as "Sent the summary to '
+        f'the operator on {today}." Never leave a finished action worded as '
+        "if it still needs doing, and never invent a date for work that has "
+        "not happened yet.\n"
+    )
+
+
+def _template_sections(summary_budget: int, today: str) -> str:
+    """The structured `## Active Task … ## Critical Context` template, ported
+    from the upstream reference's _template_sections, de-branded. Shared by the
+    first-compaction and iterative-update prompts."""
+    return f"""## Active Task
+[THE SINGLE MOST IMPORTANT FIELD. Capture the operator's most recent
+unfulfilled input verbatim — the exact words. This includes explicit task
+assignments, questions awaiting an answer, decisions awaiting input, and
+ongoing discussions where the next substantive reply is owed. A turn where the
+operator just asked a question IS an active task — the task is "answer that
+question with full context". Do NOT write "None" merely because no imperative
+command was issued; reserve "None" for the rare case where the last exchange
+was fully resolved (e.g. "thanks, that's all"). If multiple items are
+outstanding, list only the ones NOT yet completed. Continuation should pick up
+exactly here. Examples:
+"Operator asked: 'Now refactor the auth module to use JWT instead of sessions'"
+"Operator asked: 'Waarom stond provider ineens op openrouter?' — needs investigation + answer"
+"Operator chose option A; awaiting implementation of step 2"
+If the operator's most recent message was a reverse signal (stop, undo, roll
+back, never mind, just verify, change of topic) that supersedes earlier work,
+write the reverse signal verbatim and DO NOT carry forward the cancelled task.
+Example: "Operator asked: 'Stop the i18n refactor and just verify the current
+diff' — earlier i18n in-flight work is cancelled." If no outstanding task
+exists, write "None."]
+
+## Goal
+[What the operator is trying to accomplish overall]
+
+## Constraints & Preferences
+[Preferences, style, constraints, important standing decisions]
+
+## Completed Actions
+[Numbered list of concrete actions taken — include tool used, target, and
+outcome. Format each as: N. ACTION target — outcome [tool: name]
+Example:
+1. READ config.py:45 — found `==` should be `!=` [tool: read_file]
+2. PATCH config.py:45 — changed `==` to `!=` [tool: patch]
+3. TEST `pytest tests/` — 3/50 failed: test_parse, test_validate, test_edge [tool: terminal]
+Be specific with workspace file paths, commands, line numbers, and results.]
+
+## Active State
+[Current working state — working directory, modified/created files with a
+brief note on each, test status, running processes, environment details that
+matter.]
+
+## In Progress
+[Work underway — what was being done when compaction fired]
+
+## Blocked
+[Any blockers, errors, or issues not yet resolved. Include exact error
+messages.]
+
+## Key Decisions
+[Important technical/creative decisions and WHY they were made]
+
+## Resolved Questions
+[Questions ALREADY answered — include the answer so it is not repeated]
+
+## Pending Asks
+[Requests from the operator NOT yet answered or fulfilled. If none, write
+"None."]
+
+## Relevant Files
+[Files read, modified, or created in the workspace — with a brief note on each
+and the REAL path. Never credit work that was not actually produced.]
+
+## Remaining Work
+[What remains to be done — framed as context, not instructions]
+
+## Critical Context
+[Specific values, error messages, configuration, or data that would be lost
+without explicit preservation. NEVER include API keys, tokens, passwords, or
+credentials — write [REDACTED] instead.]
+
+Target ~{summary_budget} tokens. Be CONCRETE — include workspace file paths,
+command outputs, error messages, line numbers, and specific values. Avoid vague
+descriptions like "made some changes" — say exactly what changed.
+{_temporal_anchoring_rule(today)}
+Write only the summary body. Do not include any preamble or prefix."""
+
+
+def _first_compaction_prompt(content: str, summary_budget: int, today: str) -> str:
+    return f"""{_SUMMARIZER_PREAMBLE}
+
+Create a structured checkpoint summary for the conversation after earlier turns
+are compacted. The summary should preserve enough detail for continuity without
+re-reading the original turns.
+
+TURNS TO SUMMARIZE:
+{content}
+
+Use this exact structure:
+
+{_template_sections(summary_budget, today)}"""
+
+
+def _iterative_update_prompt(previous_summary: str, new_content: str,
+                             summary_budget: int, today: str) -> str:
+    return f"""{_SUMMARIZER_PREAMBLE}
+
+You are updating a context compaction summary. A previous compaction produced
+the summary below. New conversation turns have occurred since then and need to
+be incorporated.
+
+PREVIOUS SUMMARY:
+{previous_summary}
+
+NEW TURNS TO INCORPORATE:
+{new_content}
+
+Update the summary using this exact structure. PRESERVE all existing
+information that is still relevant. ADD new completed actions to the numbered
+list (continue numbering). Move items from "In Progress" to "Completed Actions"
+when done. Move answered questions to "Resolved Questions". Update "Active
+State" to reflect current state. Remove information only if it is clearly
+obsolete. CRITICAL: Update "## Active Task" to reflect the operator's most
+recent unfulfilled input — any question, decision request, or discussion turn
+not yet answered. Only write "None" if the last exchange was fully resolved.
+
+{_template_sections(summary_budget, today)}"""
+
+
+def _strip_summary_prefix(text: str) -> str:
+    """Drop the REFERENCE-ONLY handoff prefix (or the legacy bland header) from a
+    prior summary body before re-folding it, so the new summary carries the
+    prefix exactly once. Body hygiene only — summary detection is by transcript
+    kind, never by this text."""
+    t = (text or "").lstrip()
+    for p in (SUMMARY_PREFIX, _LEGACY_HEADER):
+        if t.startswith(p):
+            return t[len(p):].lstrip()
+    return t
+
+
+_PRUNED_MARK = "output pruned: "  # identifies an already-one-lined tool result
+
+
+def _tool_output_summary(tool_name: str, content: str) -> str:
+    one = " ".join((content or "").split())
+    if len(one) > _TOOL_RESULT_CLIP:
+        one = one[: _TOOL_RESULT_CLIP - 1] + "…"
+    lines = content.count("\n") + 1 if content.strip() else 0
+    label = tool_name or "tool"
+    return f"[{label} {_PRUNED_MARK}{len(content)} chars, {lines} line(s)] {one}"
+
+
+def _already_pruned(content: str) -> bool:
+    return content.startswith("[") and _PRUNED_MARK in content[:64]
+
+
+def _prune_tool_outputs_for_summary(messages: list[dict]) -> list[dict]:
+    """Cheap zero-LLM pass: summarize old tool outputs in the copy sent to the
+    summarizer. The live ContextBuffer is not mutated by this pruning."""
+    call_names = _call_names(messages)
+
+    pruned: list[dict] = []
+    for msg in messages:
+        if msg.get("role") != "tool":
+            pruned.append(dict(msg))
+            continue
+        content = str(msg.get("content") or "")
+        tool_name = call_names.get(str(msg.get("tool_call_id") or ""), "tool")
+        pruned.append({**msg, "content": _tool_output_summary(tool_name, content)})
+    return pruned
+
+
+def _call_names(messages: list[dict]) -> dict[str, str]:
+    """tool_call_id → declaring tool name, scanned from assistant messages."""
+    names: dict[str, str] = {}
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        for tc in msg.get("tool_calls") or []:
+            if not isinstance(tc, dict):
+                continue
+            call_id = str(tc.get("id") or "")
+            name = str((tc.get("function") or {}).get("name") or "")
+            if call_id:
+                names[call_id] = name
+    return names
+
+
+def _live_prune_boundary(msgs: list[dict]) -> int:
+    """Index marking the start of the protected tail: tool results AT OR AFTER
+    this index keep their full content; everything BEFORE it is "old" and
+    prunable. Walks back accumulating ~_TAIL_MIN_TOKENS of recent messages.
+
+    The message that pushes the accumulator OVER budget is itself treated as
+    old (boundary = i + 1) — otherwise a single giant tool result that alone
+    exceeds the tail budget would protect itself forever (exactly the payload
+    #13 most wants gone). A message-count floor (hermes min_protect) keeps the
+    last _LIVE_PRUNE_PROTECT_MSGS verbatim regardless, so a recent tool pair is
+    never one-lined out from under an in-progress turn."""
+    floor = max(0, len(msgs) - _LIVE_PRUNE_PROTECT_MSGS)
+    budget = _TAIL_MIN_TOKENS
+    acc = 0
+    boundary = 0
+    for i in range(len(msgs) - 1, -1, -1):
+        acc += estimate_tokens(_msg_text(msgs[i])) + 2
+        if acc >= budget:
+            boundary = min(i + 1, len(msgs) - 1)
+            break
+    return min(boundary, floor)
+
+
+def prune_live_tool_outputs(ctx: ContextBuffer) -> bool:
+    """Shrink the LIVE window by one-lining and dedup'ing OLD tool outputs
+    (audit #13). Mutates ctx.messages in place; persists NOTHING — the full
+    results remain on disk in the transcript, exactly as trim() narrows the
+    in-memory view without rewriting history. Returns True if it changed
+    anything. Zero LLM cost.
+
+    Two passes, ported from hermes _prune_old_tool_results:
+      1. Dedup — an identical tool result (same file read repeatedly) older
+         than the most recent copy becomes a one-line back-reference.
+      2. One-line — a substantial tool result before the protected tail is
+         replaced by `[tool output pruned: N chars, M line(s)] <head>`.
+    Already-pruned rows (recognizable markers) are skipped so repeated calls
+    are idempotent and don't re-summarize a summary."""
+    msgs = ctx.messages
+    if len(msgs) < 2:
+        return False
+    boundary = _live_prune_boundary(msgs)
+    if boundary <= 0:
+        return False  # the whole window is protected tail — nothing old to prune
+    names = _call_names(msgs)
+    dup_marker = _DUP_TOOL_RESULT
+    changed = False
+
+    # Pass 1: dedup identical results across the WHOLE window, newest kept.
+    seen: set[str] = set()
+    for i in range(len(msgs) - 1, -1, -1):
+        msg = msgs[i]
+        if msg.get("role") != "tool":
+            continue
+        content = str(msg.get("content") or "")
+        if len(content) < _LIVE_PRUNE_MIN_CHARS:
+            continue
+        if content == dup_marker or _already_pruned(content):
+            continue
+        h = hashlib.md5(content.encode("utf-8", "replace")).hexdigest()[:12]
+        if h in seen:
+            # An older duplicate — but only collapse it if it is OUTSIDE the
+            # protected tail (recent identical reads stay verbatim).
+            if i < boundary:
+                msgs[i] = {**msg, "content": dup_marker}
+                changed = True
+        else:
+            seen.add(h)
+
+    # Pass 2: one-line substantial tool results older than the protected tail.
+    for i in range(boundary):
+        msg = msgs[i]
+        if msg.get("role") != "tool":
+            continue
+        content = str(msg.get("content") or "")
+        if len(content) < _LIVE_PRUNE_MIN_CHARS:
+            continue
+        if _already_pruned(content) or content == dup_marker:
+            continue
+        tool_name = names.get(str(msg.get("tool_call_id") or ""), "tool")
+        msgs[i] = {**msg, "content": _tool_output_summary(tool_name, content)}
+        changed = True
+
+    return changed
+
+
+def _has_image_part(content: Any) -> bool:
+    return isinstance(content, list) and any(
+        isinstance(p, dict) and p.get("type") == "image_url" for p in content)
+
+
+def strip_old_images(ctx: ContextBuffer) -> bool:
+    """Keep the pixels of ONLY the newest image-bearing message; collapse every
+    older one to its text handle. Ported from hermes
+    `context_compressor._strip_historical_media` (kilocode#9434) — "so the
+    outgoing request stops re-shipping the same multi-MB base-64 image blobs on
+    every turn" — but run EVERY turn, not at compaction: our token_count is
+    image-blind (_flatten_content drops image parts), so compaction can't be
+    relied on to fire on image bloat. Mutates ctx.messages; persists NOTHING
+    (the image was never written to the durable transcript). Returns True if it
+    changed anything. Idempotent: an already-collapsed message has no image part.
+
+    The newest read image stays visible so the chara can still re-examine it
+    across a turn or two; older images become a one-line text stub it remembers
+    having looked at — never the bytes."""
+    msgs = ctx.messages
+    newest = -1
+    for i in range(len(msgs) - 1, -1, -1):
+        if _has_image_part(msgs[i].get("content")):
+            newest = i
+            break
+    if newest < 0:
+        return False
+    changed = False
+    for i, msg in enumerate(msgs):
+        if i == newest or not _has_image_part(msg.get("content")):
+            continue
+        texts = [str(p.get("text", "")) for p in msg["content"]
+                 if isinstance(p, dict) and p.get("type") == "text"]
+        handle = " ".join(t for t in texts if t).strip()
+        msgs[i] = {**msg, "content": (
+            f"{handle} (earlier image — pixels no longer attached)" if handle
+            else "[earlier image — pixels no longer attached]")}
+        changed = True
+    return changed
+
+
+def _serialize(messages: list[dict]) -> str:
+    """Flatten the head into plain text for the summarizer.
+
+    Old tool outputs are pre-pruned to one line in this serialized copy so the
+    summary call spends budget on facts and file/command anchors, not bulk logs.
+    """
+    out: list[str] = []
+    for m in _prune_tool_outputs_for_summary(messages):
+        # _flatten_content, not str(): a surviving image (list content) must collapse
+        # to its text handle here, never dump ~2MB of base64 into the summarizer prompt.
+        content = _flatten_content(m.get("content"))
+        if m.get("kind") == "summary":
+            out.append(f"[earlier summary]\n{content}")
+        elif m.get("role") == "tool":
+            out.append(f"[tool result] {content}")
+        elif m.get("tool_calls"):
+            names = ", ".join(tc.get("function", {}).get("name", "?") for tc in m["tool_calls"])
+            out.append(f"{m.get('role','assistant')} (ran: {names}) {content}".strip())
+        else:
+            out.append(f"{m.get('role','')}: {content}")
+    return "\n\n".join(s for s in out if s.strip())
+
+
+def _budget(ctx: ContextBuffer) -> int:
+    """The usable prompt budget = the same target trim() uses (window minus the
+    reply/tool headroom). Used only for the liveness guard now; the trigger is
+    _threshold_tokens()."""
+    return max(0, ctx.max_tokens - ctx.trim_buffer_tokens)
+
+
+def _threshold_tokens(ctx: ContextBuffer) -> int:
+    """The compaction trigger, apple-to-apple with hermes
+    (context_compressor.py:641-643): max(real_window * THRESHOLD_RATIO,
+    MINIMUM_CONTEXT_LENGTH). Measured on the REAL model window (ctx.max_tokens,
+    set from providers.context_window), so a 1M model compacts at 500K, a 128K
+    model at 64K, etc. For a window below the 64K floor the threshold exceeds
+    the window and never fires — trim() carries it (hermes refuses such models;
+    we degrade to the backstop instead)."""
+    return max(int(ctx.max_tokens * THRESHOLD_RATIO), MINIMUM_CONTEXT_LENGTH)
+
+
+def _window_tokens(ctx: ContextBuffer, llm) -> int:
+    """Window size for the compaction trigger (audit #8, hermes
+    context_compressor): prefer the provider's REAL prompt_tokens from the
+    most recent stream over the char heuristic. The real number sees the whole
+    request (stable prefix, tool schemas, volatile tail) and is exact on
+    CJK-heavy text; the heuristic sees only the history and drifts both ways
+    (thrash or overflow).
+
+    Plausibility gate: trust the real number only while the live history is a
+    substantial share of the request it measured (heur·4 ≥ real). The same
+    client survives /reset and make_session — without the gate, stale usage
+    from a window that no longer exists would drive compaction of a
+    near-empty buffer."""
+    heur = ctx.token_count()
+    if not getattr(llm, "usage_fresh", False):
+        return heur
+    real = int(getattr(llm, "last_prompt_tokens", 0) or 0)
+    if real > 0 and heur * 4 >= real:
+        return real
+    return heur
+
+
+def should_compact(ctx: ContextBuffer, llm) -> bool:
+    if not (llm and llm.is_live()) or _budget(ctx) <= 0:
+        return False
+    tokens = _window_tokens(ctx, llm)
+    if tokens < _threshold_tokens(ctx):
+        return False
+    return _guard(ctx).allows(tokens)
+
+
+def _align_tail_cut(msgs: list[dict], cut: int) -> int:
+    """The tail must not OPEN with orphaned tool results (audit #11, hermes
+    _align_boundary_backward): render() silently drops a role:"tool" message
+    whose declaring assistant got summarized away — the freshest work would
+    vanish from the API view. Pull the cut back to the assistant that made the
+    calls so the whole group stays verbatim. If there is no parent in the
+    window (already orphaned), push forward instead so the orphans fold into
+    the summary rather than stranding at the tail head."""
+    if cut < len(msgs) and msgs[cut].get("role") == "tool":
+        j = cut - 1
+        while j >= 0 and msgs[j].get("role") == "tool":
+            j -= 1
+        if j >= 0 and msgs[j].get("role") == "assistant" and msgs[j].get("tool_calls"):
+            return j
+        while cut < len(msgs) and msgs[cut].get("role") == "tool":
+            cut += 1
+    return cut
+
+
+def _anchor_last_user(msgs: list[dict], cut: int) -> int:
+    """Keep the operator's most recent user message OUT of the summary (audit
+    #11, hermes _ensure_last_user_message_in_tail, scar #10896): a summarized
+    active request effectively disappears — the model stalls on it, repeats
+    finished work, or drops it. A user message is itself a clean boundary (no
+    tool-pair splitting risk), so anchoring is a plain pull-back."""
+    for i in range(len(msgs) - 1, -1, -1):
+        if msgs[i].get("role") == "user":
+            return min(cut, i)
+    return cut
+
+
+def compact(ctx: ContextBuffer, llm, *, force: bool = False) -> bool:
+    """Replace the old head of the window with one summary message. Returns True
+    if it changed anything. Safe to call any time; no-ops when not worth it.
+
+    Guarded against thrash (audit #10): consecutive ineffective compactions
+    back it off until the window regrows; a summarizer failure pauses retries
+    for _FAILURE_COOLDOWN. The buffer's own trim() remains the sanctioned
+    backstop either way. `force` (the operator's explicit /compact) bypasses
+    and clears the guard — hermes lets manual compression through the cooldown."""
+    budget = _budget(ctx)
+    if not (llm and llm.is_live()) or budget <= 0:
+        return False
+    threshold = _threshold_tokens(ctx)
+    tokens_before = ctx.token_count()
+    # The guard's resume_above and allows() MUST share a scale. allows() is fed
+    # _window_tokens (real provider usage when fresh), so the "wait until the
+    # window regrows past here" level recorded by record_ineffective has to be
+    # that same real measure — NOT the heuristic token_count. For CJK-heavy
+    # windows the heuristic runs far below the real count, so a heuristic
+    # resume_above is cleared on the very next turn (real > heuristic*1.10) and
+    # the anti-thrash backoff is silently defeated.
+    real_tokens = _window_tokens(ctx, llm)
+    guard = _guard(ctx)
+    if force:
+        guard.cooldown_until = 0.0
+    else:
+        # Trigger on real usage when fresh (audit #8); the shrink measurement
+        # below stays on the heuristic — it is the only measure available for
+        # the just-rewritten window, and before/after must share a scale.
+        if real_tokens < threshold:
+            return False
+        if not guard.allows(real_tokens):
+            return False
+
+    msgs = ctx.messages
+    if len(msgs) < 4:
+        return False
+
+    # Cheap zero-LLM first pass (audit #13): one-line / dedup OLD tool outputs
+    # in the LIVE window. This routinely reclaims multi-KB results before the
+    # expensive summarize call — and if it alone drops the window back under
+    # threshold, the LLM summary is skipped entirely (an effective, free
+    # compaction). Persists nothing; the full results stay in the transcript.
+    if prune_live_tool_outputs(ctx) and not force:
+        # The pre-prune real-usage number (audit #8) now overstates the rewritten
+        # window, so the skip test goes on the heuristic, which reflects the
+        # actual post-prune size — and shrink is measured on the same scale.
+        tokens_after = ctx.token_count()
+        if tokens_after < threshold:
+            if tokens_before > 0 and (tokens_before - tokens_after) / tokens_before >= _MIN_SHRINK:
+                guard.record_success()
+            else:
+                # Decision on the heuristic shrink ratio; the recorded resume level
+                # on the real scale allows() reads (see real_tokens above).
+                guard.record_ineffective(real_tokens)
+            return True
+
+    # Walk back from the end, protecting a verbatim tail of ~tail_budget tokens
+    # (hermes target_tokens = threshold_tokens * summary_target_ratio).
+    tail_budget = max(_TAIL_MIN_TOKENS, int(threshold * _TAIL_RATIO))
+    acc = 0
+    cut = None
+    for i in range(len(msgs) - 1, -1, -1):
+        acc += estimate_tokens(_msg_text(msgs[i])) + 2
+        if acc >= tail_budget:
+            cut = i
+            break
+    if cut is not None:
+        # Boundary hygiene (audit #11): the token walk is blind to structure.
+        cut = _align_tail_cut(msgs, cut)
+        cut = _anchor_last_user(msgs, cut)
+    if cut is None or cut < 2:   # whole thing fits in the tail → nothing old to fold
+        # Over threshold but nothing compactable: without counting this the
+        # guard never fires and every turn re-walks a no-op (#40803).
+        if not force:
+            guard.record_ineffective(real_tokens)
+        return False
+
+    summary = _summarize(msgs[:cut], budget, llm)
+    if not summary:
+        guard.record_failure()
+        return False
+
+    summary_msg = {"role": "system", "content": _HEADER + summary, "kind": "summary"}
+    tail = [dict(m) for m in msgs[cut:]]
+    ctx.messages = [summary_msg] + tail
+    stale = getattr(llm, "mark_usage_stale", None)
+    if callable(stale):
+        stale()  # the captured usage described the pre-compaction window
+    tokens_after = ctx.token_count()
+    if tokens_before > 0 and (tokens_before - tokens_after) / tokens_before < _MIN_SHRINK:
+        guard.record_ineffective(real_tokens)
+    else:
+        guard.record_success()
+    if ctx.persist is not None:
+        try:
+            ctx.persist(summary_msg)
+            # The transcript is append-only. Re-append the protected tail after
+            # the summary checkpoint so restore can load "latest summary + rows
+            # after it" without losing recent verbatim context; the older raw
+            # rows remain on disk for the full historical record. Marked
+            # kind="replay" so display/export skip them — the SAME rows already
+            # sit earlier in the epoch, and re-appending them as plain rows
+            # duplicated the whole tail in every chat reopen and export.
+            for msg in tail:
+                ctx.persist({**msg, "kind": "replay"})
+        except Exception:
+            pass
+    return True
+
+
+def _summarize(head: list[dict], budget: int, llm) -> str:
+    """Summarize the head into the structured `## Active Task …` checkpoint.
+
+    A prior summary (kind="summary") in the head drives the ITERATIVE-update
+    framing (it's pulled out and passed as PREVIOUS SUMMARY, with its handoff
+    prefix stripped so it doesn't nest); otherwise the FIRST-compaction framing
+    is used. One user message keeps the call filter-safe."""
+    prev = next((m for m in head if m.get("kind") == "summary"), None)
+    new_turns = [m for m in head if m.get("kind") != "summary"]
+    # Code-level secret scrub on the way IN: even if the prompt's [REDACTED]
+    # instruction is honored, a credential in the conversation must not reach the
+    # summarizer (force=True — a safety boundary that never emits raw secrets).
+    convo = redact_sensitive_text(_serialize(new_turns), force=True)
+    if not convo:
+        return ""
+    out_budget = min(2048, max(512, budget // 8))
+    today = _today_str()
+    if prev is not None:
+        prev_body = redact_sensitive_text(
+            _strip_summary_prefix(_flatten_content(prev.get("content"))), force=True)
+        prompt = _iterative_update_prompt(prev_body, convo, out_budget, today)
+    else:
+        prompt = _first_compaction_prompt(convo, out_budget, today)
+    out = llm.raw_complete([{"role": "user", "content": prompt}], max_tokens=out_budget)
+    # …and on the way OUT: a model that ignored the [REDACTED] instruction must
+    # not leak a secret into the persisted summary.
+    return redact_sensitive_text(out, force=True)

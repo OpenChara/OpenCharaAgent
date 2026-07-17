@@ -8,20 +8,20 @@ from pathlib import Path
 
 import pytest
 
-from lunamoth.session.settings import Settings
+from chara.session.settings import Settings
 
 
 def _write_card(path: Path, *, phi: str = "", rules_closer: str = "", goals: list[str] | None = None,
                 wishes: list[str] | None = None, polaris: str = "", book: list[dict] | None = None) -> Path:
-    lunamoth: dict[str, object] = {"toolpack": "sandbox"}
+    chara: dict[str, object] = {"toolpack": "sandbox"}
     if rules_closer:
-        lunamoth["rules_closer"] = rules_closer
+        chara["rules_closer"] = rules_closer
     if goals is not None:
-        lunamoth["goals"] = goals
+        chara["goals"] = goals
     if wishes is not None:
-        lunamoth["wishes"] = wishes
+        chara["wishes"] = wishes
     if polaris:
-        lunamoth["polaris"] = polaris
+        chara["polaris"] = polaris
     data: dict[str, object] = {
         "name": "TestCard",
         "description": "Persona marker.",
@@ -31,7 +31,7 @@ def _write_card(path: Path, *, phi: str = "", rules_closer: str = "", goals: lis
         "mes_example": "",
         "system_prompt": "System marker for {{char}} and {{user}}.",
         "post_history_instructions": phi,
-        "extensions": {"lunamoth": lunamoth},
+        "extensions": {"chara": chara},
     }
     if book is not None:
         # The card's embedded character_book is the ONE world source.
@@ -44,17 +44,17 @@ def _write_card(path: Path, *, phi: str = "", rules_closer: str = "", goals: lis
 @pytest.fixture
 def agent_factory(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
 
-    from lunamoth.core import agent as agent_mod
-    from lunamoth.tools import skills as skills_mod
+    from chara.core import agent as agent_mod
+    from chara.tools import skills as skills_mod
 
     sandbox = tmp_path / "sandbox"
     monkeypatch.setattr(agent_mod, "SANDBOX_ROOT", sandbox)
     monkeypatch.setattr(skills_mod, "SANDBOX_ROOT", sandbox)
 
-    from lunamoth.core.agent import LunaMothAgent
+    from chara.core.agent import CharaAgent
 
     def make(*, card: Path | None = None, toolpack: str = "sandbox",
              reset: bool = True, **kw):
@@ -64,7 +64,7 @@ def agent_factory(tmp_path, monkeypatch):
             toolpack=toolpack,
             **kw,
         )
-        a = LunaMothAgent(settings)
+        a = CharaAgent(settings)
         if reset:
             a.transcript.reset()
         a.state.set_network(False)
@@ -183,7 +183,7 @@ def test_worldinfo_budget_cap_truncates_by_order(agent_factory, tmp_path, monkey
 
 
 def test_compaction_summary_persists_and_restore_avoids_resummarizing(agent_factory, monkeypatch):
-    from lunamoth.core import compaction
+    from chara.core import compaction
     # This fast test uses a 4000-token window; drop the 64K trigger floor so the
     # tail budget (keyed to the threshold) fits the tiny window. The floor itself
     # is covered in tests/test_compaction.py.
@@ -202,7 +202,7 @@ def test_compaction_summary_persists_and_restore_avoids_resummarizing(agent_fact
         calls["n"] += 1
         return "PERSISTED SUMMARY"
 
-    from lunamoth.core.llm import LLMClient
+    from chara.core.llm import LLMClient
 
     monkeypatch.setattr(LLMClient, "is_live", lambda self: True)
     monkeypatch.setattr(LLMClient, "raw_complete", fake_raw_complete)
@@ -225,7 +225,7 @@ def test_volatile_tail_never_enters_transcript(agent_factory, tmp_path, monkeypa
 
     def canned(*_args, **_kwargs):
         def gen():
-            from lunamoth.protocol import TextDelta
+            from chara.protocol import TextDelta
             yield TextDelta("reply", "say")
         return gen()
 

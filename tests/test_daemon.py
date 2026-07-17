@@ -8,13 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from lunamoth.session import sessions as S
-from lunamoth.front import cli
+from chara.session import sessions as S
+from chara.front import cli
 
 
 @pytest.fixture(autouse=True)
 def temp_home(tmp_path, monkeypatch):
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
     yield
 
 
@@ -95,7 +95,7 @@ def test_start_daemon_releases_the_claim_on_spawn_failure(monkeypatch):
 
 def test_start_daemon_argv_carries_the_session_marker(monkeypatch):
     """The daemon argv is otherwise identical across charas; the inert --session
-    marker is what lets pid_is_lunamoth tell sibling daemons apart after reboot
+    marker is what lets pid_is_chara tell sibling daemons apart after reboot
     pid-reuse (terminal.py accepts and ignores it)."""
     meta = S.create_session("marked")
     _configure(meta)
@@ -146,15 +146,15 @@ def test_start_all_only_configured(capsys):
 def test_serve_sigterm_clears_running_marker(tmp_path):
     home = tmp_path / "home-serve"
     src = str(Path(__file__).resolve().parents[1] / "src")
-    env = {**os.environ, "LUNAMOTH_HOME": str(home)}
+    env = {**os.environ, "CHARA_HOME": str(home)}
     env["PYTHONPATH"] = src + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-    old_home = os.environ.get("LUNAMOTH_HOME")
-    os.environ["LUNAMOTH_HOME"] = str(home)
+    old_home = os.environ.get("CHARA_HOME")
+    os.environ["CHARA_HOME"] = str(home)
     meta = S.create_session("stdio")
     _configure(meta)
     try:
         with subprocess.Popen(
-            [sys.executable, "-m", "lunamoth.front.cli", "serve", "stdio", "--stdio"],
+            [sys.executable, "-m", "chara.front.cli", "serve", "stdio", "--stdio"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -176,6 +176,6 @@ def test_serve_sigterm_clears_running_marker(tmp_path):
                     proc.wait(timeout=5)
     finally:
         if old_home is None:
-            os.environ.pop("LUNAMOTH_HOME", None)
+            os.environ.pop("CHARA_HOME", None)
         else:
-            os.environ["LUNAMOTH_HOME"] = old_home
+            os.environ["CHARA_HOME"] = old_home

@@ -6,9 +6,9 @@ import urllib.request
 
 import pytest
 
-from lunamoth.config import LLMConfig
-from lunamoth.core.llm import LLMClient
-from lunamoth.session.settings import Settings
+from chara.config import LLMConfig
+from chara.core.llm import LLMClient
+from chara.session.settings import Settings
 
 
 def _client():
@@ -27,7 +27,7 @@ def _drive(gen):
 
 @pytest.fixture
 def no_sleep(monkeypatch):
-    import lunamoth.core.llm as llm_mod
+    import chara.core.llm as llm_mod
 
     monkeypatch.setattr(llm_mod.time, "sleep", lambda _s: None)
 
@@ -79,7 +79,7 @@ def test_permanent_http_error_surfaces_immediately(monkeypatch, no_sleep):
 
 
 def test_explain_http_error_classifies_not_dumps():
-    from lunamoth.core.llm import _explain_http_error
+    from chara.core.llm import _explain_http_error
 
     auth = _explain_http_error(401, '{"error":{"message":"User not found.","code":401}}')
     assert "API key" in auth and 'User not found.' in auth
@@ -95,7 +95,7 @@ def test_explain_http_error_classifies_not_dumps():
 
 
 def test_retry_delay_is_jittered_exponential():
-    from lunamoth.core._stream_util import _RETRY_MAX_DELAY, _retry_delay
+    from chara.core._stream_util import _RETRY_MAX_DELAY, _retry_delay
 
     for attempt in range(1, 8):
         base = min(5.0 * 2 ** (attempt - 1), _RETRY_MAX_DELAY)
@@ -106,7 +106,7 @@ def test_retry_delay_is_jittered_exponential():
 
 
 def test_retry_after_wins_but_is_capped():
-    from lunamoth.core.llm import _retry_delay
+    from chara.core.llm import _retry_delay
 
     assert _retry_delay(3, retry_after=7.0) == 7.0      # the provider's own schedule — no jitter
     assert _retry_delay(1, retry_after=9999.0) == 120.0  # hostile header can't wedge the turn
@@ -118,7 +118,7 @@ def test_parse_retry_after_forms():
     import time as _time
     from email.utils import formatdate
 
-    from lunamoth.core.llm import _parse_retry_after
+    from chara.core.llm import _parse_retry_after
 
     assert _parse_retry_after({"Retry-After": "30"}) == 30.0
     assert _parse_retry_after({}) is None
@@ -130,7 +130,7 @@ def test_parse_retry_after_forms():
 
 
 def test_429_honors_retry_after_header(monkeypatch):
-    import lunamoth.core.llm as llm_mod
+    import chara.core.llm as llm_mod
 
     sleeps = []
     monkeypatch.setattr(llm_mod.time, "sleep", sleeps.append)
@@ -158,7 +158,7 @@ def test_429_honors_retry_after_header(monkeypatch):
 
 def test_retry_budget_and_visible_error_unchanged(monkeypatch):
     # The no-fallback policy holds: exactly 5 retries, then a VISIBLE error.
-    import lunamoth.core.llm as llm_mod
+    import chara.core.llm as llm_mod
 
     sleeps = []
     monkeypatch.setattr(llm_mod.time, "sleep", sleeps.append)
@@ -178,13 +178,13 @@ def test_retry_budget_and_visible_error_unchanged(monkeypatch):
 @pytest.fixture
 def agent(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sandbox"))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    from lunamoth.core.agent import LunaMothAgent
+    monkeypatch.setenv("CHARA_SANDBOX", str(tmp_path / "sandbox"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    from chara.core.agent import CharaAgent
 
     def make(**kw):
         kw.setdefault("toolpack", "")
-        return LunaMothAgent(Settings(character_path="", **kw))
+        return CharaAgent(Settings(character_path="", **kw))
 
     return make
 
@@ -216,7 +216,7 @@ def test_idle_cycle_failure_surfaces_without_fallback(agent, monkeypatch):
 
 def _patch_turns(monkeypatch, turns):
     """Each entry: (text, tool_calls, thinking, finish). Pops one per call."""
-    from lunamoth.core.llm import LLMClient
+    from chara.core.llm import LLMClient
 
     def fake_stream_turn(self, messages, tools, text_out, reasoning=None, channel="say"):
         text, tool_calls, thinking, finish = turns.pop(0)
@@ -242,7 +242,7 @@ def test_truly_empty_stream_retries_then_raises_visibly(monkeypatch, no_sleep):
 
 
 def test_empty_retry_notices_are_visible(monkeypatch, no_sleep):
-    from lunamoth.protocol import Notice
+    from chara.protocol import Notice
 
     _patch_turns(monkeypatch, [("", [], "", "")] * 4)
     events = []

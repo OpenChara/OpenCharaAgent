@@ -1,6 +1,6 @@
-"""Distribution lock: LUNAMOTH_FORCE_SANDBOX pins every chara to the sandbox jail and
+"""Distribution lock: CHARA_FORCE_SANDBOX pins every chara to the sandbox jail and
 refuses admin — at the isolation authority (backend), the child-launch map, and the
-wake / set_isolation RPCs — so a hosted LunaMoth can't be escaped or reconfigured out
+wake / set_isolation RPCs — so a hosted OpenCharaAgent can't be escaped or reconfigured out
 of its jail. The UI greys the toggle off hub.state.force_sandbox (tested in vitest)."""
 from __future__ import annotations
 
@@ -8,33 +8,33 @@ import json
 
 import pytest
 
-from lunamoth.session import isolation as I
-from lunamoth.session import sessions as S
+from chara.session import isolation as I
+from chara.session import sessions as S
 
 
 def test_force_sandbox_env_parsing(monkeypatch):
     for v in ("1", "true", "yes", "on", "TRUE", " On "):
-        monkeypatch.setenv("LUNAMOTH_FORCE_SANDBOX", v)
+        monkeypatch.setenv("CHARA_FORCE_SANDBOX", v)
         assert I.force_sandbox() is True
     for v in ("", "0", "no", "off", "false"):
-        monkeypatch.setenv("LUNAMOTH_FORCE_SANDBOX", v)
+        monkeypatch.setenv("CHARA_FORCE_SANDBOX", v)
         assert I.force_sandbox() is False
 
 
 def test_backend_clamps_admin_when_forced(monkeypatch):
-    monkeypatch.setenv("LUNAMOTH_PY_BACKEND", "admin")
-    monkeypatch.delenv("LUNAMOTH_FORCE_SANDBOX", raising=False)
+    monkeypatch.setenv("CHARA_PY_BACKEND", "admin")
+    monkeypatch.delenv("CHARA_FORCE_SANDBOX", raising=False)
     assert I.backend() == "admin"  # unlocked: admin honoured
-    monkeypatch.setenv("LUNAMOTH_FORCE_SANDBOX", "1")
+    monkeypatch.setenv("CHARA_FORCE_SANDBOX", "1")
     assert I.backend() == "sandbox"  # locked: clamped at the authority every runner reads
-    monkeypatch.setenv("LUNAMOTH_PY_BACKEND", "sandbox")
+    monkeypatch.setenv("CHARA_PY_BACKEND", "sandbox")
     assert I.backend() == "sandbox"
 
 
 def test_isolation_to_backend_clamps_when_forced(monkeypatch):
-    monkeypatch.delenv("LUNAMOTH_FORCE_SANDBOX", raising=False)
+    monkeypatch.delenv("CHARA_FORCE_SANDBOX", raising=False)
     assert S.isolation_to_backend("admin") == "admin"
-    monkeypatch.setenv("LUNAMOTH_FORCE_SANDBOX", "1")
+    monkeypatch.setenv("CHARA_FORCE_SANDBOX", "1")
     assert S.isolation_to_backend("admin") == "sandbox"  # child launched jailed
     assert S.isolation_to_backend("sandbox") == "sandbox"
 
@@ -43,9 +43,9 @@ def test_isolation_to_backend_clamps_when_forced(monkeypatch):
 
 @pytest.fixture
 def hub_env(tmp_path, monkeypatch):
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("LUNAMOTH_FORCE_SANDBOX", "1")
-    from lunamoth.server import hub as H
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CHARA_FORCE_SANDBOX", "1")
+    from chara.server import hub as H
     H.save_key("default", provider="openrouter", base_url="https://example.invalid/v1",
                api_key="sk-test", model="test/model")
     H.use_key("default")
@@ -72,8 +72,8 @@ def test_wake_clamps_isolation_to_sandbox_when_forced(hub_env):
 
 
 def test_downgrade_admin_sessions_rewrites_both_stores(tmp_path, monkeypatch):
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
-    monkeypatch.delenv("LUNAMOTH_FORCE_SANDBOX", raising=False)
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("CHARA_FORCE_SANDBOX", raising=False)
     adm = S.create_session("adm", isolation="admin")
     adm.config_path.write_text(json.dumps({"character_path": "/x/card.json", "isolation": "admin",
                                             "py_backend": "admin", "model": "m"}), encoding="utf-8")
@@ -95,8 +95,8 @@ def test_downgrade_admin_sessions_rewrites_both_stores(tmp_path, monkeypatch):
 def test_downgrade_catches_config_only_admin(tmp_path, monkeypatch):
     # session.json sandbox but config.json admin (the set_isolation-writes-config case) is
     # still caught + reconciled to sandbox in both stores.
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
-    monkeypatch.delenv("LUNAMOTH_FORCE_SANDBOX", raising=False)
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("CHARA_FORCE_SANDBOX", raising=False)
     m = S.create_session("mixed", isolation="sandbox")
     m.config_path.write_text(json.dumps({"isolation": "admin", "py_backend": "admin"}), encoding="utf-8")
     assert S.downgrade_admin_sessions() == ["mixed"]

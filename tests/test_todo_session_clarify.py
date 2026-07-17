@@ -16,9 +16,9 @@ from typing import Any, Callable, Optional
 
 import pytest
 
-from lunamoth.tools.builtin import session_search as ss_mod
-from lunamoth.tools.builtin import todo as todo_mod
-from lunamoth.tools.registry import registry, discover_builtin_tools
+from chara.tools.builtin import session_search as ss_mod
+from chara.tools.builtin import todo as todo_mod
+from chara.tools.registry import registry, discover_builtin_tools
 
 
 # --------------------------------------------------------------------------- #
@@ -132,7 +132,7 @@ def test_todo_format_for_injection():
 
 def _wire_stdin(monkeypatch, lines):
     """Feed the terminal stdin helpers a queue of answer lines."""
-    from lunamoth.front import terminal as term
+    from chara.front import terminal as term
     queue = list(lines)
     monkeypatch.setattr(term, "_stdin_line_ready", lambda: bool(queue))
     monkeypatch.setattr(term, "_read_line", lambda: queue.pop(0) if queue else None)
@@ -169,7 +169,7 @@ def test_terminal_clarify_empty_line_returns_blank(monkeypatch):
 
 @pytest.fixture
 def transcript(tmp_path):
-    from lunamoth.core.transcript import TranscriptStore
+    from chara.core.transcript import TranscriptStore
     store = TranscriptStore(tmp_path / "transcript.sqlite")
     assert store.available
     return store

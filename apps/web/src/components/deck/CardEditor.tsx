@@ -22,7 +22,7 @@ import { VisualEditor } from "./VisualEditor";
 import { AssetsPane } from "./AssetsPane";
 import { deckToast, deckToastAction } from "../ui/deckToast";
 import { DeckModal } from "../ui/DeckModal";
-import type { DeckCard, FullCard, CardExtLunamoth, WorldBookEntry } from "./types";
+import type { DeckCard, FullCard, CardExtChara, WorldBookEntry } from "./types";
 
 type Tab = "set" | "vis" | "emo" | "assets" | "world";
 
@@ -163,7 +163,7 @@ export function CardEditor({
     );
   }
 
-  const ext = (full.extensions && full.extensions.lunamoth ? full.extensions.lunamoth : {}) as CardExtLunamoth;
+  const ext = (full.extensions && full.extensions.chara ? full.extensions.chara : {}) as CardExtChara;
   const isJson = !!full.raw;
   // A deck template edits in place; a living chara's own card edits LIVE (locked but
   // owned). Both are editable; only builtin / PNG / a non-owned locked card stay read-only.
@@ -300,7 +300,7 @@ export function CardEditor({
   // Patch one extension field immediately (used by the editable theme-color pickers).
   const patchExt = async (patch: Record<string, unknown>) => {
     try {
-      await hub.call("card.patch", { path: card.path, fields: { extensions: { lunamoth: patch } } }, 20000);
+      await hub.call("card.patch", { path: card.path, fields: { extensions: { chara: patch } } }, 20000);
       await refresh();
       onChanged();
     } catch (e) {

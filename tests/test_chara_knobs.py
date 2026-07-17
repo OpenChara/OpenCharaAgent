@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from lunamoth.content.knobs import normalize_website, parse_patience
-from lunamoth.session.settings import Settings
+from chara.content.knobs import normalize_website, parse_patience
+from chara.session.settings import Settings
 
 _WEB_MARK = "personal website in your space"
 _WEB_CLOSER_MARK = "keep it current"
 
 
-def _write_card(path: Path, lunamoth: dict | None = None) -> Path:
+def _write_card(path: Path, chara: dict | None = None) -> Path:
     payload = {
         "data": {
             "name": "KnobCard",
@@ -22,7 +22,7 @@ def _write_card(path: Path, lunamoth: dict | None = None) -> Path:
             "scenario": "A test room.",
             "system_prompt": "System marker for {{char}}/{{user}}.",
             "first_mes": "",
-            "extensions": {"lunamoth": dict(lunamoth or {})},
+            "extensions": {"chara": dict(chara or {})},
         }
     }
     path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -32,11 +32,11 @@ def _write_card(path: Path, lunamoth: dict | None = None) -> Path:
 @pytest.fixture
 def agent_factory(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
 
-    from lunamoth.core import agent as agent_mod
-    from lunamoth.tools import skills as skills_mod
+    from chara.core import agent as agent_mod
+    from chara.tools import skills as skills_mod
 
     sandbox = tmp_path / "sandbox"
     monkeypatch.setattr(agent_mod, "SANDBOX_ROOT", sandbox)
@@ -52,7 +52,7 @@ def agent_factory(tmp_path, monkeypatch):
         lambda cmd, *a, **k: None if cmd == "ffmpeg" else _real_which(cmd, *a, **k),
     )
 
-    from lunamoth.core.agent import LunaMothAgent
+    from chara.core.agent import CharaAgent
 
     def make(*, card: Path | None = None, toolpack: str = "sandbox", **kw):
         settings = Settings(
@@ -61,7 +61,7 @@ def agent_factory(tmp_path, monkeypatch):
             toolpack=toolpack,
             **kw,
         )
-        a = LunaMothAgent(settings)
+        a = CharaAgent(settings)
         a.transcript.reset()
         return a
 
@@ -74,9 +74,9 @@ def _blob(blocks: list[str]) -> str:
 
 def test_tempo_knob_is_retired_but_old_cards_still_load(agent_factory, tmp_path):
     """tempo was removed entirely (owner decision 2026-06-13): a card that still
-    declares `extensions.lunamoth.tempo` loads fine — the key is simply ignored."""
-    from lunamoth.core import commands
-    from lunamoth.protocol.api import CharaHandle
+    declares `extensions.chara.tempo` loads fine — the key is simply ignored."""
+    from chara.core import commands
+    from chara.protocol.api import CharaHandle
 
     card = _write_card(tmp_path / "old-tempo.json", {"toolpack": "sandbox", "tempo": "slow", "patience": 42})
     a = agent_factory(card=card)
@@ -105,7 +105,7 @@ def test_patience_parses_positive_numerics_only():
 
 
 def test_patience_is_explicit_single_sources_the_default_rule():
-    from lunamoth.content.knobs import DEFAULT_PATIENCE, patience_is_explicit
+    from chara.content.knobs import DEFAULT_PATIENCE, patience_is_explicit
 
     assert DEFAULT_PATIENCE == 3600.0
     # the bare default is NOT explicit (so a card default can still win)…
@@ -117,7 +117,7 @@ def test_patience_is_explicit_single_sources_the_default_rule():
 
 
 def test_card_patience_precedence_and_command_persists(agent_factory, tmp_path):
-    from lunamoth.core import commands
+    from chara.core import commands
 
     card = _write_card(tmp_path / "patience.json", {"toolpack": "sandbox", "patience": "42"})
     a = agent_factory(card=card)
@@ -143,7 +143,7 @@ def test_card_patience_precedence_and_command_persists(agent_factory, tmp_path):
 
 
 def test_snapshot_reports_effective_patience(agent_factory, tmp_path):
-    from lunamoth.protocol.api import CharaHandle
+    from chara.protocol.api import CharaHandle
 
     card = _write_card(tmp_path / "patience-snap.json", {"toolpack": "sandbox", "patience": 123.0})
     a = agent_factory(card=card)
@@ -174,8 +174,8 @@ def test_default_literal_prefix_sequence(agent_factory, tmp_path):
     """The literal-stance stable prefix is exactly: card identity, then the three
     neutral English blocks (rules, capabilities, tool-use), then the toolpack note.
     No actor bridge in literal stance; no per-language branching (engine is English)."""
-    from lunamoth.content import rules as rules_layer
-    from lunamoth.content.worldinfo import apply_macros
+    from chara.content import rules as rules_layer
+    from chara.content.worldinfo import apply_macros
 
     card = _write_card(tmp_path / "plain.json", {"toolpack": "sandbox"})
     a = agent_factory(card=card)
@@ -206,7 +206,7 @@ def test_embodiment_is_wake_time_only_no_hot_swap_command(agent_factory, tmp_pat
     """The /embodiment hot swap is gone (owner decision 2026-06-13): identity-layer
     switches rebuild the stable prefix and destroy the prompt cache. The choice
     arrives at wake (embodiment_override in the session config) and stays."""
-    from lunamoth.core import commands
+    from chara.core import commands
 
     a = agent_factory()
     s = a.make_session()
@@ -290,10 +290,10 @@ def test_website_gated_on_tools(agent_factory, tmp_path):
 
 
 def test_hub_daemon_launch_does_not_hardcode_tiny_patience(monkeypatch, tmp_path):
-    from lunamoth.server import hub as H
-    from lunamoth.session import sessions as S
+    from chara.server import hub as H
+    from chara.session import sessions as S
 
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home-daemon"))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home-daemon"))
     meta = S.create_session("no-tiny")
     meta.config_path.write_text(json.dumps({"provider": "mock", "character_path": ""}), encoding="utf-8")
     calls = []
@@ -317,7 +317,7 @@ def test_model_command_persists_to_chara_session(agent_factory, tmp_path):
     so the choice survives a child restart (the LLM client is rebuilt; Reply.data
     carries {model, context_max}). Only the model id changes — the provider/key
     stay put, keeping the route steady within a session."""
-    from lunamoth.core import commands
+    from chara.core import commands
 
     a = agent_factory(card=_write_card(tmp_path / "m.json"), model="mock/original")
     s = a.make_session()
@@ -331,7 +331,7 @@ def test_model_command_persists_to_chara_session(agent_factory, tmp_path):
     assert a.llm.cfg.model == "mock/other" if hasattr(a.llm, "cfg") else True
 
     # persisted: a fresh load of the chara's session config reflects the swap
-    from lunamoth.session.settings import load_settings
+    from chara.session.settings import load_settings
     assert load_settings().model == "mock/other"
 
 

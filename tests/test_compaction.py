@@ -1,7 +1,7 @@
 import pytest
 
-from lunamoth.core import compaction
-from lunamoth.core.context import ContextBuffer
+from chara.core import compaction
+from chara.core.context import ContextBuffer
 
 
 class FakeLLM:
@@ -223,7 +223,7 @@ def test_tail_never_starts_with_orphaned_tool_results():
 
 
 def test_parentless_tool_results_fold_into_the_summary():
-    from lunamoth.core.compaction import _align_tail_cut
+    from chara.core.compaction import _align_tail_cut
 
     msgs = [
         {"role": "user", "content": "a"},
@@ -516,12 +516,12 @@ def test_effective_compaction_resets_the_guard(clock):
 @pytest.fixture
 def agent(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sandbox"))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    from lunamoth.session.settings import Settings
-    from lunamoth.core.agent import LunaMothAgent
+    monkeypatch.setenv("CHARA_SANDBOX", str(tmp_path / "sandbox"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    from chara.session.settings import Settings
+    from chara.core.agent import CharaAgent
 
-    return LunaMothAgent(Settings(character_path="", toolpack="sandbox"))
+    return CharaAgent(Settings(character_path="", toolpack="sandbox"))
 
 
 def test_todo_injection_renders_active_items(agent):
@@ -539,7 +539,7 @@ def test_todo_injection_renders_active_items(agent):
 
 
 def test_compaction_reinjects_active_todo(agent):
-    from lunamoth.core.agent import Session
+    from chara.core.agent import Session
     agent.tools.call("todo", todos=[
         {"id": "1", "content": "draft the nocturne", "status": "in_progress"},
     ])
@@ -552,7 +552,7 @@ def test_compaction_reinjects_active_todo(agent):
 
 
 def test_compaction_without_todo_injects_nothing(agent):
-    from lunamoth.core.agent import Session
+    from chara.core.agent import Session
     session = Session()
     session.context.add("user", "hi")
     before = len(session.context.messages)
@@ -564,7 +564,7 @@ def test_compaction_tail_reappend_does_not_duplicate_display_or_export(tmp_path)
     # The persisted tail re-append (kind='replay') exists ONLY so load() can
     # rebuild "latest summary + tail". Display and export read the full epoch —
     # they must skip replay rows, or the tail shows twice after every compaction.
-    from lunamoth.core.transcript import TranscriptStore
+    from chara.core.transcript import TranscriptStore
 
     store = TranscriptStore(tmp_path / "transcript.db")
     ctx = ContextBuffer(max_tokens=10_000_000)
@@ -595,7 +595,7 @@ def test_compaction_tail_reappend_does_not_duplicate_display_or_export(tmp_path)
 def test_replay_rows_survive_a_second_compaction(tmp_path):
     # Re-compacting a restored window must keep working: the replay rows load
     # as ordinary dicts and fold/re-append again without growing the display.
-    from lunamoth.core.transcript import TranscriptStore
+    from chara.core.transcript import TranscriptStore
 
     store = TranscriptStore(tmp_path / "transcript.db")
     ctx = ContextBuffer(max_tokens=10_000_000)

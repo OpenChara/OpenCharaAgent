@@ -1,4 +1,4 @@
-# Contributing to LunaMoth
+# Contributing to OpenCharaAgent
 
 Thanks for your interest. This guide is the contributor's view of how to build,
 test, and submit changes. (Security issues: please follow [SECURITY.md](SECURITY.md)
@@ -6,7 +6,7 @@ instead of opening a public issue.)
 
 ## Project layout
 
-- `src/lunamoth/` — the Python runtime (agent core, tools + OS sandbox, the
+- `src/chara/` — the Python runtime (agent core, tools + OS sandbox, the
   JSON-RPC hub/supervisor, messaging gateways, the Textual TUI). Domain
   subpackages with an **enforced** dependency direction — see below.
 - `apps/web/` — the React + TypeScript desktop SPA (built into the wheel).
@@ -20,8 +20,8 @@ Backend (needs [uv](https://docs.astral.sh/uv/)):
 
 ```bash
 uv sync --extra dev --extra server   # plain `uv sync` drops pytest — always use the extras
-uv run lunamoth                       # the web/desktop hub
-uv run lunamoth tui                   # the terminal UI
+uv run chara                       # the web/desktop hub
+uv run chara tui                   # the terminal UI
 ```
 
 Frontend (needs Node 22):
@@ -29,7 +29,7 @@ Frontend (needs Node 22):
 ```bash
 cd apps/web
 npm install
-npm run dev      # Vite dev server; proxies /rpc + ws to a running `lunamoth desktop`
+npm run dev      # Vite dev server; proxies /rpc + ws to a running `chara desktop`
 ```
 
 ## Before you open a PR
@@ -40,7 +40,7 @@ Backend:
 
 ```bash
 uv run python -m pytest -q                         # full suite
-uvx ruff check --select F src/lunamoth tests       # lint (unused imports / undefined names)
+uvx ruff check --select F src/chara tests       # lint (unused imports / undefined names)
 ```
 
 Frontend:

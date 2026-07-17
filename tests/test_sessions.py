@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from lunamoth.session import sessions as S
+from chara.session import sessions as S
 
 
 def test_config_isolation_has_a_single_mutating_writer():
@@ -18,7 +18,7 @@ def test_config_isolation_has_a_single_mutating_writer():
     literal (the legitimate initial write); the derived `py_backend` copy is fully
     retired — no config write may reintroduce it. If this fails, a new site is editing
     the mirror behind the single writer's back — route it through set_isolation."""
-    src = Path(__file__).resolve().parent.parent / "src" / "lunamoth"
+    src = Path(__file__).resolve().parent.parent / "src" / "chara"
     mutation = re.compile(r'\["isolation"\]\s*=')
     py_backend_write = re.compile(r'\["py_backend"\]\s*=|"py_backend"\s*:')
     iso, pyb = [], []
@@ -35,7 +35,7 @@ def test_config_isolation_has_a_single_mutating_writer():
 
 @pytest.fixture(autouse=True)
 def temp_home(tmp_path, monkeypatch):
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
     yield tmp_path / "home"
 
 
@@ -57,7 +57,7 @@ def test_soft_delete_moves_to_trash_frees_name_keeps_data():
     assert S.list_sessions() == []
     assert not meta.root.exists()  # moved out of the sessions dir
     # data preserved in the trash (recoverable), with an origin manifest
-    trashed = S.lunamoth_home() / ".trash" / "sessions" / res["trash_id"]
+    trashed = S.chara_home() / ".trash" / "sessions" / res["trash_id"]
     assert (trashed / "card.json").read_text(encoding="utf-8") == '{"v":1}'
     assert "quinn" in (trashed / "origin.json").read_text(encoding="utf-8")
     # the name is freed → re-waking the template reuses it cleanly (no -2 drift)
@@ -118,16 +118,16 @@ def test_daemon_pid_reused_by_a_stranger_is_stale(monkeypatch):
     meta = S.create_session("reused")
     meta.daemon_pid_path.write_text(str(os.getpid()), encoding="utf-8")  # alive, but pytest
     _backdate(meta.daemon_pid_path, 3600)  # past the fresh-spawn identity grace
-    monkeypatch.setattr(S, "pid_is_lunamoth", lambda pid, session=None: False)  # not one of ours
+    monkeypatch.setattr(S, "pid_is_chara", lambda pid, session=None: False)  # not one of ours
     assert meta.daemon_pid() is None
     assert not meta.daemon_pid_path.exists()  # stale file removed
 
 
-def test_daemon_pid_keeps_a_verified_lunamoth_process(monkeypatch):
+def test_daemon_pid_keeps_a_verified_chara_process(monkeypatch):
     meta = S.create_session("ours")
     meta.daemon_pid_path.write_text(str(os.getpid()), encoding="utf-8")
     _backdate(meta.daemon_pid_path, 3600)
-    monkeypatch.setattr(S, "pid_is_lunamoth", lambda pid, session=None: True)  # identity passes
+    monkeypatch.setattr(S, "pid_is_chara", lambda pid, session=None: True)  # identity passes
     assert meta.daemon_pid() == os.getpid()
     assert meta.daemon_pid_path.exists()
 
@@ -137,7 +137,7 @@ def test_daemon_pid_trusts_a_fresh_record_during_spawn(monkeypatch):
     cmdline briefly reads as the parent's) — identity must not condemn it yet."""
     meta = S.create_session("fresh")
     meta.daemon_pid_path.write_text(str(os.getpid()), encoding="utf-8")  # just written
-    monkeypatch.setattr(S, "pid_is_lunamoth", lambda pid, session=None: False)
+    monkeypatch.setattr(S, "pid_is_chara", lambda pid, session=None: False)
     assert meta.daemon_pid() == os.getpid()  # grace window: trusted, not dropped
     assert meta.daemon_pid_path.exists()
 
@@ -161,51 +161,51 @@ def test_empty_daemon_pid_is_an_in_flight_claim():
     assert not meta.daemon_pid_path.exists()  # a crashed starter's claim self-heals
 
 
-def test_pid_is_lunamoth_reads_the_command_line():
+def test_pid_is_chara_reads_the_command_line():
     # argv carrying the package name passes; a plain sleeper does not; nor a dead pid.
     probe = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)",
-                              "lunamoth-identity-probe"])
+                              "chara-identity-probe"])
     sleeper = subprocess.Popen(["/bin/sleep", "30"])
     try:
         deadline = time.time() + 5  # give the children a beat to finish exec
-        while time.time() < deadline and not S.pid_is_lunamoth(probe.pid):
+        while time.time() < deadline and not S.pid_is_chara(probe.pid):
             time.sleep(0.05)
-        assert S.pid_is_lunamoth(probe.pid) is True
-        assert S.pid_is_lunamoth(sleeper.pid) is False
+        assert S.pid_is_chara(probe.pid) is True
+        assert S.pid_is_chara(sleeper.pid) is False
     finally:
         for p in (probe, sleeper):
             p.kill()
             p.wait()
-    assert S.pid_is_lunamoth(999999999) is False
+    assert S.pid_is_chara(999999999) is False
 
 
-def test_pid_is_lunamoth_tells_sibling_sessions_apart():
-    """Every daemon argv is otherwise identically `-m lunamoth.front.terminal` (the
+def test_pid_is_chara_tells_sibling_sessions_apart():
+    """Every daemon argv is otherwise identically `-m chara.front.terminal` (the
     session rides only env), so cli._start_daemon stamps an inert `--session NAME`
     marker. With a session given, a DIFFERENT marker is a sibling's daemon (reboot
     pid-reuse across charas once made start-all skip A and A.stop() kill B)."""
     code = "import time; time.sleep(30)"
-    alice = subprocess.Popen([sys.executable, "-c", code, "lunamoth", "--session", "alice"])
-    bob = subprocess.Popen([sys.executable, "-c", code, "lunamoth", "--session", "bob"])
-    old = subprocess.Popen([sys.executable, "-c", code, "lunamoth-pre-marker-daemon"])
+    alice = subprocess.Popen([sys.executable, "-c", code, "chara", "--session", "alice"])
+    bob = subprocess.Popen([sys.executable, "-c", code, "chara", "--session", "bob"])
+    old = subprocess.Popen([sys.executable, "-c", code, "chara-pre-marker-daemon"])
     try:
         deadline = time.time() + 5  # give the children a beat to finish exec
         while time.time() < deadline and not (
-            S.pid_is_lunamoth(alice.pid, session="alice")
-            and S.pid_is_lunamoth(bob.pid, session="bob")
-            and S.pid_is_lunamoth(old.pid)
+            S.pid_is_chara(alice.pid, session="alice")
+            and S.pid_is_chara(bob.pid, session="bob")
+            and S.pid_is_chara(old.pid)
         ):
             time.sleep(0.05)
-        assert S.pid_is_lunamoth(alice.pid, session="alice") is True
-        assert S.pid_is_lunamoth(bob.pid, session="bob") is True
+        assert S.pid_is_chara(alice.pid, session="alice") is True
+        assert S.pid_is_chara(bob.pid, session="bob") is True
         # the sibling collision: bob's daemon must NOT pass as alice's (and vice versa)
-        assert S.pid_is_lunamoth(bob.pid, session="alice") is False
-        assert S.pid_is_lunamoth(alice.pid, session="bob") is False
-        # back-compat: a pre-upgrade daemon carries NO marker — lunamoth, just
+        assert S.pid_is_chara(bob.pid, session="alice") is False
+        assert S.pid_is_chara(alice.pid, session="bob") is False
+        # back-compat: a pre-upgrade daemon carries NO marker — chara, just
         # unlabeled: it must not be treated as foreign.
-        assert S.pid_is_lunamoth(old.pid, session="alice") is True
+        assert S.pid_is_chara(old.pid, session="alice") is True
         # the bare match (no session asked) is unchanged
-        assert S.pid_is_lunamoth(bob.pid) is True
+        assert S.pid_is_chara(bob.pid) is True
     finally:
         for p in (alice, bob, old):
             p.kill()
@@ -213,7 +213,7 @@ def test_pid_is_lunamoth_tells_sibling_sessions_apart():
 
 
 def test_daemon_pid_hands_its_session_name_to_the_identity_check(monkeypatch):
-    """daemon_pid() must ask for THIS chara's daemon, not any lunamoth process —
+    """daemon_pid() must ask for THIS chara's daemon, not any chara process —
     that session= is what stops a sibling's reused pid from passing."""
     meta = S.create_session("named")
     meta.daemon_pid_path.write_text(str(os.getpid()), encoding="utf-8")
@@ -224,7 +224,7 @@ def test_daemon_pid_hands_its_session_name_to_the_identity_check(monkeypatch):
         seen["session"] = session
         return True
 
-    monkeypatch.setattr(S, "pid_is_lunamoth", fake_identity)
+    monkeypatch.setattr(S, "pid_is_chara", fake_identity)
     assert meta.daemon_pid() == os.getpid()
     assert seen["session"] == "named"
 
@@ -240,19 +240,19 @@ def test_stale_running_marker_is_harmless():
 def test_env_points_at_session():
     meta = S.create_session("envy")
     env = meta.env()
-    assert env["LUNAMOTH_CONFIG_DIR"].endswith("sessions/envy")
-    assert env["LUNAMOTH_SANDBOX"].endswith("sessions/envy/sandbox")
+    assert env["CHARA_CONFIG_DIR"].endswith("sessions/envy")
+    assert env["CHARA_SANDBOX"].endswith("sessions/envy/sandbox")
 
 
 def test_env_carries_py_backend_so_callers_never_rederive_the_jail():
     """The isolation→backend map has ONE owner now (sessions); env() is the
-    complete activation interface and emits LUNAMOTH_PY_BACKEND itself, so a
+    complete activation interface and emits CHARA_PY_BACKEND itself, so a
     caller can never drift by forgetting to set the jail."""
     assert S.isolation_to_backend("sandbox") == "sandbox"
     assert S.isolation_to_backend("admin") == "admin"
     assert S.isolation_to_backend("anything-unknown") == "sandbox"  # safe default = jailed
-    assert S.create_session("jailed", isolation="sandbox").env()["LUNAMOTH_PY_BACKEND"] == "sandbox"
-    assert S.create_session("trusted", isolation="admin").env()["LUNAMOTH_PY_BACKEND"] == "admin"
+    assert S.create_session("jailed", isolation="sandbox").env()["CHARA_PY_BACKEND"] == "sandbox"
+    assert S.create_session("trusted", isolation="admin").env()["CHARA_PY_BACKEND"] == "admin"
 
 
 def test_set_isolation_writes_both_stores_in_lockstep():
@@ -266,7 +266,7 @@ def test_set_isolation_writes_both_stores_in_lockstep():
     # session.json (authority): reloads as sandbox, env() jails the next child
     reloaded = S.load_session("iso")
     assert reloaded.isolation == "sandbox"
-    assert reloaded.env()["LUNAMOTH_PY_BACKEND"] == "sandbox"
+    assert reloaded.env()["CHARA_PY_BACKEND"] == "sandbox"
     # config.json mirror: isolation updated, the legacy py_backend copy dropped, model kept
     cfg = json.loads(meta.config_path.read_text(encoding="utf-8"))
     assert cfg["isolation"] == "sandbox" and "py_backend" not in cfg and cfg["model"] == "m"
@@ -288,9 +288,9 @@ def test_set_isolation_leaves_missing_config_untouched():
 def test_cli_new_ls_rm(temp_home):
     def run(*argv):
         return subprocess.run(
-            [sys.executable, "-m", "lunamoth.front.cli", *argv],
+            [sys.executable, "-m", "chara.front.cli", *argv],
             capture_output=True, text=True,
-            env={"PATH": "/usr/bin:/bin", "LUNAMOTH_HOME": str(temp_home), "PYTHONPATH": "src"},
+            env={"PATH": "/usr/bin:/bin", "CHARA_HOME": str(temp_home), "PYTHONPATH": "src"},
         )
 
     out = run("new", "beta", "--isolation", "admin")

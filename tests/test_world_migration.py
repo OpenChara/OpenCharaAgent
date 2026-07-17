@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from lunamoth.session import settings as settings_mod
+from chara.session import settings as settings_mod
 
 
 @pytest.fixture

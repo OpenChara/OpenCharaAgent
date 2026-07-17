@@ -12,10 +12,10 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-from lunamoth.tools.memory import ENTRY_DELIMITER, MemoryLimits, MemoryStore
-from lunamoth.tools.skills import SkillStore
-from lunamoth.tools.builtin.memory import memory as memory_tool
-from lunamoth.tools.builtin.skills import skills_list, skill_view, skill_manage
+from chara.tools.memory import ENTRY_DELIMITER, MemoryLimits, MemoryStore
+from chara.tools.skills import SkillStore
+from chara.tools.builtin.memory import memory as memory_tool
+from chara.tools.builtin.skills import skills_list, skill_view, skill_manage
 
 
 # ---------------------------------------------------------------------------
@@ -37,7 +37,7 @@ def _parse(s: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def test_discovery_registers_memory_and_skills():
-    from lunamoth.tools.registry import registry, discover_builtin_tools
+    from chara.tools.registry import registry, discover_builtin_tools
     discover_builtin_tools()
     names = registry.get_all_tool_names()
     for n in ("memory", "skills_list", "skill_view", "skill_manage"):
@@ -45,7 +45,7 @@ def test_discovery_registers_memory_and_skills():
 
 
 def test_helper_modules_not_discovered():
-    from lunamoth.tools.registry import registry
+    from chara.tools.registry import registry
     # The underscore helper modules must not register tool names.
     assert "_threat_patterns" not in registry.get_all_tool_names()
     assert "_skill_fuzzy" not in registry.get_all_tool_names()

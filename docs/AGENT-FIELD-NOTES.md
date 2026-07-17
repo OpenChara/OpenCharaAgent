@@ -76,15 +76,15 @@ Mock/`sk-or-dummy` keys verify rendering and the fail-visibly path, but never a
 real provider round-trip. To exercise the actual attach→send→child-spawn→
 request→stream chain end to end:
 
-- Launch an **isolated** instance (`LUNAMOTH_HOME=<tmp>`), then copy the real
-  key from `~/.lunamoth/desktop.json` into `<tmp>/home/desktop.json` **in code,
+- Launch an **isolated** instance (`CHARA_HOME=<tmp>`), then copy the real
+  key from `~/.chara/desktop.json` into `<tmp>/home/desktop.json` **in code,
   never echoed** (read the dict, write the dict; pick a cheap real model).
 - `attach`/`send` are the **per-chara** JSON-RPC, NOT the hub WS. Connect to
   `ws://host:wsport/chara/<session>?token=<t>` (session id, e.g. `card`, not the
   display name). The hub WS (`/?token=`) only serves `cards.list`/`session.wake`;
   the hub NEVER hosts an agent (one process = one activated session).
 - The chara runs in a supervisor-spawned `serve --stdio` child. Its outcome lands
-  in `<home>/sessions/<name>/sandbox/logs/{errors,lunamoth}.log`,
+  in `<home>/sessions/<name>/sandbox/logs/{errors,chara}.log`,
   `requests.jsonl` (credential-redacted, 1 line per turn), and `transcript.db` —
   read THOSE, not the hub's stdout, to see what the model call did.
 - **Teardown is mandatory and security-sensitive**: kill the instance, then
@@ -124,7 +124,7 @@ restart the service.** Internal code changes *never* change this flow.
 - `ps aux | grep <app>` — actual processes. **Watch for processes a chara spawned
   in its own sandbox**: a `live` chara can start its own background servers
   (found one running six `jarvis_*` servers under its sandbox). `pkill -f
-  "/.lunamoth/sessions/"` catches those.
+  "/.chara/sessions/"` catches those.
 - `du -sh /root/* /root/.[a-z]*` — disk hogs; `.cache/uv` + `.cache/pip` are the
   usual reclaimable junk (regenerable).
 - `ss -tlnp | grep :<port>` — confirm down/up.

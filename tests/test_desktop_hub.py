@@ -1,6 +1,6 @@
 """Desktop hub gateway: roster RPC, wake/freeze, defaults, drafts (server/hub.py).
 
-Everything runs against a temp LUNAMOTH_HOME; no network, no LLM (provider
+Everything runs against a temp CHARA_HOME; no network, no LLM (provider
 HTTP paths are exercised separately / mocked here)."""
 import json
 import sqlite3
@@ -8,13 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from lunamoth.server import hub as H
-from lunamoth.session import sessions as S
+from chara.server import hub as H
+from chara.session import sessions as S
 
 
 @pytest.fixture(autouse=True)
 def temp_home(tmp_path, monkeypatch):
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
     yield tmp_path / "home"
 
 
@@ -148,7 +148,7 @@ def test_wake_freezes_card_and_writes_config():
     cfg = json.loads(meta.config_path.read_text(encoding="utf-8"))
     assert cfg["character_path"] == str(frozen)
     assert not cfg.get("api_key")  # SEC-2: the secret is NOT copied into the session config
-    assert cfg["toolpack"] == "sandbox"  # from the card's extensions.lunamoth
+    assert cfg["toolpack"] == "sandbox"  # from the card's extensions.chara
     assert cfg["isolation"] == "sandbox"  # the one isolation field (the jail is derived from it)
     assert "py_backend" not in cfg  # no derived mirror copy in config — isolation is the source
 
@@ -156,7 +156,7 @@ def test_wake_freezes_card_and_writes_config():
 def test_wake_with_card_data_freezes_the_edited_card_not_the_source():
     set_defaults()
     edited = {"data": {"name": "LunaMoth", "description": "EDITED AT WAKE",
-                       "extensions": {"lunamoth": {"toolpack": "sandbox"}}}}
+                       "extensions": {"chara": {"toolpack": "sandbox"}}}}
     entry = result("session.wake", {"card": luna_card_path(), "card_data": edited})
     meta = S.load_session(entry["name"])
     frozen = json.loads((meta.root / "card.json").read_text(encoding="utf-8"))
@@ -256,18 +256,18 @@ def test_set_isolation_switches_config_for_next_start():
     assert r["isolation"] == "admin" and r["applies"] == "next_start"
     cfg = json.loads(S.load_session(name).config_path.read_text(encoding="utf-8"))
     assert cfg["isolation"] == "admin"
-    # session.json is the JAIL AUTHORITY (meta.env() → LUNAMOTH_PY_BACKEND). Writing
+    # session.json is the JAIL AUTHORITY (meta.env() → CHARA_PY_BACKEND). Writing
     # only config.json left the toggle a no-op on the next child start.
     meta = S.load_session(name)
     assert meta.isolation == "admin"
-    assert meta.env()["LUNAMOTH_PY_BACKEND"] == "admin"  # admin = unconfined backend
+    assert meta.env()["CHARA_PY_BACKEND"] == "admin"  # admin = unconfined backend
     # switch back — tightening, same path
     result("chara.set_isolation", {"name": name, "isolation": "sandbox"})
     cfg2 = json.loads(S.load_session(name).config_path.read_text(encoding="utf-8"))
     assert cfg2["isolation"] == "sandbox"
     meta2 = S.load_session(name)
     assert meta2.isolation == "sandbox"
-    assert meta2.env()["LUNAMOTH_PY_BACKEND"] == "sandbox"  # sandbox = the jail backend
+    assert meta2.env()["CHARA_PY_BACKEND"] == "sandbox"  # sandbox = the jail backend
 
 
 def test_set_isolation_rejects_unknown_value():
@@ -403,12 +403,12 @@ def test_card_from_draft_roundtrip():
     assert data["first_mes"] == "轻一点关门。"
     assert data["character_book"]["entries"][0]["keys"] == ["长夜图书馆"]
     # The card field is a boolean; an un-forced draft omits it entirely.
-    assert "force_roleplay" not in data["extensions"]["lunamoth"]
-    assert "embodiment" not in data["extensions"]["lunamoth"]
-    assert "toolpack" not in data["extensions"]["lunamoth"]
-    assert "tempo" not in data["extensions"]["lunamoth"]
-    assert data["extensions"]["lunamoth"]["draft"] is True
-    assert data["extensions"]["lunamoth"]["origin"] == "深夜图书馆修书人"
+    assert "force_roleplay" not in data["extensions"]["chara"]
+    assert "embodiment" not in data["extensions"]["chara"]
+    assert "toolpack" not in data["extensions"]["chara"]
+    assert "tempo" not in data["extensions"]["chara"]
+    assert data["extensions"]["chara"]["draft"] is True
+    assert data["extensions"]["chara"]["origin"] == "深夜图书馆修书人"
     listed = result("cards.list")
     mine = next(c for c in listed if c["name"] == "白枢")
     assert mine["draft"] is True and mine["builtin"] is False
@@ -502,14 +502,14 @@ def test_cards_draft_rejects_parallel_schema(monkeypatch):
     assert "unexpected: extra" in err["data"]["detail"]
 
 
-def test_card_save_roundtrips_new_lunamoth_extension_fields():
+def test_card_save_roundtrips_new_chara_extension_fields():
     card = H.draft_to_card({
         **draft_payload(),
         "force_roleplay": True,
     }, origin_text="orbital lantern keeper")
     r = result("card.save", {"data": card})
     raw = result("card.read", {"path": r["path"]})["raw"]
-    ext = raw["data"]["extensions"]["lunamoth"]
+    ext = raw["data"]["extensions"]["chara"]
     assert "avatar_svg" not in ext        # avatar is a separate sidecar, not drafted inline
     assert ext["user_name"] == "visitor"  # who "you" are rides the drafted card
     # Presentation theme is now the dual {primary, secondary}; legacy single
@@ -537,21 +537,21 @@ def test_draft_theme_always_has_valid_primary_and_secondary():
     falls back to the deck color when the model omits/garbles theme_color, and
     the secondary is derived. A primary-less theme (which crashed the card view)
     can never be generated."""
-    from lunamoth.server.hub.card_draft import _DEFAULT_THEME_PRIMARY
+    from chara.server.hub.card_draft import _DEFAULT_THEME_PRIMARY
     # No theme_color at all → fallback primary + derived distinct secondary.
     no_theme = {k: v for k, v in draft_payload().items() if k != "theme_color"}
-    t1 = H.draft_to_card(no_theme)["data"]["extensions"]["lunamoth"]["theme"]
+    t1 = H.draft_to_card(no_theme)["data"]["extensions"]["chara"]["theme"]
     assert t1["primary"] == _DEFAULT_THEME_PRIMARY
     assert t1["secondary"].startswith("#") and t1["secondary"] != t1["primary"]
     # A garbage primary but a VALID secondary must NOT yield a secondary-only theme.
     t2 = H.draft_to_card({**no_theme, "theme_color": "not-a-color", "theme_color_2": "#445566"})[
-        "data"]["extensions"]["lunamoth"]["theme"]
+        "data"]["extensions"]["chara"]["theme"]
     assert t2["primary"] == _DEFAULT_THEME_PRIMARY
     assert t2["secondary"] == "#445566"
 
 
 def test_card_studio_actor_embodiment_feeds_prompt_bridge(tmp_path, monkeypatch):
-    """Studio-saved `extensions.lunamoth.force_roleplay=true` is read by the prompt machine."""
+    """Studio-saved `extensions.chara.force_roleplay=true` is read by the prompt machine."""
     card = H.draft_to_card({
         **draft_payload(),
         "name": "BridgeCard",
@@ -561,18 +561,18 @@ def test_card_studio_actor_embodiment_feeds_prompt_bridge(tmp_path, monkeypatch)
     r = result("card.save", {"data": card})
 
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    from lunamoth.core import agent as agent_mod
-    from lunamoth.tools import skills as skills_mod
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    from chara.core import agent as agent_mod
+    from chara.tools import skills as skills_mod
 
     sandbox = tmp_path / "sandbox"
     monkeypatch.setattr(agent_mod, "SANDBOX_ROOT", sandbox)
     monkeypatch.setattr(skills_mod, "SANDBOX_ROOT", sandbox)
 
-    from lunamoth.core.agent import LunaMothAgent
-    from lunamoth.session.settings import Settings
+    from chara.core.agent import CharaAgent
+    from chara.session.settings import Settings
 
-    agent = LunaMothAgent(Settings(provider="mock", character_path=r["path"], toolpack="sandbox"))
+    agent = CharaAgent(Settings(provider="mock", character_path=r["path"], toolpack="sandbox"))
     agent.transcript.reset()
     stable = "\n\n".join(agent._stable_prefix())
     stable_words = " ".join(stable.split())
@@ -792,7 +792,7 @@ def test_session_entry_includes_auth_error_kind():
     meta = S.load_session(entry["name"])
     log = meta.sandbox_dir / "logs" / "errors.log"
     log.parent.mkdir(parents=True, exist_ok=True)
-    log.write_text("2026-06-12 ERROR [x] lunamoth.terminal: permanent model error: HTTP 401 User not found\n",
+    log.write_text("2026-06-12 ERROR [x] chara.terminal: permanent model error: HTTP 401 User not found\n",
                    encoding="utf-8")
     row = result("sessions.list")[0]
     assert row["error_kind"] == "auth"

@@ -6,7 +6,7 @@
  * only for progress and refreshes when it lands. If you switch tabs or close the card
  * mid-generation, the job still finishes and the card still updates — reopen to see it.
  *
- * The image BRIEF is persisted on the card (extensions.lunamoth.visual_brief): viewing
+ * The image BRIEF is persisted on the card (extensions.chara.visual_brief): viewing
  * it returns the stored one (no re-pay), edits are saved via card.visual_brief_save, and
  * 重新生成 forces a rebuild. Identity-lock (anchor = the saved keyvisual) is applied
  * server-side, so the other kinds stay the same character without client bookkeeping.

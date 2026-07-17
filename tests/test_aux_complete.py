@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from lunamoth.server import hub as H
-from lunamoth.server.hub._common import HubRpcError
+from chara.server import hub as H
+from chara.server.hub._common import HubRpcError
 
 
 def _defaults() -> dict[str, str]:

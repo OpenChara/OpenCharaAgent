@@ -1,4 +1,4 @@
-# LunaMoth — open work
+# OpenCharaAgent — open work
 
 This is the open-work doc under `docs/` (owner rule, re-affirmed 2026-06-17:
 everything condenses here; settled plans/specs/build-logs get deleted once their
@@ -86,7 +86,7 @@ product backlog behind it.
   The Electron shell shipped; this is the next shell step.
 - **Card-defined custom life-state words** — let a card override the displayed
   `life.state` word (a statue's "resting" could read "weathering"), via
-  `extensions.lunamoth`. The engine keeps factual defaults; the card customizes.
+  `extensions.chara`. The engine keeps factual defaults; the card customizes.
 - **Artifacts backtrace** — file → the tool call / session message that produced
   it; inline "work cards" in the chat stream. Needs a backend file↔tool-call
   mapping (today works live only on the drawer shelf).
@@ -102,7 +102,7 @@ product backlog behind it.
   desktop is just a window. (Same as the roadmap's remote-TUI-client item.)
 - **Card / pack marketplace** — SHIPPED as the Market view (character-tavern.com
   catalog proxy: browse/sort/filter/preview + faithful import, 2026-06-27..07-01).
-  Remaining: our OWN pack format + shareable index (`lunamoth-pack.json`, git-repo
+  Remaining: our OWN pack format + shareable index (`chara-pack.json`, git-repo
   index) so creators can publish card+asset packs.
 - **Multi-chara visiting** — charas on one machine visiting each other; the
   `say|muse` protocol already supports multiple audiences. Far-future.
@@ -124,17 +124,17 @@ product backlog behind it.
   tool-less while the no-fabrication half stays tool-gated. Deferred — tool-less
   pure-roleplay is not a current focus.
 - **Self-contained desktop app (signed DMG / AppImage)** — the consumer install
-  should be "drag LunaMoth.app to /Applications, double-click, it works" — not
+  should be "drag OpenCharaAgent.app to /Applications, double-click, it works" — not
   the `curl|bash` CLI install (that stays the dev/terminal path). The hard part:
   `apps/desktop` is a THIN Electron shell that spawns the Python backend
-  (`lunamoth desktop`); today `electron-builder` (`npm run dist`) bundles only
+  (`chara desktop`); today `electron-builder` (`npm run dist`) bundles only
   the shell, and `main.cjs` finds the backend via a dev checkout or a (currently
   mismatched) installed path — so the DMG today is NOT self-contained and shows
   "No backend found". Plan:
-  1. **Freeze the backend** — PyInstaller/py2app into a standalone `lunamoth`
+  1. **Freeze the backend** — PyInstaller/py2app into a standalone `chara`
      binary, OR ship a uv-managed standalone Python + the venv as a folder.
      KEY constraint: the supervisor RE-INVOKES the backend as subprocesses
-     (`lunamoth serve NAME --stdio` per chara) — the frozen binary must support
+     (`chara serve NAME --stdio` per chara) — the frozen binary must support
      re-exec, and the spawn command must point at the bundled binary. The OS-jail
      isolation (`sandbox-exec` on macOS, the `isolation.py` argv builders) must
      also work from inside the .app bundle.
@@ -146,10 +146,10 @@ product backlog behind it.
      signing.
   - **Bug to fix regardless** (independent of the DMG work; still open 2026-07-02):
     `apps/desktop/electron/main.cjs` `installedLauncher()` looks for
-    `~/.lunamoth/bin/lunamoth`, but `install.sh` links the shim at
-    `~/.local/bin/lunamoth` (and the default `user` channel is now a uv tool
+    `~/.chara/bin/chara`, but `install.sh` links the shim at
+    `~/.local/bin/chara` (and the default `user` channel is now a uv tool
     install, whose bin dir is uv's). Fix the discovery to check
-    `~/.local/bin/lunamoth` + `uv tool` bin.
+    `~/.local/bin/chara` + `uv tool` bin.
   - Icon assets already exist (`apps/desktop/assets/icon.png` + the menu-bar
     `trayTemplate*`). The menu-bar-resident idea (above) composes with this.
 
@@ -393,7 +393,7 @@ bilingual README accuracy pass and an interactive Playwright walk. All findings
 fixed, adversarially re-verified (the review's own 5 counter-findings fixed too):
 
 - **[HIGH, supply chain] install.sh's SHA256SUMS verification was dead code on
-  the default public path**, and `lunamoth update` installed the wheel with no
+  the default public path**, and `chara update` installed the wheel with no
   checksum at all. Both now download → verify sha256 → install from the
   verified local file; mismatch refuses loudly; missing manifest / missing
   sha-tool get an honest NOTE. One wall-clock budget spans download+install so
@@ -422,7 +422,7 @@ off-origin navigation blocked, single-instance, clean quit semantics; the one
 finding — the startup handshake token could surface in error dialogs — is now
 scrubbed from the log ring). All 8 bundled cards mechanically validated (ST
 shape, assets, tags, hooks; exactly one "default"); the six website-centric
-cards now declare `extensions.lunamoth.website: "on"` so their core premise
+cards now declare `extensions.chara.website: "on"` so their core premise
 works out of the box. zh-UI visual pass: all views × both widths, zero
 horizontal overflow, natural copy — clean. Landlock LOW ergonomics closed
 (/proc-unavailable note + PTY network-notice parity; a note-clobbering `=` vs
@@ -446,7 +446,7 @@ background thread, so a flapping endpoint can't freeze a turn). Remaining LOW:
   fs-only under that tier (surfaced honestly: the per-run terminal note, the
   once-per-process operator log warning, and the PTY open banner).
 - closed 2026-07-03: the bare-EACCES mystery — every Landlock-tier terminal run now
-  carries a one-line `[lunamoth: …]` note that `/proc` is unavailable by policy
+  carries a one-line `[chara: …]` note that `/proc` is unavailable by policy
   (deliberate: `/proc/<pid>/environ` leaks the supervisor token), so `ps`/`top`/
   interpreter failures read as jail policy, not mystery (`build_jail_command`;
   browser jail excluded — it re-adds /proc).
@@ -554,13 +554,13 @@ architecture/rationale worth keeping (change only with owner sign-off):
   **hash routing** (so the supervisor's static handler needs no SPA-fallback list,
   and `file://` would work). Source at repo-root `apps/web/`.
 - **Distribution = a wheel that bundles the built frontend** (hermes model). `apps/web`
-  builds to `src/lunamoth/front/webui/` (GITIGNORED, not committed); setuptools
-  package-data (`lunamoth=["front/webui/**/*"]`) packs it into the wheel at CI
+  builds to `src/chara/front/webui/` (GITIGNORED, not committed); setuptools
+  package-data (`chara=["front/webui/**/*"]`) packs it into the wheel at CI
   packaging time → users `uv tool install` and get the prebuilt UI, no node at install.
-  `vite.config.ts`: `base:'./'`, `outDir:'../../src/lunamoth/front/webui'`, `emptyOutDir`.
+  `vite.config.ts`: `base:'./'`, `outDir:'../../src/chara/front/webui'`, `emptyOutDir`.
 - **Electron stays a thin local shell**, unchanged, always pointing at the local
   supervisor's HTTP URL. Remote = browser, never Electron.
-- **Remote, two ways**: (a) SSH tunnel to the loopback-bound supervisor (`lunamoth
+- **Remote, two ways**: (a) SSH tunnel to the loopback-bound supervisor (`chara
   connect ssh://user@host` opens `ssh -L` after reading the remote daemon token/ports);
   (b) supervisor bound to a real host behind a TLS reverse proxy (Caddy / cloudflared).
 - **Auth**: ONE `lm_auth` SameSite cookie minted by a `?token=` handshake gates GET /
@@ -569,7 +569,7 @@ architecture/rationale worth keeping (change only with owner sign-off):
   Lives in `supervisor/` + `netsec.py`.
 - **One-click deploy = Docker**: `python:3.12-slim` + `pip install` the release wheel
   (carries `webui/`, so no node); `compose.yml` with `restart: always`,
-  `no-new-privileges`, a `~/.lunamoth` volume for sessions/cards/config.
+  `no-new-privileges`, a `~/.chara` volume for sessions/cards/config.
 - **Two known non-ideal-but-shipped choices** (future upgrade path): the supervisor
   runs TWO server stacks on TWO ports (stdlib http.server + websockets, WS = http+1
   for non-loopback) — single-port ASGI (Starlette/uvicorn) is the eventual cleanup.

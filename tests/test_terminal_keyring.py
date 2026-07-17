@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from lunamoth.session import settings as S
+from chara.session import settings as S
 
 
 @pytest.fixture
@@ -22,8 +22,8 @@ def wizard_env(tmp_path, monkeypatch):
     home.mkdir(parents=True)
     cfg = tmp_path / "cfg"
     cfg.mkdir(parents=True)
-    monkeypatch.setenv("LUNAMOTH_HOME", str(home))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(cfg))
+    monkeypatch.setenv("CHARA_HOME", str(home))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(cfg))
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     # CONFIG_DIR/CONFIG_PATH are pinned at import — repoint them at the temp dir.
     monkeypatch.setattr(S, "CONFIG_DIR", cfg.resolve())
@@ -39,7 +39,7 @@ def _drive_wizard(monkeypatch, answers, choices, *, getpass_value=""):
     replies to the numbered menus (provider, character, embodiment) — each menu's
     actual input() prompt is just "choice", so they're consumed in order.
     """
-    from lunamoth.front import wizard as W
+    from chara.front import wizard as W
 
     monkeypatch.setattr(W.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(W, "_test", lambda settings: True)  # never touch the network

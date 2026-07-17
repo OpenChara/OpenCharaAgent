@@ -8,13 +8,13 @@ import pytest
 @pytest.fixture
 def tui_env(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sandbox"))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    # CONFIG_DIR is resolved at lunamoth.config import time — under a full pytest
+    monkeypatch.setenv("CHARA_SANDBOX", str(tmp_path / "sandbox"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    # CONFIG_DIR is resolved at chara.config import time — under a full pytest
     # run an earlier test already pinned it, so write the config wherever it
     # ACTUALLY points (otherwise the TUI boots into the welcome screen and the
     # keystrokes land there instead of the console input).
-    from lunamoth.session.settings import config_path
+    from chara.session.settings import config_path
 
     config_path().parent.mkdir(parents=True, exist_ok=True)
     config_path().write_text(json.dumps({"provider": "mock"}))
@@ -22,10 +22,10 @@ def tui_env(tmp_path, monkeypatch):
 
 
 def test_panel_routing(tui_env):
-    from lunamoth.front.tui import LunaMothTUI
+    from chara.front.tui import OpenCharaAgentTUI
 
     async def scenario():
-        app = LunaMothTUI(patience=999, mode_override="chat")
+        app = OpenCharaAgentTUI(patience=999, mode_override="chat")
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
             assert app._panel_view() == "telemetry"
@@ -60,7 +60,7 @@ def test_panel_routing(tui_env):
             # Thinking is hidden by default: ThinkDelta events never reach the
             # display, but they feed the ✶ indicator's token counter. ToolEnd
             # summaries render dimmed.
-            from lunamoth.protocol import TextDelta, ThinkDelta, ToolEnd
+            from chara.protocol import TextDelta, ThinkDelta, ToolEnd
             before = len(app.display_segments)
             for ev in (ThinkDelta("secret pondering"), TextDelta("spoken words"),
                        ToolEnd("tool", summary="⚙ tool ✓")):
@@ -82,10 +82,10 @@ def test_conversation_and_mode_smoke(tui_env):
     This guards against backend churn breaking the live path (CharaHandle's
     stream_user/attach/snapshot, the shared command registry) — the import-only
     checks miss a signature/field drift that only bites a running session."""
-    from lunamoth.front.tui import LunaMothTUI
+    from chara.front.tui import OpenCharaAgentTUI
 
     async def scenario():
-        app = LunaMothTUI(patience=999, mode_override="chat")
+        app = OpenCharaAgentTUI(patience=999, mode_override="chat")
         async with app.run_test(size=(120, 40)) as pilot:
             await pilot.pause()
             assert app._session_started

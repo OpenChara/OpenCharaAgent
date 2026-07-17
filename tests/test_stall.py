@@ -5,9 +5,9 @@ import urllib.request
 
 import pytest
 
-from lunamoth.config import LLMConfig
-from lunamoth.core.llm import LLMClient, StreamStall, _StallGuard, _stall_timeout_for
-from lunamoth.protocol import Notice, TextDelta
+from chara.config import LLMConfig
+from chara.core.llm import LLMClient, StreamStall, _StallGuard, _stall_timeout_for
+from chara.protocol import Notice, TextDelta
 
 
 class HangingResp:
@@ -91,7 +91,7 @@ def test_stall_timeout_scales_with_prompt_size():
 def test_stream_turn_stall_surfaces_notice_then_error(monkeypatch):
     # The stall budgets live in _stream_util (where _StallGuard / _stall_timeout_for
     # read them); patch them there, not on the llm module that re-imports the helpers.
-    import lunamoth.core._stream_util as su
+    import chara.core._stream_util as su
 
     monkeypatch.setattr(su, "_FIRST_BYTE_TIMEOUT", 0.5)
     monkeypatch.setattr(su, "_STALL_TIMEOUT", 0.05)

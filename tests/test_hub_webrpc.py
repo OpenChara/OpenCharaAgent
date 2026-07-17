@@ -1,7 +1,7 @@
 """Web-facing hub RPC batch: works.read, messaging.get/save (masked secrets),
 card.avatar_generate/upload/read, weixin.qr / weixin.qr_status (server/hub.py).
 
-Everything runs against a temp LUNAMOTH_HOME; no network (provider and iLink
+Everything runs against a temp CHARA_HOME; no network (provider and iLink
 HTTP calls are monkeypatched)."""
 import json
 import os
@@ -9,13 +9,13 @@ from pathlib import Path
 
 import pytest
 
-from lunamoth.server import hub as H
-from lunamoth.session import sessions as S
+from chara.server import hub as H
+from chara.session import sessions as S
 
 
 @pytest.fixture(autouse=True)
 def temp_home(tmp_path, monkeypatch):
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
     yield tmp_path / "home"
 
 
@@ -203,7 +203,7 @@ def test_avatar_upload_svg_writes_sidecar_and_points_card():
     sidecar = os.path.join(os.path.dirname(path), out["avatar_file"])
     assert os.path.isfile(sidecar)
     raw = json.loads(open(path, encoding="utf-8").read())
-    lm = raw["data"]["extensions"]["lunamoth"]
+    lm = raw["data"]["extensions"]["chara"]
     assert lm["avatar_file"] == out["avatar_file"]
     assert lm["assets"]["avatar"] == out["avatar_file"]          # also the gallery selection
     assert out["avatar_file"] in lm["assets"]["options"]["avatar"]
@@ -223,19 +223,19 @@ def test_avatar_upload_png_validates_magic_and_stores_as_is():
     # second upload APPENDS a candidate (non-destructive gallery) + selects the newest
     out2 = result("card.avatar_upload", {"path": path, "data_b64": _b64(PNG_1PX), "ext": "png"})
     assert out2["avatar_file"] != out["avatar_file"]
-    lm = json.loads(open(path, encoding="utf-8").read())["data"]["extensions"]["lunamoth"]
+    lm = json.loads(open(path, encoding="utf-8").read())["data"]["extensions"]["chara"]
     assert lm["avatar_file"] == out2["avatar_file"]
     assert lm["assets"]["options"]["avatar"] == [out["avatar_file"], out2["avatar_file"]]
     # select the first back via the generic gallery RPC → avatar_file follows
     result("card.asset_select", {"path": path, "kind": "avatar", "name": out["avatar_file"]})
-    lm = json.loads(open(path, encoding="utf-8").read())["data"]["extensions"]["lunamoth"]
+    lm = json.loads(open(path, encoding="utf-8").read())["data"]["extensions"]["chara"]
     assert lm["avatar_file"] == out["avatar_file"] and lm["assets"]["avatar"] == out["avatar_file"]
     # remove it → falls back to the other; avatar_file follows; delete clears all
     result("card.asset_remove", {"path": path, "kind": "avatar", "name": out["avatar_file"]})
-    lm = json.loads(open(path, encoding="utf-8").read())["data"]["extensions"]["lunamoth"]
+    lm = json.loads(open(path, encoding="utf-8").read())["data"]["extensions"]["chara"]
     assert lm["avatar_file"] == out2["avatar_file"]
     result("card.asset_delete", {"path": path, "kind": "avatar"})
-    lm = json.loads(open(path, encoding="utf-8").read())["data"]["extensions"]["lunamoth"]
+    lm = json.loads(open(path, encoding="utf-8").read())["data"]["extensions"]["chara"]
     assert "avatar_file" not in lm and "avatar" not in lm.get("assets", {})
 
 
@@ -276,7 +276,7 @@ def test_avatar_read_falls_back_to_inline_svg():
     set_defaults()
     # A user card that declares an inline avatar_svg but no sidecar.
     out = result("card.save", {"data": {"spec": "chara_card_v3", "spec_version": "3.0",
-        "data": {"name": "Inline", "extensions": {"lunamoth": {"avatar_svg": GOOD_SVG}}}}})
+        "data": {"name": "Inline", "extensions": {"chara": {"avatar_svg": GOOD_SVG}}}}})
     read = result("card.avatar_read", {"path": out["path"]})
     assert read["data_uri"].startswith("data:image/svg+xml")
 
@@ -396,7 +396,7 @@ def test_weixin_qr_encodes_the_scan_content_not_the_polling_token(monkeypatch):
     `qrcode` is only the polling token for qr_status. Encoding the polling
     token was the bug that made the QR 'scan to nothing'."""
     meta = wake_session()
-    import lunamoth.messaging.weixin as W
+    import chara.messaging.weixin as W
     monkeypatch.setattr(W, "WeixinAPI", FakeWeixinAPI)
     out = result("weixin.qr", {"name": meta.name})
     assert out["qrcode"] == "QR-VALUE"            # polling token, used by qr_status
@@ -407,7 +407,7 @@ def test_weixin_qr_encodes_the_scan_content_not_the_polling_token(monkeypatch):
 
 def test_weixin_qr_status_confirmed_persists_login_state(monkeypatch):
     meta = wake_session()
-    import lunamoth.messaging.weixin as W
+    import chara.messaging.weixin as W
     monkeypatch.setattr(W, "WeixinAPI", FakeWeixinAPI)
     FakeWeixinAPI.status_response = {"status": "confirmed", "bot_token": "bot-tok",
                                      "ilink_bot_id": "bot-1", "ilink_user_id": "u-1"}
@@ -420,7 +420,7 @@ def test_weixin_qr_status_confirmed_persists_login_state(monkeypatch):
 
 def test_weixin_qr_status_wait_passes_through(monkeypatch):
     meta = wake_session()
-    import lunamoth.messaging.weixin as W
+    import chara.messaging.weixin as W
     monkeypatch.setattr(W, "WeixinAPI", FakeWeixinAPI)
     FakeWeixinAPI.status_response = {"status": "wait"}
     out = result("weixin.qr_status", {"name": meta.name, "qrcode": "QR-VALUE"})
@@ -434,9 +434,9 @@ def test_weixin_qr_status_needs_qrcode():
 
 
 def test_works_list_visible_under_a_dot_dir_home(tmp_path, monkeypatch):
-    """Production sandboxes live under ~/.lunamoth — a dot-dir ancestor must
+    """Production sandboxes live under ~/.chara — a dot-dir ancestor must
     not hide every work (the filter judges only the path under the tree)."""
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / ".lunahome"))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / ".lunahome"))
     meta = wake_session()
     assert ".lunahome" in str(meta.sandbox_dir)
     works_dir = meta.sandbox_dir / "workspace" / "works"
@@ -481,7 +481,7 @@ def test_card_duplicate_copies_art_assets():
         "spec": "chara_card_v3", "spec_version": "3.0", "version": "1.0",
         "data": {
             "name": "Arty", "description": "an artist",
-            "extensions": {"lunamoth": {
+            "extensions": {"chara": {
                 "avatar_file": "Arty.avatar.png",
                 "assets": {"sprite": "Arty.sprite.png"},
             }},
@@ -492,7 +492,7 @@ def test_card_duplicate_copies_art_assets():
     out = result("card.duplicate", {"path": str(src_dir / "card.json")})
     dup_path = Path(out["path"])
     dup = json.loads(dup_path.read_text(encoding="utf-8"))
-    lm = dup["data"]["extensions"]["lunamoth"]
+    lm = dup["data"]["extensions"]["chara"]
     # the copy declares the same relative names AND the files exist beside it
     assert lm["avatar_file"] == "Arty.avatar.png"
     assert lm["assets"]["sprite"] == "Arty.sprite.png"
@@ -611,7 +611,7 @@ def test_card_visual_generate_autosaves(monkeypatch):
     H.save_defaults({"image_provider": "volcano", "image_model": "doubao-seedream-x"})
     monkeypatch.setattr(H, "_complete",
                         lambda *a, **k: '{"appearance":"a","palette":"p","world":"w","theme":"#1a2"}')
-    from lunamoth.tools.builtin import _image_gen
+    from chara.tools.builtin import _image_gen
     seen = {}
 
     def fake_ark(prompt, size, refs=None):
@@ -629,7 +629,7 @@ def test_card_visual_generate_autosaves(monkeypatch):
     assert seen["refs"] == ["data:image/png;base64,AAAA"]  # user refs reach the generator
     # the card now points at a saved avatar sidecar, and the brief was PERSISTED
     raw = json.loads(open(card, encoding="utf-8").read())
-    lm = raw["data"]["extensions"]["lunamoth"]
+    lm = raw["data"]["extensions"]["chara"]
     assert ".avatar." in lm["avatar_file"] and lm["avatar_file"].endswith(".png")
     assert lm["assets"]["avatar"] == lm["avatar_file"]  # avatar is a gallery kind now
     assert "visual_brief" in lm
@@ -643,7 +643,7 @@ def test_card_visual_generate_autosaves(monkeypatch):
     assert rpc_error("card.visual_generate", {"path": card, "kind": "nope"})["code"] == -32602
     # no image key → the JOB fails; the poll surfaces a visible -32050 (no fake image)
     monkeypatch.delenv("ARK_API_KEY", raising=False)
-    monkeypatch.setenv("LUNAMOTH_HOME", str(os.path.join(os.environ["LUNAMOTH_HOME"], "no-img")))
+    monkeypatch.setenv("CHARA_HOME", str(os.path.join(os.environ["CHARA_HOME"], "no-img")))
     sub3 = result("card.visual_generate", {"path": card, "kind": "sprite", "brief": {"appearance": "x"}})
     assert _await_visual_error(sub3["job_id"])["code"] == -32050
 
@@ -675,7 +675,7 @@ def test_card_asset_save_and_delete_sprite():
     assert out["url"].startswith("/asset?")
     # the card points at it, and it's in the candidate gallery
     raw = json.loads(open(card, encoding="utf-8").read())
-    lm = raw["data"]["extensions"]["lunamoth"]
+    lm = raw["data"]["extensions"]["chara"]
     assert lm["assets"]["sprite"] == out["file"]
     assert lm["assets"]["options"]["sprite"] == [out["file"]]
     assert (Path(card).with_name(out["file"])).is_file()
@@ -688,8 +688,8 @@ def test_card_asset_save_and_delete_sprite():
     out = result("card.asset_delete", {"path": card, "kind": "sprite"})
     assert out["removed"] is True
     raw = json.loads(open(card, encoding="utf-8").read())
-    assert "sprite" not in raw["data"]["extensions"]["lunamoth"].get("assets", {})
-    assert "sprite" not in (raw["data"]["extensions"]["lunamoth"]["assets"].get("options") or {})
+    assert "sprite" not in raw["data"]["extensions"]["chara"].get("assets", {})
+    assert "sprite" not in (raw["data"]["extensions"]["chara"]["assets"].get("options") or {})
     assert result("card.asset_delete", {"path": card, "kind": "sprite"})["removed"] is False
 
 
@@ -698,7 +698,7 @@ def test_card_asset_gallery_caps_oldest_nonselected():
     # grow options[kind] (each a multi-MB sidecar) without limit. Past the cap, the oldest
     # non-selected candidate (file + entry) is evicted; the selected one is always kept.
     import base64 as b64m
-    from lunamoth.server.hub import avatars as A
+    from chara.server.hub import avatars as A
     set_defaults()
     card = _make_user_card("CapCard")
     b64 = b64m.b64encode(_PNG_1PX).decode("ascii")
@@ -709,7 +709,7 @@ def test_card_asset_gallery_caps_oldest_nonselected():
         out = result("card.asset_save", {"path": card, "kind": "sprite", "data_b64": b64, "ext": "png"})
         names.append(out["file"])
     # the gallery is bounded at the cap, and the newest is still selected
-    lm = json.loads(open(card, encoding="utf-8").read())["data"]["extensions"]["lunamoth"]
+    lm = json.loads(open(card, encoding="utf-8").read())["data"]["extensions"]["chara"]
     opts = lm["assets"]["options"]["sprite"]
     assert len(opts) == cap
     assert lm["assets"]["sprite"] == names[-1] and names[-1] in opts
@@ -729,18 +729,18 @@ def test_card_asset_gallery_select_and_remove():
     a = result("card.asset_save", {"path": card, "kind": "background", "data_b64": b64, "ext": "png"})["file"]
     b = result("card.asset_save", {"path": card, "kind": "background", "data_b64": b64, "ext": "png"})["file"]
     assert a != b  # unique candidate names, no overwrite
-    lm = json.loads(open(card, encoding="utf-8").read())["data"]["extensions"]["lunamoth"]
+    lm = json.loads(open(card, encoding="utf-8").read())["data"]["extensions"]["chara"]
     assert lm["assets"]["options"]["background"] == [a, b] and lm["assets"]["background"] == b  # newest selected
     assert (Path(card).with_name(a)).is_file() and (Path(card).with_name(b)).is_file()
     # select the older one
     result("card.asset_select", {"path": card, "kind": "background", "name": a})
-    assert json.loads(open(card, encoding="utf-8").read())["data"]["extensions"]["lunamoth"]["assets"]["background"] == a
+    assert json.loads(open(card, encoding="utf-8").read())["data"]["extensions"]["chara"]["assets"]["background"] == a
     assert rpc_error("card.asset_select", {"path": card, "kind": "background", "name": "nope.png"})["code"] == -32602
     # remove the selected (a) → falls back to the remaining (b); file gone
     out = result("card.asset_remove", {"path": card, "kind": "background", "name": a})
     assert out["selected"] == b
     assert not (Path(card).with_name(a)).is_file()
-    lm = json.loads(open(card, encoding="utf-8").read())["data"]["extensions"]["lunamoth"]
+    lm = json.loads(open(card, encoding="utf-8").read())["data"]["extensions"]["chara"]
     assert lm["assets"]["options"]["background"] == [b] and lm["assets"]["background"] == b
     # list_cards surfaces the gallery
     entry = next(c for c in H.list_cards() if c["path"] == card)
@@ -752,7 +752,7 @@ def test_card_asset_matte_adds_cut_candidate_keeping_raw(monkeypatch):
     import base64 as b64m
     import io
     from PIL import Image
-    from lunamoth.visuals import matte
+    from chara.visuals import matte
     monkeypatch.setattr(matte, "deps_available", lambda: False)  # keyless white-bg fallback
     set_defaults()
     card = _make_user_card("MatteCard")
@@ -765,7 +765,7 @@ def test_card_asset_matte_adds_cut_candidate_keeping_raw(monkeypatch):
                                      "data_b64": b64m.b64encode(buf.getvalue()).decode(), "ext": "png"})["file"]
     out = result("card.asset_matte", {"path": card, "kind": "sprite"})
     assert out["selected"] != raw and out["file"].endswith(".png")
-    lm = json.loads(open(card, encoding="utf-8").read())["data"]["extensions"]["lunamoth"]
+    lm = json.loads(open(card, encoding="utf-8").read())["data"]["extensions"]["chara"]
     assert lm["assets"]["options"]["sprite"] == [raw, out["file"]]  # raw kept + cut added
     assert lm["assets"]["sprite"] == out["file"]                     # cut is now shown
 
@@ -791,7 +791,7 @@ def test_card_asset_matte_noop_on_transparent(monkeypatch):
     import base64 as b64m
     import io
     from PIL import Image
-    from lunamoth.visuals import matte
+    from chara.visuals import matte
     monkeypatch.setattr(matte, "deps_available", lambda: False)
     set_defaults()
     card = _make_user_card("MatteNoop")
@@ -813,7 +813,7 @@ def test_card_stickers_save_and_delete():
     assert all(f.endswith(".png") and ".sticker." in f for f in out["files"])
     assert all(u.startswith("/asset?") for u in out["urls"])
     raw = json.loads(open(card, encoding="utf-8").read())
-    names = raw["data"]["extensions"]["lunamoth"]["assets"]["stickers"]
+    names = raw["data"]["extensions"]["chara"]["assets"]["stickers"]
     assert isinstance(names, list) and len(names) == 9
     assert all((Path(card).with_name(n)).is_file() for n in names)
     # a second save APPENDS (not replaces) — and dedups the auto-named slugs
@@ -825,7 +825,7 @@ def test_card_stickers_save_and_delete():
     # delete drops every cell + the pointer (idempotent)
     assert result("card.asset_delete", {"path": card, "kind": "stickers"})["removed"] is True
     raw = json.loads(open(card, encoding="utf-8").read())
-    assert "stickers" not in raw["data"]["extensions"]["lunamoth"].get("assets", {})
+    assert "stickers" not in raw["data"]["extensions"]["chara"].get("assets", {})
     assert result("card.asset_delete", {"path": card, "kind": "stickers"})["removed"] is False
 
 
@@ -863,7 +863,7 @@ def test_keyvisual_generation_receives_user_refs(monkeypatch):
     H.save_defaults({"image_provider": "volcano", "image_model": "doubao-seedream-x"})
     monkeypatch.setattr(H, "_complete",
                         lambda *a, **k: '{"appearance":"a","style":"anime","palette":"p","world":"w","theme":"#1a2"}')
-    from lunamoth.tools.builtin import _image_gen
+    from chara.tools.builtin import _image_gen
     seen = {}
 
     def fake_ark(prompt, size, refs=None):
@@ -888,8 +888,8 @@ def test_card_visual_generate_stickers_async(monkeypatch):
     H.save_key("火山", provider="volcano",
                base_url="https://ark.cn-beijing.volces.com/api/v3", api_key="sk-img-test")
     H.save_defaults({"image_provider": "volcano", "image_model": "doubao-seedream-x"})
-    from lunamoth.tools.builtin import _image_gen
-    from lunamoth.visuals import pipeline
+    from chara.tools.builtin import _image_gen
+    from chara.visuals import pipeline
     monkeypatch.setattr(pipeline._matte, "deps_available", lambda: False)
     sheet = Image.new("RGB", (300, 300), (255, 255, 255))
     buf = io.BytesIO(); sheet.save(buf, "PNG")
@@ -899,7 +899,7 @@ def test_card_visual_generate_stickers_async(monkeypatch):
     out = _await_visual(sub["job_id"])
     assert out["status"] == "ready" and out["saved"] is True and out["kind"] == "stickers"
     assert len(out["urls"]) == 9
-    lm = json.loads(open(card, encoding="utf-8").read())["data"]["extensions"]["lunamoth"]
+    lm = json.loads(open(card, encoding="utf-8").read())["data"]["extensions"]["chara"]
     assert len(lm["assets"]["stickers"]) == 9
     sheets = lm["assets"]["sticker_sheets"]
     assert len(sheets) == 1 and (Path(card).with_name(sheets[0])).is_file()  # raw sheet kept
@@ -936,9 +936,9 @@ def test_card_patch_merges_field_preserving_rest():
     assert raw["data"]["description"] == "new desc"
     assert raw["data"]["name"] == "Patchy"  # untouched
     # nested ext keys deep-merge (siblings preserved across two patches)
-    result("card.patch", {"path": card, "fields": {"extensions": {"lunamoth": {"tagline": "t1"}}}})
-    result("card.patch", {"path": card, "fields": {"extensions": {"lunamoth": {"polaris": "ideal"}}}})
-    lm = json.loads(open(card, encoding="utf-8").read())["data"]["extensions"]["lunamoth"]
+    result("card.patch", {"path": card, "fields": {"extensions": {"chara": {"tagline": "t1"}}}})
+    result("card.patch", {"path": card, "fields": {"extensions": {"chara": {"polaris": "ideal"}}}})
+    lm = json.loads(open(card, encoding="utf-8").read())["data"]["extensions"]["chara"]
     assert lm["tagline"] == "t1" and lm["polaris"] == "ideal"
     # empty fields object + builtin card are clean errors
     assert rpc_error("card.patch", {"path": card, "fields": {}})["code"] == -32602
@@ -1013,11 +1013,11 @@ def test_set_aspiration_writes_live_store_and_card():
     assert out["applies"] == "next_turn" and out["polaris"] == "become a great cook"
     assert json.loads((meta.sandbox_dir / "polaris.json").read_text())["polaris"] == "become a great cook"
     card = json.loads((meta.root / "card.json").read_text(encoding="utf-8"))
-    assert card["data"]["extensions"]["lunamoth"]["polaris"] == "become a great cook"
+    assert card["data"]["extensions"]["chara"]["polaris"] == "become a great cook"
     # clearing empties both the live store and the card field
     result("chara.set_aspiration", {"name": meta.name, "text": ""})
     assert json.loads((meta.sandbox_dir / "polaris.json").read_text())["polaris"] == ""
-    assert "polaris" not in json.loads((meta.root / "card.json").read_text())["data"]["extensions"]["lunamoth"]
+    assert "polaris" not in json.loads((meta.root / "card.json").read_text())["data"]["extensions"]["chara"]
 
 
 def test_card_patch_dirty_flag_and_apply_for_running_chara():
@@ -1043,7 +1043,7 @@ def test_card_patch_dirty_flag_and_apply_for_running_chara():
 def test_card_visual_jobs_and_wake_inflight_guard():
     import threading
     import time
-    from lunamoth.visuals import jobs
+    from chara.visuals import jobs
     jobs._reset()
     set_defaults()
     card = _make_user_card("InFlight")
@@ -1075,8 +1075,8 @@ def test_card_visual_brief(monkeypatch):
 def test_matte_status_use_and_guards(monkeypatch):
     # R11: matte.status reports models + deps; matte.use persists the active id to
     # desktop.json (read by visuals.matte.selected_model); guards reject bad input.
-    from lunamoth.visuals import matte as M
-    monkeypatch.setenv("U2NET_HOME", str(os.path.join(os.environ["LUNAMOTH_HOME"], "u2net")))
+    from chara.visuals import matte as M
+    monkeypatch.setenv("U2NET_HOME", str(os.path.join(os.environ["CHARA_HOME"], "u2net")))
     # A real model install would pip-install rembg INTO the test interpreter and hit
     # the network — which both fails offline and pollutes deps_available() for the
     # other matte tests in this process. Stub the background job so this stays a pure
@@ -1262,7 +1262,7 @@ def test_session_card_is_writable_else_refused(tmp_path):
     (sc / "card.json").write_text("{}", encoding="utf-8")
     assert H._writable_card_path(str(sc / "card.json")).name == "card.json"  # session card: ok (the fix)
 
-    bogus = tmp_path / "outside.json"  # sibling of LUNAMOTH_HOME → under neither root
+    bogus = tmp_path / "outside.json"  # sibling of CHARA_HOME → under neither root
     bogus.write_text("{}", encoding="utf-8")
     with pytest.raises(Exception):
         H._writable_card_path(str(bogus))
@@ -1298,15 +1298,15 @@ def test_safe_extensions_secondary_only_theme_is_dropped():
     # the card view with KeyError 'primary' ("handler error: 'primary'"). Root fix:
     # a theme REQUIRES a primary, so _clean_theme drops a primary-less {secondary}
     # entirely — no theme, no theme_color, no crash.
-    out = H._safe_extensions_for_ui({"lunamoth": {"theme": {"secondary": "#abcdef"}}})
-    assert "theme" not in out["lunamoth"]
-    assert "theme_color" not in out["lunamoth"]
+    out = H._safe_extensions_for_ui({"chara": {"theme": {"secondary": "#abcdef"}}})
+    assert "theme" not in out["chara"]
+    assert "theme_color" not in out["chara"]
     # A primary present survives and still mirrors into the legacy field.
     out2 = H._safe_extensions_for_ui(
-        {"lunamoth": {"theme": {"primary": "#112233", "secondary": "#445566"}}}
+        {"chara": {"theme": {"primary": "#112233", "secondary": "#445566"}}}
     )
-    assert out2["lunamoth"]["theme"] == {"primary": "#112233", "secondary": "#445566"}
-    assert out2["lunamoth"]["theme_color"] == "#112233"
+    assert out2["chara"]["theme"] == {"primary": "#112233", "secondary": "#445566"}
+    assert out2["chara"]["theme_color"] == "#112233"
 
 
 # ---- keyring durability (2026-07 audit: desktop.json is the ONE secret store) ------
@@ -1317,7 +1317,7 @@ def test_concurrent_save_key_never_loses_an_entry():
     the whole RMW, so every thread's key survives."""
     import threading
 
-    from lunamoth.server.hub import config as C
+    from chara.server.hub import config as C
 
     n = 12
     errors = []
@@ -1345,7 +1345,7 @@ def test_keyring_write_is_atomic_temp_plus_replace(monkeypatch):
     import os
     import stat
 
-    from lunamoth.server.hub import config as C
+    from chara.server.hub import config as C
 
     replaced = []
     real_replace = os.replace

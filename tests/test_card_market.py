@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from lunamoth.server.hub import card_market as M
-from lunamoth.server.hub._common import HubRpcError
+from chara.server.hub import card_market as M
+from chara.server.hub._common import HubRpcError
 
 
 # ---- search --------------------------------------------------------------------
@@ -161,7 +161,7 @@ def test_import_maps_fields_and_keeps_macros(monkeypatch):
 
 def test_import_omits_polaris_sets_theme_and_keeps_cover_url(monkeypatch):
     _, card = _import(monkeypatch)
-    ext = card["data"]["extensions"]["lunamoth"]
+    ext = card["data"]["extensions"]["chara"]
     assert "polaris" not in ext  # 理想 is the user's — never imported, and absent is safe
     assert ext["theme"]["primary"].startswith("#") and len(ext["theme"]["primary"]) == 7  # always present
     assert ext["source"] == "character_tavern" and ext["source_path"] == "amy/witch"

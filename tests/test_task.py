@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from lunamoth.tools.task import TaskStore, _MAX_ACTIVE
+from chara.tools.task import TaskStore, _MAX_ACTIVE
 
 
 @pytest.fixture
@@ -61,7 +61,7 @@ def test_missing_id_raises(store):
 
 
 def test_done_records_trim_to_cap_dropping_oldest(store):
-    from lunamoth.tools.task import _MAX_DONE
+    from chara.tools.task import _MAX_DONE
 
     # Seal more than the cap (one at a time — active cap forbids a big batch).
     for i in range(_MAX_DONE + 3):
@@ -114,7 +114,7 @@ def test_render_empty_invites_only_with_aspiration(store):
 def test_tool_dispatch_add_complete(tmp_path):
     from types import SimpleNamespace
 
-    from lunamoth.tools.builtin.task import task as task_tool
+    from chara.tools.builtin.task import task as task_tool
 
     ctx = SimpleNamespace(task=TaskStore(tmp_path / "task.json"))
     out = json.loads(task_tool({"action": "add", "content": "make a thing"}, ctx))
@@ -126,7 +126,7 @@ def test_tool_dispatch_add_complete(tmp_path):
 def test_tool_errors_surface(tmp_path):
     from types import SimpleNamespace
 
-    from lunamoth.tools.builtin.task import task as task_tool
+    from chara.tools.builtin.task import task as task_tool
 
     ctx = SimpleNamespace(task=TaskStore(tmp_path / "task.json"))
     assert "__tool_error__" in task_tool({"action": "bogus"}, ctx)

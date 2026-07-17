@@ -9,9 +9,9 @@ import json
 import types
 from pathlib import Path
 
-from lunamoth.tools.builtin import execute_code as ec_mod
-from lunamoth.tools.builtin import delegate_task as dt_mod
-from lunamoth.tools.registry import registry
+from chara.tools.builtin import execute_code as ec_mod
+from chara.tools.builtin import delegate_task as dt_mod
+from chara.tools.registry import registry
 
 
 def _drain_delegate(ctx, args, timeout=5.0):
@@ -23,7 +23,7 @@ def _drain_delegate(ctx, args, timeout=5.0):
     out = json.loads(dt_mod.delegate_task(args, ctx))
     if out.get("status") != "submitted":
         return out
-    from lunamoth.tools.builtin._process_registry import get_registry
+    from chara.tools.builtin._process_registry import get_registry
     return get_registry(ctx).completion_queue.get(timeout=timeout)
 
 
@@ -68,7 +68,7 @@ class _FakeLLM:
 
     def stream_agent(self, user_text, context, stable, volatile, tools, execute,
                      record=None, max_steps=8, in_context=True, channel="say"):
-        from lunamoth.protocol.events import TextDelta
+        from chara.protocol.events import TextDelta
         if self._tool_call is not None:
             # Fire one tool call so the trace + dispatch path is exercised.
             execute(self._tool_call)
@@ -81,7 +81,7 @@ class _FakeLLM:
 
 def make_ctx(tmp_path, *, dispatch=None, llm=None, tool_access=None,
              terminal_output="OK", terminal_records=None):
-    from lunamoth.tools.context import ToolContext
+    from chara.tools.context import ToolContext
     root = tmp_path / "chara"
     (root / "workspace").mkdir(parents=True, exist_ok=True)
 
@@ -91,7 +91,7 @@ def make_ctx(tmp_path, *, dispatch=None, llm=None, tool_access=None,
         return terminal_output
 
     def _run_terminal_result(command, *, timeout, workdir=None, browser=False):
-        from lunamoth.tools.runner import TerminalResult
+        from chara.tools.runner import TerminalResult
         text = _run_terminal(command, timeout=timeout, workdir=workdir)
         # Default the fake to a clean exit (0) so execute_code reports success;
         # a non-zero "exit=N" prefix in terminal_output is honored for error-path tests.
@@ -379,7 +379,7 @@ def test_delegate_too_many_tasks(tmp_path):
 
 
 def test_delegate_single_goal_runs_subturn(tmp_path):
-    from lunamoth.protocol.events import TextDelta
+    from chara.protocol.events import TextDelta
     llm = _FakeLLM(events=[TextDelta("Did the thing.", "muse")])
     ctx = make_ctx(tmp_path, dispatch=lambda n, a: "{}", llm=llm)
     out = _drain_delegate(ctx, {"goal": "summarize"})
@@ -395,7 +395,7 @@ def test_delegate_single_goal_runs_subturn(tmp_path):
 def test_delegate_submit_is_non_blocking(tmp_path):
     """The call returns immediately with a submit receipt — it does NOT block for
     results (the whole point: subagents run alongside the main agent)."""
-    from lunamoth.protocol.events import TextDelta
+    from chara.protocol.events import TextDelta
     llm = _FakeLLM(events=[TextDelta("ok", "muse")])
     ctx = make_ctx(tmp_path, dispatch=lambda n, a: "{}", llm=llm)
     out = json.loads(dt_mod.delegate_task({"goal": "x"}, ctx))
@@ -418,7 +418,7 @@ def test_delegate_per_child_timeout_is_enforced(tmp_path, monkeypatch):
         def stream_agent(self, *a, **k):
             import time as _t
             _t.sleep(1.0)  # outlives the 0.2s per-child limit
-            from lunamoth.protocol.events import TextDelta
+            from chara.protocol.events import TextDelta
             yield TextDelta("late", k.get("channel", "say"))
 
     ctx = make_ctx(tmp_path, dispatch=lambda n, a: "{}", llm=_SlowLLM())
@@ -428,7 +428,7 @@ def test_delegate_per_child_timeout_is_enforced(tmp_path, monkeypatch):
 
 def test_delegate_completion_event_formats(tmp_path):
     """The delegate completion event renders as a model-facing notice line."""
-    from lunamoth.tools.builtin._process_registry import format_background_notification
+    from chara.tools.builtin._process_registry import format_background_notification
     line = format_background_notification({
         "type": "delegate", "status": "done",
         "results": [{"task_index": 0, "status": "completed", "summary": "found it"}],
@@ -440,7 +440,7 @@ def test_delegate_completion_event_formats(tmp_path):
 
 
 def test_delegate_batch_parallel_in_order(tmp_path):
-    from lunamoth.protocol.events import TextDelta
+    from chara.protocol.events import TextDelta
     llm = _FakeLLM(events=[TextDelta("ok", "muse")])
     ctx = make_ctx(tmp_path, dispatch=lambda n, a: "{}", llm=llm)
     out = _drain_delegate(ctx, {"tasks": [{"goal": "a"}, {"goal": "b"}, {"goal": "c"}]})
@@ -453,7 +453,7 @@ def test_delegate_batch_actually_concurrent(tmp_path):
     """Workers run on separate threads concurrently: a barrier that needs all
     workers present to release only completes if they overlap."""
     import threading
-    from lunamoth.protocol.events import TextDelta
+    from chara.protocol.events import TextDelta
 
     n = 3
     barrier = threading.Barrier(n, timeout=5)
@@ -483,7 +483,7 @@ def test_delegate_batch_actually_concurrent(tmp_path):
 def test_delegate_depth_cap_rejects_grandchild(tmp_path):
     """A ctx already at delegate_depth>=MAX_DEPTH (i.e. inside a worker) refuses
     to spawn — no grandchildren."""
-    from lunamoth.protocol.events import TextDelta
+    from chara.protocol.events import TextDelta
     llm = _FakeLLM(events=[TextDelta("ok", "muse")])
     ctx = make_ctx(tmp_path, dispatch=lambda n, a: "{}", llm=llm)
     ctx.delegate_depth = dt_mod.MAX_DEPTH
@@ -492,7 +492,7 @@ def test_delegate_depth_cap_rejects_grandchild(tmp_path):
 
 
 def test_delegate_spawn_pause(tmp_path):
-    from lunamoth.protocol.events import TextDelta
+    from chara.protocol.events import TextDelta
     llm = _FakeLLM(events=[TextDelta("ok", "muse")])
     ctx = make_ctx(tmp_path, dispatch=lambda n, a: "{}", llm=llm)
     assert dt_mod.set_spawn_paused(True) is True
@@ -522,10 +522,10 @@ def test_delegate_per_worker_llm_client(tmp_path):
             return True
 
         def stream_agent(self, *a, **k):
-            from lunamoth.protocol.events import TextDelta
+            from chara.protocol.events import TextDelta
             yield TextDelta("done", k.get("channel", "say"))
 
-    import lunamoth.core.llm as llm_mod
+    import chara.core.llm as llm_mod
     orig = llm_mod.LLMClient
     llm_mod.LLMClient = _SpyClient
     try:
@@ -544,7 +544,7 @@ def test_delegate_per_worker_llm_client(tmp_path):
 def test_delegate_blocks_forbidden_tool(tmp_path):
     """A subagent attempting a blocked tool gets a refusal in its trace, and the
     parent dispatch is never invoked for it."""
-    from lunamoth.protocol.events import TextDelta
+    from chara.protocol.events import TextDelta
     dispatched = []
     tool_call = {"function": {"name": "memory", "arguments": "{}"}}
     llm = _FakeLLM(events=[TextDelta("done", "muse")], tool_call=tool_call)
@@ -556,7 +556,7 @@ def test_delegate_blocks_forbidden_tool(tmp_path):
 
 
 def test_delegate_allowed_tool_dispatches(tmp_path):
-    from lunamoth.protocol.events import TextDelta
+    from chara.protocol.events import TextDelta
     dispatched = []
 
     def disp(name, args):
@@ -577,7 +577,7 @@ def test_delegate_allowed_tool_dispatches(tmp_path):
 
 
 def test_delegate_blocked_tools_constant():
-    # The blocked set is preserved (hermes parity + LunaMoth chara-life tools).
+    # The blocked set is preserved (hermes parity + OpenCharaAgent chara-life tools).
     assert {"delegate_task", "memory", "execute_code", "speak"} <= dt_mod.DELEGATE_BLOCKED_TOOLS
 
 

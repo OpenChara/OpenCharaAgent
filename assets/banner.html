@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- LunaMoth GitHub banner source. Render with headless Chrome:
+<!-- OpenCharaAgent GitHub banner source. Render with headless Chrome:
      chrome --headless --screenshot=banner.png --window-size=1280,400 \
             --force-device-scale-factor=2 file://.../banner.html
      Fonts are macOS system serifs (Didot / Hoefler Text) — render on macOS.
@@ -42,14 +42,24 @@
   /* stars */
   .star { position: absolute; border-radius: 50%; background: #eaf7ff; }
 
-  /* the moth sigil */
-  .sigil { width: 108px; margin-bottom: 2px; opacity: .96;
+  /* the horizontal lockup: sigil left of the wordmark, centered on its cap height */
+  .lockup {
+    display: flex;
+    align-items: center;
+    gap: 28px;
+  }
+
+  /* the moth sigil (solid silhouette) */
+  .sigil { width: 72px; opacity: .96;
+           /* optically center against the caps: the h1 line box extends below the
+              baseline for descenders the all-caps-height name barely uses */
+           transform: translateY(-5px);
            filter: drop-shadow(0 0 18px rgba(160, 210, 245, .55)); }
 
   h1 {
     font-family: "Didot", "Hoefler Text", serif;
     font-weight: 400;
-    font-size: 164px;
+    font-size: 92px;
     line-height: 1.04;
     letter-spacing: .015em;
     background: linear-gradient(180deg, #ffffff 30%, #a8cfec 100%);
@@ -93,31 +103,31 @@
   <div class="star" style="left:78px;   top:196px; width:2px; height:2px; opacity:.5"></div>
   <div class="star" style="left:1196px; top:276px; width:2px; height:2px; opacity:.45"></div>
 
-  <!-- the moth sigil: same geometry as apps/desktop/assets/icon.svg, moonlight white -->
-  <svg class="sigil" viewBox="240 270 544 560" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <g id="half">
-        <path d="M 506 402 C 490 360 470 328 442 308 C 470 318 496 352 510 394 Z"/>
-        <path d="M 507 436 C 460 408 380 360 318 342 C 290 334 276 344 280 366
-                 C 288 412 330 472 394 508 C 442 535 486 542 504 532 Z"/>
-        <path d="M 503 542 C 455 538 400 556 386 596 C 372 634 392 666 424 672
-                 C 420 716 426 756 444 788 C 450 798 462 796 464 784
-                 C 470 730 476 670 486 626 C 492 596 500 560 503 548 Z"/>
-        <circle cx="376" cy="424" r="17" fill="#0a1726"/>
-        <circle cx="376" cy="424" r="7"/>
-        <circle cx="428" cy="606" r="12" fill="#0a1726"/>
+  <div class="lockup">
+    <!-- the moth sigil: solid-silhouette variant of apps/desktop/assets/icon.svg
+         (no eyespots), matching apps/web BrandLoader; moonlight white -->
+    <svg class="sigil" viewBox="240 270 544 560" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <g id="half">
+          <path d="M 506 402 C 490 360 470 328 442 308 C 470 318 496 352 510 394 Z"/>
+          <path d="M 507 436 C 460 408 380 360 318 342 C 290 334 276 344 280 366
+                   C 288 412 330 472 394 508 C 442 535 486 542 504 532 Z"/>
+          <path d="M 503 542 C 455 538 400 556 386 596 C 372 634 392 666 424 672
+                   C 420 716 426 756 444 788 C 450 798 462 796 464 784
+                   C 470 730 476 670 486 626 C 492 596 500 560 503 548 Z"/>
+        </g>
+      </defs>
+      <g fill="#dcebfa" transform="rotate(-8 512 530)">
+        <use href="#half"/>
+        <use href="#half" transform="matrix(-1,0,0,1,1024,0)"/>
+        <path d="M 512 404 C 530 404 538 426 537 458 C 536 510 526 562 512 588
+                 C 498 562 488 510 487 458 C 486 426 494 404 512 404 Z"/>
+        <circle cx="512" cy="404" r="19"/>
       </g>
-    </defs>
-    <g fill="#dcebfa" transform="rotate(-8 512 530)">
-      <use href="#half"/>
-      <use href="#half" transform="matrix(-1,0,0,1,1024,0)"/>
-      <path d="M 512 404 C 530 404 538 426 537 458 C 536 510 526 562 512 588
-               C 498 562 488 510 487 458 C 486 426 494 404 512 404 Z"/>
-      <circle cx="512" cy="404" r="19"/>
-    </g>
-  </svg>
+    </svg>
 
-  <h1>LunaMoth</h1>
+    <h1>OpenCharaAgent</h1>
+  </div>
 
   <div class="sub">
     <div class="rule"></div>

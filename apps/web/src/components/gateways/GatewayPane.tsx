@@ -3,7 +3,7 @@
  * QR login flow (weixin.qr → poll weixin.qr_status), enable/disable
  * (gateway.start/stop), and field-level config save (messaging.get / messaging.save).
  *
- * RPCs (all hub-level — cross-checked against src/lunamoth/server/hub.py):
+ * RPCs (all hub-level — cross-checked against src/chara/server/hub.py):
  *   messaging.get / messaging.save / gateway.status / gateway.start / gateway.stop /
  *   weixin.qr / weixin.qr_status.
  *

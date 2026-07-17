@@ -9,8 +9,8 @@ import time
 
 import pytest
 
-from lunamoth.tools.mcp import McpManager
-from lunamoth.session.settings import Settings
+from chara.tools.mcp import McpManager
+from chara.session.settings import Settings
 
 
 # ---- MCP ------------------------------------------------------------------------------
@@ -116,7 +116,7 @@ def test_mcp_save_media_confines_hostile_names(tmp_path):
     sanitized and the write confined to the media dir."""
     import base64
 
-    from lunamoth.tools.mcp import _Client
+    from chara.tools.mcp import _Client
 
     c = _Client.__new__(_Client)  # no server spawn — exercise the write path only
     c.name = "vis"
@@ -139,7 +139,7 @@ def test_mcp_save_media_confines_hostile_names(tmp_path):
 
 
 def test_mcp_safe_component():
-    from lunamoth.tools.mcp import _safe_component
+    from chara.tools.mcp import _safe_component
 
     assert _safe_component("shot", "t") == "shot"
     assert _safe_component("a tool/name", "t") == "a_tool_name"
@@ -184,7 +184,7 @@ def _manager(tmp_path, script):
 
 
 def test_mcp_call_timeout_kills_and_marks_dead(tmp_path, monkeypatch):
-    import lunamoth.tools.mcp as mcp_mod
+    import chara.tools.mcp as mcp_mod
 
     monkeypatch.setattr(mcp_mod, "_CALL_TIMEOUT", 0.3)
     mgr = _manager(tmp_path, _HANGING_SERVER)
@@ -208,7 +208,7 @@ def test_mcp_call_timeout_kills_and_marks_dead(tmp_path, monkeypatch):
 
 
 def test_mcp_hung_handshake_does_not_wedge_schemas(tmp_path, monkeypatch):
-    import lunamoth.tools.mcp as mcp_mod
+    import chara.tools.mcp as mcp_mod
 
     monkeypatch.setattr(mcp_mod, "_CONNECT_TIMEOUT", 0.3)
     mgr = _manager(tmp_path, _MUTE_SERVER)
@@ -234,13 +234,13 @@ def test_mcp_close_reaps_the_server(mcp):
 @pytest.fixture
 def agent(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sandbox"))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    from lunamoth.core.agent import LunaMothAgent
+    monkeypatch.setenv("CHARA_SANDBOX", str(tmp_path / "sandbox"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    from chara.core.agent import CharaAgent
 
     def make(**kw):
         kw.setdefault("toolpack", "sandbox")
-        return LunaMothAgent(Settings(character_path="", **kw))
+        return CharaAgent(Settings(character_path="", **kw))
 
     return make
 
@@ -254,7 +254,7 @@ def test_unconfigured_mcp_tool_is_denied(agent):
 def test_mcp_server_stderr_lands_in_the_shared_log(tmp_path, monkeypatch):
     """A crashing server must leave diagnostics (audit #20): stderr goes to
     sandbox/logs/mcp-stderr.log with a per-spawn header, never DEVNULL."""
-    import lunamoth.tools.mcp as M
+    import chara.tools.mcp as M
 
     monkeypatch.setattr(M, "SANDBOX_ROOT", tmp_path)
     client = M._Client("whiny", {
@@ -272,7 +272,7 @@ def test_mcp_server_stderr_lands_in_the_shared_log(tmp_path, monkeypatch):
 
 # ---- schema sanitization (audit #22) ----------------------------------------------------
 
-from lunamoth.tools.schema_sanitizer import sanitize_input_schema
+from chara.tools.schema_sanitizer import sanitize_input_schema
 
 
 def test_sanitize_nullable_union_collapses_to_non_null():

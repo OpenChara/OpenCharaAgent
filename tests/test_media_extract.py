@@ -2,7 +2,7 @@
 gateway/platforms/base.py, adapted for sandbox-relative paths. These lock in the
 hermes-faithful edge cases: extension gating, code/blockquote/JSON masking, the
 three marker forms, and strip-from-visible-text."""
-from lunamoth.protocol import media
+from chara.protocol import media
 
 
 def test_media_marker_relative_path_extracted_and_stripped():

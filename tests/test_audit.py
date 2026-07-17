@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import shutil
 
-from lunamoth.obs.audit import AuditLog
+from chara.obs.audit import AuditLog
 
 
 def test_write_creates_parent_dir(tmp_path):

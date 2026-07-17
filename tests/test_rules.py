@@ -2,8 +2,8 @@
 soul), included only when the chara has tools."""
 import pytest
 
-from lunamoth.content import rules
-from lunamoth.session.settings import Settings
+from chara.content import rules
+from chara.session.settings import Settings
 
 
 def test_rules_are_neutral_no_identity_claims():
@@ -52,7 +52,7 @@ def test_bundled_toolpack_note_is_brand_free():
     """The bundled `sandbox` toolpack's note rides the stable prefix (agent.py
     injects pack.note), so it is model-facing — no upstream brand may leak there.
     The description is operator-facing but kept clean too."""
-    from lunamoth.tools.toolpacks import load_toolpack
+    from chara.tools.toolpacks import load_toolpack
 
     pack = load_toolpack("sandbox")
     assert pack is not None
@@ -81,15 +81,15 @@ def test_website_block_teaches_relative_links_and_discussing_publish():
 
 
 def test_global_override_file(tmp_path, monkeypatch):
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path))
     (tmp_path / "rules.md").write_text("my house rules", encoding="utf-8")
     assert rules.rules() == "my house rules"
 
 
 def test_card_override_hook_beats_global(tmp_path, monkeypatch):
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path))
     (tmp_path / "rules.md").write_text("global rules", encoding="utf-8")
-    # extensions.lunamoth.content.rules / rules_closer override both, beating the global file
+    # extensions.chara.content.rules / rules_closer override both, beating the global file
     assert rules.rules(card_override="card rules") == "card rules"
     assert rules.closer(card_override="card closer") == "card closer"
     # empty/blank override falls through to the default chain
@@ -99,12 +99,12 @@ def test_card_override_hook_beats_global(tmp_path, monkeypatch):
 @pytest.fixture
 def agent(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sb"))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
-    from lunamoth.core.agent import LunaMothAgent
+    monkeypatch.setenv("CHARA_SANDBOX", str(tmp_path / "sb"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
+    from chara.core.agent import CharaAgent
 
-    return lambda toolpack: LunaMothAgent(Settings(character_path="", toolpack=toolpack))
+    return lambda toolpack: CharaAgent(Settings(character_path="", toolpack=toolpack))
 
 
 def test_card_is_first_then_rules(agent):

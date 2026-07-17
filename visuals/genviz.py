@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LunaMoth chara-visual pipeline (experiment).
+"""OpenCharaAgent chara-visual pipeline (experiment).
 
 Input: a character config (canonical appearance + world + palette).
 Output, per character, a UNIFIED-LAYOUT set rendered in a shared anime
@@ -38,11 +38,11 @@ TEMPLATE = Path(__file__).parent / "template_keyvisual.png"  # blank layout (see
 def _key() -> str:
     k = os.environ.get("ARK_API_KEY")
     if not k:
-        p = Path.home() / ".lunamoth" / "ark_api_key"
+        p = Path.home() / ".chara" / "ark_api_key"
         if p.exists():
             k = p.read_text().strip()
     if not k:
-        sys.exit("no ARK_API_KEY (env or ~/.lunamoth/ark_api_key)")
+        sys.exit("no ARK_API_KEY (env or ~/.chara/ark_api_key)")
     return k
 
 

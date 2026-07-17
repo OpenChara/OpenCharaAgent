@@ -7,8 +7,8 @@ tools — so it's worth a guard.
 """
 from pathlib import Path
 
-import lunamoth.config as config
-from lunamoth.config import ROOT, content_dir
+import chara.config as config
+from chara.config import ROOT, content_dir
 
 
 def test_content_dir_prefers_repo_root_when_present():
@@ -29,7 +29,7 @@ def test_content_dir_falls_back_to_packaged_bundled(monkeypatch, tmp_path):
 def test_sandbox_toolpack_loads_in_dev():
     """The default 'sandbox' pack must resolve to a non-empty tool list (the thing
     a wheel deploy was silently missing)."""
-    from lunamoth.tools.toolpacks import load_toolpack
+    from chara.tools.toolpacks import load_toolpack
 
     pack = load_toolpack("sandbox")
     assert pack is not None and len(pack.tools) > 0

@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 
-from lunamoth.server.supervisor import (
+from chara.server.supervisor import (
     DriverSlot,
     FrameRing,
     GatewayChild,
@@ -105,8 +105,8 @@ def test_client_detach_does_not_kill_the_resident_child():
     independent of attach/detach, so there is nothing to register on the leave."""
     import asyncio
 
-    from lunamoth.server.supervisor import CharaChild
-    from lunamoth.session.sessions import SessionMeta
+    from chara.server.supervisor import CharaChild
+    from chara.session.sessions import SessionMeta
 
     child = CharaChild(SessionMeta(name="t"), supervisor=None)
     child._attached = True
@@ -143,8 +143,8 @@ def test_idle_suspend_due_only_when_idle_detached_no_gateway():
     """A chat-mode (autonomy-off) chara auto-suspends only when it's been idle past
     SUSPEND_AFTER, nobody is in its room, and no gateway is live — and a recent operator
     message resets the idle clock."""
-    from lunamoth.server.supervisor import CharaChild
-    from lunamoth.session.sessions import SessionMeta
+    from chara.server.supervisor import CharaChild
+    from chara.session.sessions import SessionMeta
 
     child = CharaChild(SessionMeta(name="t"), supervisor=None)
     child.SUSPEND_AFTER = 100.0
@@ -245,8 +245,8 @@ def _fake_proc(returncode):
 
 
 def _make_child(monotonic):
-    from lunamoth.server.supervisor import CharaChild
-    from lunamoth.session.sessions import SessionMeta
+    from chara.server.supervisor import CharaChild
+    from chara.session.sessions import SessionMeta
 
     child = CharaChild(SessionMeta(name="t"), supervisor=None)
     child.restart = RestartBackoff(floor=60.0, cap=1800.0, health_after=120.0, max_strikes=3, monotonic=monotonic)
@@ -569,7 +569,7 @@ def test_gateway_stop_survives_a_messaging_save_recompute(tmp_path):
     the next unrelated save silently un-stopped the gateway. set_enabled(False)
     now materializes `enabled: false` into every adapter block, so the derived
     top level stays false through any recompute."""
-    from lunamoth.server.hub.session_messaging import messaging_save
+    from chara.server.hub.session_messaging import messaging_save
 
     gw = _make_gateway(tmp_path, _FakeSupervisor(_FakeCharaChild()))
     cfg = {"enabled": True,
@@ -615,9 +615,9 @@ def test_gateway_set_enabled_on_respects_a_deliberate_platform_choice(tmp_path):
 def test_autonomy_is_the_persisted_mode(tmp_path):
     """Autonomy = the chara's mode (live|chat) on disk; there is no separate
     pause flag. is_autonomous reads it, set_mode_on_disk flips it."""
-    from lunamoth.server.supervisor import Supervisor
-    from lunamoth.session.sessions import SessionMeta
-    import lunamoth.session.sessions as S
+    from chara.server.supervisor import Supervisor
+    from chara.session.sessions import SessionMeta
+    import chara.session.sessions as S
 
     (tmp_path / "sessions" / "p").mkdir(parents=True)
     orig = S.sessions_dir
@@ -636,10 +636,10 @@ def test_autonomy_is_the_persisted_mode(tmp_path):
 def test_set_autonomy_and_the_board_agree_via_mode(tmp_path, monkeypatch):
     """The in-chat autonomy switch and the board status both go through the one
     persisted mode — inner and outer can never disagree."""
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
-    from lunamoth.server import hub as H
-    from lunamoth.server.supervisor import Supervisor
-    from lunamoth.session import sessions as S
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
+    from chara.server import hub as H
+    from chara.server.supervisor import Supervisor
+    from chara.session import sessions as S
 
     # The keyring is the ONE key store (no top-level api_key); seed a provider key
     # and activate it so wake resolves a key by route.
@@ -670,9 +670,9 @@ def test_set_autonomy_off_interrupts_self_work_but_not_a_chat(monkeypatch):
     chat reply (a live client stream) alone. Turning ON never interrupts."""
     import asyncio
 
-    import lunamoth.server.supervisor.core as core
-    from lunamoth.server.supervisor import CharaChild, Supervisor
-    from lunamoth.session.sessions import SessionMeta
+    import chara.server.supervisor.core as core
+    from chara.server.supervisor import CharaChild, Supervisor
+    from chara.session.sessions import SessionMeta
 
     monkeypatch.setattr(Supervisor, "set_mode_on_disk", staticmethod(lambda meta, mode: None))
     sup = Supervisor(host="127.0.0.1", http_port=0, ws_port=0, token="t")
@@ -726,9 +726,9 @@ def test_set_autonomy_off_spares_an_inbound_messaging_turn(monkeypatch):
     conversation and is spared; self-work is still halted."""
     import asyncio
 
-    import lunamoth.server.supervisor.core as core
-    from lunamoth.server.supervisor import CharaChild, Supervisor
-    from lunamoth.session.sessions import SessionMeta
+    import chara.server.supervisor.core as core
+    from chara.server.supervisor import CharaChild, Supervisor
+    from chara.session.sessions import SessionMeta
 
     monkeypatch.setattr(Supervisor, "set_mode_on_disk", staticmethod(lambda meta, mode: None))
     sup = Supervisor(host="127.0.0.1", http_port=0, ws_port=0, token="t")
@@ -815,9 +815,9 @@ def test_format_shutdown_context_is_one_scannable_line():
 
 
 class _CaptureHandler(logging.Handler):
-    """Capture lunamoth.server.supervisor records directly.
+    """Capture chara.server.supervisor records directly.
 
-    The "lunamoth" logger sets propagate=False once setup_logging runs, so
+    The "chara" logger sets propagate=False once setup_logging runs, so
     pytest's caplog (which hangs off the root) can miss our lines under a full
     suite run. Attaching our own handler to the exact logger is propagation-
     independent.
@@ -832,7 +832,7 @@ class _CaptureHandler(logging.Handler):
 
 
 def _capture_supervisor_logs():
-    logger = logging.getLogger("lunamoth.server.supervisor")
+    logger = logging.getLogger("chara.server.supervisor")
     handler = _CaptureHandler()
     logger.addHandler(handler)
     old_level = logger.level
@@ -872,7 +872,7 @@ def test_resource_canary_start_baseline_and_stop():
 
 def test_driver_send_drops_on_stalled_client_without_blocking():
     """A ws.send that never completes must time out, not wedge the pump."""
-    import lunamoth.server.supervisor as SUP
+    import chara.server.supervisor as SUP
 
     class StalledWS:
         async def send(self, raw):  # noqa: ANN001
@@ -898,8 +898,8 @@ def test_asset_route_serves_image_confines_and_rejects_nonimage():
     import urllib.parse
     import urllib.request
     import urllib.error
-    from lunamoth.server import supervisor as SV
-    from lunamoth.server import hub as H
+    from chara.server import supervisor as SV
+    from chara.server import hub as H
 
     port = SV.free_port()
     srv = SV.start_http("127.0.0.1", port, token="t", supervisor=None)
@@ -927,7 +927,7 @@ def test_asset_route_requires_auth(tmp_path, monkeypatch):
     cookie, no ?token=) is refused; the cookie OR the query token unlocks it."""
     import types
     import urllib.parse, urllib.request, urllib.error
-    from lunamoth.server import supervisor as SV
+    from chara.server import supervisor as SV
 
     root = (tmp_path / "sessions" / "probe").resolve()
     (root / "sandbox" / "workspace" / "works").mkdir(parents=True)
@@ -964,7 +964,7 @@ def test_asset_route_open_when_no_server_token(tmp_path, monkeypatch):
     """Dev mode (no token configured): /asset stays open, as it was before SEC-1."""
     import types
     import urllib.parse, urllib.request, urllib.error
-    from lunamoth.server import supervisor as SV
+    from chara.server import supervisor as SV
 
     root = (tmp_path / "sessions" / "p").resolve()
     (root / "sandbox" / "workspace").mkdir(parents=True)
@@ -987,7 +987,7 @@ def test_asset_route_never_leaks_session_secrets(tmp_path, monkeypatch):
     served. Closes the unauthenticated-key-leak hole."""
     import types
     import urllib.parse, urllib.request, urllib.error
-    from lunamoth.server import supervisor as SV
+    from chara.server import supervisor as SV
 
     # A fake session laid out like a real one.
     root = (tmp_path / "sessions" / "probe").resolve()
@@ -1062,8 +1062,8 @@ def test_rejoin_delivers_frames_pushed_during_replay():
     keep draining the ring until no new frames remain."""
     import asyncio
 
-    from lunamoth.server.supervisor import CharaChild
-    from lunamoth.session.sessions import SessionMeta
+    from chara.server.supervisor import CharaChild
+    from chara.session.sessions import SessionMeta
 
     child = CharaChild(SessionMeta(name="t"), supervisor=None)
     for m in ("a", "b", "c"):
@@ -1090,8 +1090,8 @@ def test_rejoin_delivers_frames_pushed_during_replay():
 def test_rejoin_gap_still_reports_gap():
     import asyncio
 
-    from lunamoth.server.supervisor import CharaChild
-    from lunamoth.session.sessions import SessionMeta
+    from chara.server.supervisor import CharaChild
+    from chara.session.sessions import SessionMeta
 
     child = CharaChild(SessionMeta(name="t"), supervisor=None)
     child.ring = FrameRing(capacity=2)

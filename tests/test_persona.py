@@ -1,8 +1,8 @@
 """Default-card selection: the "default" tag convention (no names in src/)."""
 import json
 
-from lunamoth.content import persona
-from lunamoth.content.cards import CharacterCard
+from chara.content import persona
+from chara.content.cards import CharacterCard
 
 
 def test_bundled_default_is_the_tagged_card():
@@ -30,7 +30,7 @@ def test_default_tag_wins_over_sorted_order_and_falls_back_without_it(tmp_path, 
     # The cards dir now resolves through config.content_dir (which reads
     # config.ROOT), so inject there — tmp_path/cards exists, so content_dir
     # returns it rather than falling back to the packaged _bundled copy.
-    monkeypatch.setattr("lunamoth.config.ROOT", tmp_path)
+    monkeypatch.setattr("chara.config.ROOT", tmp_path)
 
     assert persona.default_character_path("en").name == "Zebra.en.json"
 
@@ -48,6 +48,6 @@ def test_default_tag_reading_tolerates_broken_tags(tmp_path, monkeypatch):
     # The cards dir now resolves through config.content_dir (which reads
     # config.ROOT), so inject there — tmp_path/cards exists, so content_dir
     # returns it rather than falling back to the packaged _bundled copy.
-    monkeypatch.setattr("lunamoth.config.ROOT", tmp_path)
+    monkeypatch.setattr("chara.config.ROOT", tmp_path)
 
     assert persona.default_character_path("en").name == "Broken.en.json"  # sorted fallback

@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from lunamoth.visuals import pipeline
+from chara.visuals import pipeline
 
 
 _FAKE_PNG = b"\x89PNG\r\n\x1a\nFAKE-IMAGE-BYTES"
@@ -20,7 +20,7 @@ CARD = {
         "name": "Test Chara",
         "description": "A tidy archivist.",
         "personality": "meticulous, warm",
-        "extensions": {"lunamoth": {"tagline": "keeper of records",
+        "extensions": {"chara": {"tagline": "keeper of records",
                                     "theme": {"primary": "#3A7"}}},
         "character_book": {"entries": [{"content": "Lives in a brass library."}]},
     }
@@ -37,7 +37,7 @@ def key_present(monkeypatch, tmp_path):
         "image_provider": "volcano", "image_model": "doubao-seedream-x",
         "keys": {"火山": {"provider": "volcano", "api_key": "sk-img-test"}},
     }), encoding="utf-8")
-    monkeypatch.setenv("LUNAMOTH_HOME", str(home))
+    monkeypatch.setenv("CHARA_HOME", str(home))
 
 
 # --- brief --------------------------------------------------------------------
@@ -181,7 +181,7 @@ def test_generate_sprite_mattes_when_available(monkeypatch):
 
 def test_generate_no_image_key_is_error(monkeypatch):
     monkeypatch.delenv("ARK_API_KEY", raising=False)
-    monkeypatch.setenv("LUNAMOTH_HOME", "/nonexistent-empty-home-xyz")
+    monkeypatch.setenv("CHARA_HOME", "/nonexistent-empty-home-xyz")
     with pytest.raises(RuntimeError, match="image key"):
         pipeline.generate(CARD, "avatar", llm_call=lambda s, u: "{}", brief=_fixed_brief())
 
@@ -327,7 +327,7 @@ def test_generate_stickers_mattes_each_cell_when_available(monkeypatch):
 
 
 def test_slice_grid_cuts_equal_cell_count():
-    from lunamoth.content import imaging
+    from chara.content import imaging
     cells = imaging.slice_grid(_white_sheet(rows=3, cols=3, cell=99), 3, 3)
     assert len(cells) == 9
     assert all(c[:8] == b"\x89PNG\r\n\x1a\n" for c in cells)
@@ -338,7 +338,7 @@ def test_cut_white_bg_removes_white_keeps_subject():
 
     from PIL import Image
 
-    from lunamoth.visuals import matte
+    from chara.visuals import matte
 
     img = Image.new("RGB", (60, 60), (255, 255, 255))
     for x in range(20, 40):

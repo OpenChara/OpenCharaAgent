@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from lunamoth.tools.builtin._pathsec import PathEscape, resolve_in_workspace
+from chara.tools.builtin._pathsec import PathEscape, resolve_in_workspace
 
 
 @pytest.fixture

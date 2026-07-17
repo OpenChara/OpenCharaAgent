@@ -5,8 +5,8 @@ import json
 
 import pytest
 
-from lunamoth.config import LLMConfig
-from lunamoth.core.llm import LLMClient, _repair_tool_args
+from chara.config import LLMConfig
+from chara.core.llm import LLMClient, _repair_tool_args
 
 
 def _client():
@@ -133,7 +133,7 @@ def _patch_stream(monkeypatch, chunks):
 
 
 def test_scrub_surrogates():
-    from lunamoth.core.llm import _scrub_surrogates
+    from chara.core.llm import _scrub_surrogates
 
     assert _scrub_surrogates("a\ud800b\udfffc") == "a�b�c"
     clean = "嗨 😀 plain"
@@ -141,7 +141,7 @@ def test_scrub_surrogates():
 
 
 def test_joiner_preserves_split_astral_pairs():
-    from lunamoth.core.llm import _SurrogateJoiner
+    from chara.core.llm import _SurrogateJoiner
 
     j = _SurrogateJoiner()
     assert j.feed("ok\ud83d") == "ok"          # high surrogate held back
@@ -150,7 +150,7 @@ def test_joiner_preserves_split_astral_pairs():
 
 
 def test_joiner_scrubs_true_lone_surrogates():
-    from lunamoth.core.llm import _SurrogateJoiner
+    from chara.core.llm import _SurrogateJoiner
 
     j = _SurrogateJoiner()
     assert j.feed("bad\ud800") == "bad"
@@ -161,7 +161,7 @@ def test_joiner_scrubs_true_lone_surrogates():
 
 
 def test_stream_text_and_reasoning_are_surrogate_free(monkeypatch):
-    from lunamoth.protocol import TextDelta, ThinkDelta
+    from chara.protocol import TextDelta, ThinkDelta
 
     _patch_stream(monkeypatch, [
         {"choices": [{"delta": {"reasoning_content": "hm\ud800"}}]},
@@ -206,7 +206,7 @@ def test_tool_args_surrogates_scrubbed(monkeypatch):
 
 
 def test_plain_stream_path_is_surrogate_free(monkeypatch):
-    from lunamoth.protocol import TextDelta
+    from chara.protocol import TextDelta
 
     _patch_stream(monkeypatch, [
         {"choices": [{"delta": {"content": "a\ud800"}}]},
@@ -285,7 +285,7 @@ def _endless_tool_turns(monkeypatch):
 
 
 def test_step_budget_exhaustion_yields_notice_and_context_marker(monkeypatch):
-    from lunamoth.protocol import Notice
+    from chara.protocol import Notice
 
     _endless_tool_turns(monkeypatch)
     recorded: list = []
@@ -305,7 +305,7 @@ def test_step_budget_exhaustion_yields_notice_and_context_marker(monkeypatch):
 
 
 def test_completed_turn_emits_no_budget_notice(monkeypatch):
-    from lunamoth.protocol import Notice
+    from chara.protocol import Notice
 
     def one_turn(self, messages, tools, text_out, reasoning=None, channel="say"):
         text_out.append("done.")
@@ -340,7 +340,7 @@ def test_interrupt_mid_tools_synthesizes_missing_tool_results(monkeypatch):
     """Closing the generator at a tool-boundary yield (interrupt/supersede) must
     leave every recorded tool_call answered — unanswered ids poison the durable
     context and strict endpoints 400 on every later turn."""
-    from lunamoth.protocol import ToolEnd
+    from chara.protocol import ToolEnd
 
     _two_call_turn(monkeypatch)
     recorded: list = []
@@ -396,7 +396,7 @@ def test_completed_tool_round_records_no_synthetic_results(monkeypatch):
 
 def _partial_then(monkeypatch, *, exc=None):
     def one_turn(self, messages, tools, text_out, reasoning=None, channel="say"):
-        from lunamoth.protocol import TextDelta
+        from chara.protocol import TextDelta
 
         text_out.append("halfway ")
         yield TextDelta("halfway ", channel)

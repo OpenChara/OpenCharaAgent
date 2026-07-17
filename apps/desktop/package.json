@@ -1,8 +1,8 @@
 {
-  "name": "lunamoth-desktop",
-  "productName": "LunaMoth",
+  "name": "chara-desktop",
+  "productName": "OpenCharaAgent",
   "version": "0.1.1",
-  "description": "LunaMoth desktop shell — a thin Electron window around `lunamoth desktop`",
+  "description": "OpenCharaAgent desktop shell — a thin Electron window around `chara desktop`",
   "private": true,
   "license": "MIT",
   "main": "electron/main.cjs",
@@ -16,8 +16,8 @@
     "electron-builder": "^26.8.1"
   },
   "build": {
-    "appId": "app.lunamoth.desktop",
-    "productName": "LunaMoth",
+    "appId": "app.openchara.desktop",
+    "productName": "OpenCharaAgent",
     "directories": {
       "output": "dist"
     },

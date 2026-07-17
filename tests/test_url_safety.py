@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from lunamoth.tools.builtin._url_safety import is_safe_url
+from chara.tools.builtin._url_safety import is_safe_url
 
 
 @pytest.mark.parametrize("url", [

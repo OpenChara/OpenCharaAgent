@@ -4,7 +4,7 @@ Pure unit tests: cache.py touches no import-time config globals, so no env dance
 """
 import copy
 
-from lunamoth.core.cache import apply_cache_control, cache_policy
+from chara.core.cache import apply_cache_control, cache_policy
 
 
 def _markers(messages):
@@ -68,7 +68,7 @@ def test_no_system_uses_last_4_nonsystem():
 
 
 def test_trailing_volatile_system_skipped():
-    """LunaMoth puts volatile-tail blocks as TRAILING system messages — they
+    """OpenCharaAgent puts volatile-tail blocks as TRAILING system messages — they
     must not eat a breakpoint; the 3 land on the last 3 non-system turns."""
     msgs = [
         {"role": "system", "content": "stable"},
@@ -171,7 +171,7 @@ def test_output_byte_identical_to_full_deepcopy_path():
     ]
 
     def reference(api_messages, ttl="5m", native=False):
-        from lunamoth.core.cache import _apply_marker, _build_marker
+        from chara.core.cache import _apply_marker, _build_marker
         m = copy.deepcopy(api_messages)
         marker = _build_marker(ttl)
         used = 0

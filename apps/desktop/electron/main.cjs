@@ -1,9 +1,9 @@
-// LunaMoth desktop shell — main process.
+// OpenCharaAgent desktop shell — main process.
 //
 // Hermes Desktop's shape, minimal: this app has NO renderer of its own. It
-// spawns the `lunamoth desktop` backend (HTTP renderer + WS hub), reads the
+// spawns the `chara desktop` backend (HTTP renderer + WS hub), reads the
 // one line the backend prints —
-//   LunaMoth desktop: http://127.0.0.1:PORT/#token=...&ws=PORT2
+//   OpenCharaAgent desktop: http://127.0.0.1:PORT/#token=...&ws=PORT2
 // — and loads that URL into a BrowserWindow. Backend missing, dying, or not
 // printing the line is a visible error dialog and exit, never a silent
 // fallback (project rule).
@@ -21,9 +21,9 @@ const path = require('node:path')
 // Name the app (menu bar, notifications, dock label) — without this an unpackaged
 // `electron .` dev run shows the generic "Electron". The packaged build gets this
 // from package.json productName + the bundle Info.plist.
-app.setName('LunaMoth')
+app.setName('OpenCharaAgent')
 
-const URL_LINE = /LunaMoth desktop:\s+(http:\/\/127\.0\.0\.1:\d+\/\S*)/
+const URL_LINE = /OpenCharaAgent desktop:\s+(http:\/\/127\.0\.0\.1:\d+\/\S*)/
 // First dev launch may `uv sync` a fresh venv before the server comes up.
 const STARTUP_TIMEOUT_MS = 180_000
 const SIGTERM_GRACE_MS = 8_000
@@ -36,7 +36,7 @@ let quitting = false
 // ---- backend discovery -------------------------------------------------------------
 
 function installedLauncher() {
-  const bin = path.join(os.homedir(), '.lunamoth', 'bin', 'lunamoth')
+  const bin = path.join(os.homedir(), '.chara', 'bin', 'chara')
   try {
     fs.accessSync(bin, fs.constants.X_OK)
     return bin
@@ -60,7 +60,7 @@ function backendCommand() {
       cmd: 'uv',
       // Both extras: a bare `--extra server` sync would strip the dev tools
       // (pytest) out of the repo venv every time the app launches.
-      args: ['run', '--extra', 'dev', '--extra', 'server', 'lunamoth', 'desktop', '--no-open'],
+      args: ['run', '--extra', 'dev', '--extra', 'server', 'chara', 'desktop', '--no-open'],
       cwd: repo,
     }
   }
@@ -74,7 +74,7 @@ function fatal(title, detail) {
   quitting = true
   dialog.showMessageBoxSync({
     type: 'error',
-    title: 'LunaMoth',
+    title: 'OpenCharaAgent',
     message: title,
     detail: String(detail || '').slice(-2000),
   })
@@ -86,8 +86,8 @@ function startBackend() {
     const found = backendCommand()
     if (!found) {
       reject(new Error(
-        'No LunaMoth backend found.\n\n' +
-        `Looked for ${path.join(os.homedir(), '.lunamoth', 'bin', 'lunamoth')} ` +
+        'No OpenCharaAgent backend found.\n\n' +
+        `Looked for ${path.join(os.homedir(), '.chara', 'bin', 'chara')} ` +
         '(install.sh) and for a development checkout next to apps/desktop.'))
       return
     }
@@ -101,7 +101,7 @@ function startBackend() {
         line = line.replace(/#token=[^\s&]+/g, '#token=***')
         log.push(line)
         if (log.length > 200) log.shift()
-        if (process.env.LUNAMOTH_SHELL_DEBUG) console.log('[backend]', line)
+        if (process.env.CHARA_SHELL_DEBUG) console.log('[backend]', line)
       }
     }
     let proc
@@ -158,7 +158,7 @@ function startBackend() {
           `The backend exited before it was ready (${signal || `code ${code}`}).\n\n` +
           log.slice(-15).join('\n')))
       } else if (dead && !quitting) {
-        fatal('The LunaMoth backend stopped unexpectedly.', log.slice(-15).join('\n'))
+        fatal('The OpenCharaAgent backend stopped unexpectedly.', log.slice(-15).join('\n'))
       }
     })
   })
@@ -238,7 +238,7 @@ async function boot() {
     if (quitting) return
     createWindow(url, origin)
   } catch (err) {
-    fatal('LunaMoth could not start.', err.message)
+    fatal('OpenCharaAgent could not start.', err.message)
   }
 }
 
@@ -265,9 +265,9 @@ function createTray() {
   )
   icon.setTemplateImage(true)
   tray = new Tray(icon)
-  tray.setToolTip('LunaMoth')
+  tray.setToolTip('OpenCharaAgent')
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '打开 LunaMoth / Open', click: showWindow },
+    { label: '打开 OpenCharaAgent / Open', click: showWindow },
     { type: 'separator' },
     { label: '退出 / Quit', click: () => app.quit() },
   ]))
@@ -286,11 +286,11 @@ if (!app.requestSingleInstanceLock()) {
     }
   })
 
-  ipcMain.handle('lunamoth:notify', (_event, payload) => {
+  ipcMain.handle('chara:notify', (_event, payload) => {
     if (!Notification.isSupported()) return false
     const { title, body } = payload || {}
     const n = new Notification({
-      title: String(title || 'LunaMoth').slice(0, 80),
+      title: String(title || 'OpenCharaAgent').slice(0, 80),
       body: String(body || '').slice(0, 240),
       silent: false,
     })

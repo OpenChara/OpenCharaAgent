@@ -82,7 +82,8 @@ dmypy.json
 docs/_build/
 .streamlit/secrets.toml
 
-# LunaMoth runtime config (holds API keys — never commit)
+# OpenCharaAgent runtime config (holds API keys — never commit)
+.chara/
 .lunamoth/
 
 # User-dropped SillyTavern cards (keep bundled cards, license + .gitkeep);
@@ -90,13 +91,13 @@ docs/_build/
 cards/*
 !cards/.gitkeep
 # Bundled characters are per-character folders (card.json + art-asset library).
-# User-dropped cards live in ~/.lunamoth/cards, so any folder here is bundled.
+# User-dropped cards live in ~/.chara/cards, so any folder here is bundled.
 !cards/*/
 !cards/*/**
 # …but never OS junk the broad re-include would otherwise sweep back in
 cards/**/.DS_Store
 
-# LunaMoth runtime artifacts (sandbox/logs/ is fully ignored below; created at runtime)
+# OpenCharaAgent runtime artifacts (sandbox/logs/ is fully ignored below; created at runtime)
 sandbox/logs/*.jsonl
 sandbox/workspace/*
 !sandbox/workspace/.gitkeep
@@ -130,10 +131,10 @@ visuals/*
 # Frontend SPA (apps/web) — see docs/CLIENT-AND-DEPLOY-PLAN.md
 node_modules/
 # Built renderer: gitignored, bundled into the wheel via package-data (Track F).
-src/lunamoth/front/webui/
+src/chara/front/webui/
 
 # Python lib/ rule must not catch the frontend source
 !/apps/web/src/lib/
 
 # Build-time copy of repo-root cards/ + toolpacks/ into the package (build-wheel.sh)
-src/lunamoth/_bundled/
+src/chara/_bundled/

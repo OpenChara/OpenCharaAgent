@@ -12,7 +12,7 @@ installed on the host.
 import subprocess
 import time
 
-from lunamoth.tools.runner import run_terminal, run_terminal_pty
+from chara.tools.runner import run_terminal, run_terminal_pty
 
 
 def test_pty_detects_a_tty(tmp_path):
@@ -119,7 +119,7 @@ def test_pty_exit_code_reported(tmp_path):
 
 def test_terminal_tool_pty_path_uses_a_tty(tmp_path):
     # End-to-end through the tool entry point: pty=true reaches run_terminal_pty.
-    from lunamoth.tools.builtin.terminal import terminal
+    from chara.tools.builtin.terminal import terminal
 
     ws = tmp_path / "workspace"
     ws.mkdir(parents=True, exist_ok=True)
@@ -129,7 +129,7 @@ def test_terminal_tool_pty_path_uses_a_tty(tmp_path):
             return {"isolation": "admin", "network_access": False, "writable_paths": []}
 
         def permissions(self):
-            from lunamoth.core.state import Permissions
+            from chara.core.state import Permissions
             return Permissions(isolation="admin", network_on=False, writable_paths=[])
 
     class _Ctx:
@@ -151,7 +151,7 @@ def test_terminal_tool_pty_path_uses_a_tty(tmp_path):
 
 def test_terminal_tool_no_stale_pty_deferred_note(tmp_path):
     # The old "pty mode is not yet supported" advisory must be gone.
-    from lunamoth.tools.builtin.terminal import terminal
+    from chara.tools.builtin.terminal import terminal
 
     ws = tmp_path / "workspace"
     ws.mkdir(parents=True, exist_ok=True)
@@ -161,7 +161,7 @@ def test_terminal_tool_no_stale_pty_deferred_note(tmp_path):
             return {"isolation": "admin", "network_access": False, "writable_paths": []}
 
         def permissions(self):
-            from lunamoth.core.state import Permissions
+            from chara.core.state import Permissions
             return Permissions(isolation="admin", network_on=False, writable_paths=[])
 
     class _Ctx:

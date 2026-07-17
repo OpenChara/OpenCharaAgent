@@ -55,7 +55,7 @@ data = {k: {**CHARS[k], "lines": LINES[k], **load(k)} for k in CHARS}
 
 HTML = """<!doctype html><html lang="zh"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>LunaMoth 聊天界面 · 现在 vs 接入素材后</title>
+<title>OpenCharaAgent 聊天界面 · 现在 vs 接入素材后</title>
 <style>
 :root{--accent:#5B9FD4;--text:#1D2730;--text-2:#5F7280;--text-3:#93A3AE;
   --bg:#F5F6F8;--panel:#FFFFFF;--hairline:rgba(20,40,60,.10);--radius:10px;
@@ -110,7 +110,7 @@ h1{font-size:17px;margin:0 0 4px}.sub{color:var(--text-2);font-size:13px;margin:
 .note b{color:var(--text)}
 </style>
 <body>
-<h1>LunaMoth 聊天界面 — 现在 vs 接入素材后</h1>
+<h1>OpenCharaAgent 聊天界面 — 现在 vs 接入素材后</h1>
 <p class="sub">同一套布局、同一套组件,只是换了更丰富的皮肤:Q版头像 · 淡化的角色背景 · 立绘水印 · 表情包气泡。不改 DOM 结构,纯素材 + CSS。</p>
 <div class="switch-row" id="sw"></div>
 <div class="cols">

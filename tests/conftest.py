@@ -1,10 +1,10 @@
 """Shared test fixtures + a safety net for config isolation.
 
 The runtime resolves its on-disk roots from three env vars at CALL time
-(LUNAMOTH_HOME, LUNAMOTH_CONFIG_DIR, LUNAMOTH_SANDBOX — see core/providers.py,
+(CHARA_HOME, CHARA_CONFIG_DIR, CHARA_SANDBOX — see core/providers.py,
 content/rules.py, messaging/*.py, etc.). Most tests already point these at a
 tmp dir before exercising the runtime, but the discipline is manual: a test that
-forgets would silently read/write the developer's REAL ~/.lunamoth (the global
+forgets would silently read/write the developer's REAL ~/.chara (the global
 API key, login hash, every other chara's session).
 
 `_isolate_config_roots` below is an AUTOUSE safety net: before every test it
@@ -24,13 +24,13 @@ import pytest
 @pytest.fixture(autouse=True)
 def _isolate_config_roots(tmp_path, monkeypatch):
     """Point the config/home/sandbox roots at a per-test tmp dir by default."""
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sandbox"))
-    # Isolation is now read from LUNAMOTH_PY_BACKEND (the one authority behind
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("CHARA_SANDBOX", str(tmp_path / "sandbox"))
+    # Isolation is now read from CHARA_PY_BACKEND (the one authority behind
     # EnvState.permissions().isolation). A CLI test that does os.environ.update(
     # meta.env()) leaks it across tests, so pin it clean per test — a test that
     # needs a specific backend sets it itself (monkeypatch wins, last-write).
-    monkeypatch.delenv("LUNAMOTH_PY_BACKEND", raising=False)
+    monkeypatch.delenv("CHARA_PY_BACKEND", raising=False)
     monkeypatch.delenv("LUNAMOSS_PY_BACKEND", raising=False)
     yield

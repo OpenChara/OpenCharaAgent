@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from lunamoth.tools.builtin._process_registry import (
+from chara.tools.builtin._process_registry import (
     format_background_notification,
     get_registry,
 )
@@ -41,8 +41,8 @@ def test_collect_watch_notes_leaves_completions_for_agent_layer():
     """The terminal tool surfaces watch_* matches inline in its JSON result, but it
     must not consume the completion/image_gen notices the agent's turn-boundary drain
     owns. Draining them destructively here silently dropped 'job finished' notices."""
-    from lunamoth.tools.builtin._process_registry import ProcessRegistry
-    from lunamoth.tools.builtin.terminal import _collect_watch_notes
+    from chara.tools.builtin._process_registry import ProcessRegistry
+    from chara.tools.builtin.terminal import _collect_watch_notes
     reg = ProcessRegistry()
     reg.completion_queue.put({"type": "completion", "session_id": "p1", "command": "build", "exit_code": 0})
     reg.completion_queue.put({"type": "watch_match", "session_id": "p2", "pattern": "ready", "output": "up"})
@@ -59,7 +59,7 @@ def test_has_pending_notifications_skips_consumed_completions():
     """The wake peek must agree with drain_notifications: a queue holding only an
     already-consumed completion is NOT pending (else the supervisor fires a no-op
     react). A delegate/image_gen event (never skipped) IS pending."""
-    from lunamoth.tools.builtin._process_registry import ProcessRegistry
+    from chara.tools.builtin._process_registry import ProcessRegistry
     reg = ProcessRegistry()
     assert reg.has_pending_notifications() is False
     reg.completion_queue.put({"type": "completion", "session_id": "p1", "exit_code": 0})
@@ -72,7 +72,7 @@ def test_has_pending_notifications_skips_consumed_completions():
 
 
 def test_drain_watch_notes_partitions_by_type():
-    from lunamoth.tools.builtin._process_registry import ProcessRegistry
+    from chara.tools.builtin._process_registry import ProcessRegistry
     reg = ProcessRegistry()
     reg.completion_queue.put({"type": "watch_disabled", "message": "watch off"})
     reg.completion_queue.put({"type": "completion", "session_id": "p1", "exit_code": 1})
@@ -86,11 +86,11 @@ def test_drain_watch_notes_partitions_by_type():
 @pytest.fixture
 def agent(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sandbox"))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    from lunamoth.core.agent import LunaMothAgent
-    from lunamoth.session.settings import Settings
-    return LunaMothAgent(Settings(character_path="", toolpack="sandbox"))
+    monkeypatch.setenv("CHARA_SANDBOX", str(tmp_path / "sandbox"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    from chara.core.agent import CharaAgent
+    from chara.session.settings import Settings
+    return CharaAgent(Settings(character_path="", toolpack="sandbox"))
 
 
 def test_gateway_drains_and_formats(agent):
@@ -168,7 +168,7 @@ def test_stream_react_drains_and_reacts(agent):
 def test_kill_all_reaps_running_groups_and_is_noop_when_empty():
     import subprocess
     import time
-    from lunamoth.tools.builtin._process_registry import ProcessRegistry, ProcessSession
+    from chara.tools.builtin._process_registry import ProcessRegistry, ProcessSession
 
     reg = ProcessRegistry()
     assert reg.kill_all() == 0  # nothing running → no-op (the session-alive case)

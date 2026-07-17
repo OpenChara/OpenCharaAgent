@@ -11,9 +11,9 @@ import json
 
 import pytest
 
-from lunamoth.tools.builtin import browser, _browser_driver as drv
-from lunamoth.tools import registry as _registry_mod
-from lunamoth.tools.registry import registry, discover_builtin_tools
+from chara.tools.builtin import browser, _browser_driver as drv
+from chara.tools import registry as _registry_mod
+from chara.tools.registry import registry, discover_builtin_tools
 
 
 @pytest.fixture(autouse=True)
@@ -70,7 +70,7 @@ def ctx(tmp_path):
     c = FakeCtx()
     # browser_vision saves screenshots under the workspace (jail-writable +
     # MEDIA-deliverable), so the ctx carries a real Sandbox like ToolContext does.
-    from lunamoth.tools.sandbox import Sandbox
+    from chara.tools.sandbox import Sandbox
 
     c.sandbox = Sandbox(tmp_path / "sb")
     return c
@@ -106,7 +106,7 @@ def test_all_twelve_registered():
 
 def test_discovery_finds_browser_module():
     imported = discover_builtin_tools()
-    assert "lunamoth.tools.builtin.browser" in imported
+    assert "chara.tools.builtin.browser" in imported
     names = registry.get_all_tool_names()
     for name in EXPECTED:
         assert name in names
@@ -115,7 +115,7 @@ def test_discovery_finds_browser_module():
 def test_driver_not_discovered_as_tool_module():
     # The underscore helper must NOT be imported as a tool module.
     imported = discover_builtin_tools()
-    assert "lunamoth.tools.builtin._browser_driver" not in imported
+    assert "chara.tools.builtin._browser_driver" not in imported
 
 
 def test_all_in_browser_toolset():
@@ -607,13 +607,13 @@ def test_socket_safe_tmpdir_darwin(monkeypatch):
 # browser_vision screenshot location (2026-07-02 audit P2)
 # ---------------------------------------------------------------------------
 # Screenshots must land INSIDE the workspace: every browser jail denies
-# ~/.lunamoth/cache writes (the old target errored for sandboxed charas), and
+# ~/.chara/cache writes (the old target errored for sandboxed charas), and
 # the advertised MEDIA:<path> resolves workspace-relative only — an absolute
 # path silently dropped the attachment at every delivery edge.
 
 
 def _vision_ctx(ctx, tmp_path):
-    from lunamoth.tools.sandbox import Sandbox
+    from chara.tools.sandbox import Sandbox
 
     ctx.sandbox = Sandbox(tmp_path)
     return ctx

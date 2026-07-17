@@ -6,10 +6,10 @@ deliver only the say-channel text back to the adapter.
 """
 from __future__ import annotations
 
-from lunamoth.messaging.base import Adapter, InboundMessage
-from lunamoth.protocol import MUSE, SAY, TextDelta, ThinkDelta, ToolEnd, ToolStart
-from lunamoth.server.dispatch import JsonRpcDispatcher
-from lunamoth.server.messaging_host import MessagingHost
+from chara.messaging.base import Adapter, InboundMessage
+from chara.protocol import MUSE, SAY, TextDelta, ThinkDelta, ToolEnd, ToolStart
+from chara.server.dispatch import JsonRpcDispatcher
+from chara.server.messaging_host import MessagingHost
 
 
 class _Adapter(Adapter):
@@ -166,7 +166,7 @@ class _LoginPendingAdapter(_Adapter):
 
 
 def test_host_skips_login_pending_adapter_and_reports_needs_login(tmp_path, monkeypatch):
-    import lunamoth.server.messaging_host as mh
+    import chara.server.messaging_host as mh
 
     handle = _Handle()
     frames: list[dict] = []
@@ -204,7 +204,7 @@ class _BusyDispatch:
     class handle:
         @staticmethod
         def stream_user(text, **kw):
-            from lunamoth.protocol import SAY, TextDelta
+            from chara.protocol import SAY, TextDelta
             yield TextDelta("reply", SAY)
 
         @staticmethod
@@ -219,7 +219,7 @@ class _BusyDispatch:
         pass
 
     def run_stream_sync(self, kind, make, on_event):
-        from lunamoth.server.dispatch import RpcError
+        from chara.server.dispatch import RpcError
         self.calls += 1
         if self.calls <= self._fail:
             raise RpcError(-32011, "a stream is already in flight")
@@ -228,7 +228,7 @@ class _BusyDispatch:
 
 
 def test_inbound_waits_and_retries_when_agent_busy(monkeypatch):
-    import lunamoth.server.messaging_host as mh
+    import chara.server.messaging_host as mh
     monkeypatch.setattr(mh.time, "sleep", lambda *_: None)  # no real waiting
     dispatch = _BusyDispatch(fail=2)
     adapter = _Adapter()
@@ -240,7 +240,7 @@ def test_inbound_waits_and_retries_when_agent_busy(monkeypatch):
 
 
 def test_inbound_busy_note_when_agent_never_frees(monkeypatch):
-    import lunamoth.server.messaging_host as mh
+    import chara.server.messaging_host as mh
     monkeypatch.setattr(mh.time, "sleep", lambda *_: None)
     dispatch = _BusyDispatch(fail=999)               # never frees
     adapter = _Adapter()
@@ -444,7 +444,7 @@ class _BlockingAdapter(_Adapter):
 def test_reconcile_toggles_one_platform_without_restarting_others(tmp_path, monkeypatch):
     """Disabling qq while weixin stays on must stop ONLY qq — weixin keeps its same
     running adapter/thread (run_count unchanged), so there is no reconnect blip."""
-    import lunamoth.server.messaging_host as mh
+    import chara.server.messaging_host as mh
 
     handle = _Handle()
     frames: list[dict] = []

@@ -19,7 +19,7 @@ body:
     id: logs
     attributes:
       label: Relevant output / logs
-      description: Error text, a `lunamoth doctor` excerpt, or log lines. Redact any secrets.
+      description: Error text, a `chara doctor` excerpt, or log lines. Redact any secrets.
       render: shell
   - type: dropdown
     id: surface

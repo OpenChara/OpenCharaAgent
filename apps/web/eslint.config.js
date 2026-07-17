@@ -4,12 +4,12 @@ import tseslint from "typescript-eslint";
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
 
-// Flat config for the LunaMoth web SPA (Vite + React 19 + TS).
+// Flat config for the OpenCharaAgent web SPA (Vite + React 19 + TS).
 // Pragmatic, not strict: typescript-eslint recommended + the React Hooks
 // rules + the react-refresh fast-refresh guard, with browser globals.
 export default tseslint.config(
   {
-    ignores: ["node_modules", "dist", "../../src/lunamoth/front/webui"],
+    ignores: ["node_modules", "dist", "../../src/chara/front/webui"],
   },
   js.configs.recommended,
   tseslint.configs.recommended,

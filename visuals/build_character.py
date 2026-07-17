@@ -23,9 +23,9 @@ script copies in.
   python build_character.py Quinn --steps matte    # brief + raw + matte (no web)
   python build_character.py Quinn --out /tmp/quinnweb
 
-KEYS (both optional, DEV-ONLY — not a runtime dependency of LunaMoth):
-  - OPENROUTER_API_KEY  (or ~/.lunamoth/openrouter_key)  -> the visual brief LLM
-  - ARK_API_KEY         (or ~/.lunamoth/ark_api_key)     -> Volcano Ark image gen
+KEYS (both optional, DEV-ONLY — not a runtime dependency of OpenCharaAgent):
+  - OPENROUTER_API_KEY  (or ~/.chara/openrouter_key)  -> the visual brief LLM
+  - ARK_API_KEY         (or ~/.chara/ark_api_key)     -> Volcano Ark image gen
 Generation/matting are heavy and offline by design; see visuals/README.md.
 
 Import-safe: importing this module runs nothing. Everything is behind functions

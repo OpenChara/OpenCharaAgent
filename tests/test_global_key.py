@@ -1,7 +1,7 @@
 """SEC-2: the provider api_key is GLOBAL, never copied into a per-session config.
 
 A living chara's session config holds only non-secret overrides; the key is
-resolved at load from the global keyring (~/.lunamoth/desktop.json). These pin
+resolved at load from the global keyring (~/.chara/desktop.json). These pin
 that contract: global resolution, env override, save never persists the secret
 into a session, and a legacy embedded key is stripped on read.
 """
@@ -11,16 +11,16 @@ import json
 
 import pytest
 
-from lunamoth.session import settings as S
+from chara.session import settings as S
 
 
 @pytest.fixture
 def session_env(tmp_path, monkeypatch):
     """Point the (import-pinned) CONFIG_DIR/CONFIG_PATH at a per-session dir under
-    a temp LUNAMOTH_HOME, so _is_session_config() and global_api_key() resolve there."""
+    a temp CHARA_HOME, so _is_session_config() and global_api_key() resolve there."""
     home = tmp_path / "home"
     (home / "sessions" / "probe").mkdir(parents=True)
-    monkeypatch.setenv("LUNAMOTH_HOME", str(home))
+    monkeypatch.setenv("CHARA_HOME", str(home))
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     sess = (home / "sessions" / "probe").resolve()
     monkeypatch.setattr(S, "CONFIG_DIR", sess)
@@ -102,7 +102,7 @@ def test_load_folds_orphan_session_key_instead_of_destroying_it(session_env):
 
 
 def test_bulk_key_update_is_noop_after_sec2():
-    from lunamoth.server import hub as H
+    from chara.server import hub as H
     assert H.key_update_candidates() == []
     assert H.apply_default_key(["anything"]) == {"updated": [], "skipped": [], "candidates": []}
 
@@ -147,7 +147,7 @@ def test_load_folds_legacy_global_config_key_into_keyring(tmp_path, monkeypatch)
     is no longer a key store, so the second-copy drift can't happen."""
     home = tmp_path / "home"
     home.mkdir(parents=True)
-    monkeypatch.setenv("LUNAMOTH_HOME", str(home))
+    monkeypatch.setenv("CHARA_HOME", str(home))
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(S, "CONFIG_DIR", home.resolve())              # global config dir (NOT under sessions/)
     monkeypatch.setattr(S, "CONFIG_PATH", (home / "config.json").resolve())
@@ -256,7 +256,7 @@ def test_task_defaults_overlays_per_task_provider(session_env):
     """task_defaults swaps in a saved provider's route for an aux task (card /
     image-prompt / vision …), leaving the model id to the caller; empty label or a
     keyless entry → defaults unchanged (falls back to the main default)."""
-    from lunamoth.server.hub import config as C
+    from chara.server.hub import config as C
     home, _ = session_env
     (home / "desktop.json").write_text(json.dumps({
         "keys": {"dash": {"provider": "openai_compatible",

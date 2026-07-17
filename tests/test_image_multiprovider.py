@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from lunamoth.content import image_providers as ip
-from lunamoth.tools.builtin import _image_gen as g
+from chara.content import image_providers as ip
+from chara.tools.builtin import _image_gen as g
 
 
 _FAKE_PNG = b"\x89PNG\r\n\x1a\nFAKE-IMAGE"
@@ -27,7 +27,7 @@ def _write_desktop(home: Path, **fields):
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     h = tmp_path / "home"
-    monkeypatch.setenv("LUNAMOTH_HOME", str(h))
+    monkeypatch.setenv("CHARA_HOME", str(h))
     monkeypatch.delenv("ARK_API_KEY", raising=False)
     monkeypatch.delenv("ARK_IMAGE_MODEL", raising=False)
     return h

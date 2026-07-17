@@ -6,8 +6,8 @@ import http.client
 
 import pytest
 
-from lunamoth.server import netsec as N
-from lunamoth.server import supervisor as SV
+from chara.server import netsec as N
+from chara.server import supervisor as SV
 
 
 # ---- netsec unit coverage ---------------------------------------------------
@@ -63,7 +63,7 @@ def test_ws_handshake_authenticates_via_cookie():
     lm_auth cookie on the handshake — the WS gate must accept it (else the live,
     WS-driven UI never connects). _ws_cookie extracts the header; the gate then
     dual-reads via request_authed exactly as the HTTP gate does."""
-    from lunamoth.server.supervisor import Supervisor
+    from chara.server.supervisor import Supervisor
 
     class _Req:
         def __init__(self, headers):
@@ -249,7 +249,7 @@ def _desktop_args(**over):
 
 
 def test_wildcard_bind_without_token_is_refused(capsys):
-    from lunamoth.front.cli import cmd_desktop
+    from chara.front.cli import cmd_desktop
 
     rc = cmd_desktop(_desktop_args(host="0.0.0.0", token=""))
     assert rc == 2
@@ -259,7 +259,7 @@ def test_wildcard_bind_without_token_is_refused(capsys):
 def test_foreign_port_in_use_fails_with_attribution(capsys):
     import socket as _socket
 
-    from lunamoth.front.cli import cmd_desktop
+    from chara.front.cli import cmd_desktop
 
     # Hold a port so the requested HTTP port is taken by a FOREIGN listener.
     held = _socket.socket()
@@ -277,14 +277,14 @@ def test_foreign_port_in_use_fails_with_attribution(capsys):
 
 
 def test_taken_port_that_is_our_daemon_reuses_not_respawns(capsys, monkeypatch):
-    from lunamoth.front import cli as CLI
+    from chara.front import cli as CLI
 
     fake = {"pid": 4242, "http_port": 51234, "ws_port": 51235, "token": "t", "path": "/x/daemon.json"}
-    monkeypatch.setattr("lunamoth.server.supervisor.read_daemon_json", lambda: fake)
-    monkeypatch.setattr("lunamoth.server.supervisor.daemon_alive", lambda data=None: True)
+    monkeypatch.setattr("chara.server.supervisor.read_daemon_json", lambda: fake)
+    monkeypatch.setattr("chara.server.supervisor.daemon_alive", lambda data=None: True)
     # serve_desktop must NOT be called — reuse short-circuits before it.
     monkeypatch.setattr(
-        "lunamoth.server.desktop.serve_desktop",
+        "chara.server.desktop.serve_desktop",
         lambda *a, **k: pytest.fail("should not spawn a second supervisor"),
     )
     rc = CLI.cmd_desktop(_desktop_args(port=51234))

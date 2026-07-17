@@ -1,6 +1,6 @@
 # Security
 
-LunaMoth runs an AI agent that executes shell commands, reads/writes files, and
+OpenCharaAgent runs an AI agent that executes shell commands, reads/writes files, and
 (optionally) drives a browser. The agent and anything it generates are treated as
 **untrusted**. This document states what the trust model protects, what it does
 *not*, and how to report a vulnerability.
@@ -9,7 +9,7 @@ LunaMoth runs an AI agent that executes shell commands, reads/writes files, and
 
 The adversary is the model (or content it ingests) attempting to:
 - escape the per-session jail to read or write outside its workspace,
-- read host secrets — the LunaMoth API key and login hash in `~/.lunamoth`, other
+- read host secrets — the OpenCharaAgent API key and login hash in `~/.chara`, other
   charas' sessions, the transcript database, process environments,
 - reach the privileged JSON-RPC gateway from agent-generated content,
 - exfiltrate data over the network.
@@ -20,7 +20,7 @@ The adversary is the model (or content it ingests) attempting to:
 `terminal`/`execute_code`/`search` tools run behind an OS jail — `sandbox-exec`
 (macOS), `bubblewrap` → `Landlock` (Linux) — built by one shared
 `build_jail_command` so the foreground, background and PTY paths cannot drift.
-Writes are confined to the workspace; `~/.lunamoth` (the global key, the login
+Writes are confined to the workspace; `~/.chara` (the global key, the login
 hash, every other chara's session) is unreadable from inside. On top of the OS
 jail, the file tools resolve symlinks and `..` against the workspace and refuse
 paths that escape it (`tools/builtin/_pathsec.py`). **No silent degradation:** if
@@ -56,8 +56,8 @@ IP — so a chara cannot `file://`-read host secrets or pivot to internal servic
   intended for a trusted operator; do not give an `admin` chara to untrusted input.
 - **The browser jail is deliberately looser than the shell jail.** A real Chromium
   cannot nest its own sandbox inside the OS jail, so it runs with `--no-sandbox`;
-  the macOS browser profile is allow-by-default with `~/.lunamoth` denied (so the
-  *LunaMoth* secret is protected, but other `$HOME` dotfiles such as `~/.ssh` are
+  the macOS browser profile is allow-by-default with `~/.chara` denied (so the
+  *OpenCharaAgent* secret is protected, but other `$HOME` dotfiles such as `~/.ssh` are
   not specifically hidden from a browser the chara drives), and the Linux browser
   jail keeps host `/proc` visible. Run browser-enabled charas accordingly.
 - **Landlock (the Docker/no-userns Linux tier) cannot gate the network** (ABI v1).

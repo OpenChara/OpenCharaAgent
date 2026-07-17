@@ -3,7 +3,7 @@
 The menu once scanned ROOT/"cards", which exists only in a dev checkout — on the
 wheel channel (ROOT points into site-packages) the menu came up EMPTY. It now
 resolves through config.content_dir("cards"), like content/persona.py does, so a
-wheel install sees the packaged lunamoth/_bundled/cards.
+wheel install sees the packaged chara/_bundled/cards.
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import json
 
 
 def test_discover_characters_reads_content_dir(tmp_path, monkeypatch):
-    from lunamoth.front import wizard
+    from chara.front import wizard
 
     cards = tmp_path / "cards"
     cards.mkdir()
@@ -32,7 +32,7 @@ def test_discover_characters_reads_content_dir(tmp_path, monkeypatch):
 
 
 def test_discover_characters_empty_without_a_cards_dir(tmp_path, monkeypatch):
-    from lunamoth.front import wizard
+    from chara.front import wizard
 
     monkeypatch.setattr(wizard, "content_dir", lambda name: tmp_path / "missing" / name)
     assert wizard._discover_characters() == []

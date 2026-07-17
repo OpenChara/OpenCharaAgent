@@ -1,44 +1,44 @@
-# LunaMoth — one-click server deploy (plan Track E).
+# OpenCharaAgent — one-click server deploy (plan Track E).
 #
 #   cd deploy && docker compose up -d
 #
 # Builds the image from deploy/Dockerfile (which installs the wheel emitted by
 # scripts/build-wheel.sh — run that FIRST so dist/*.whl exists). Once a release
-# image is published you can swap `build:` for `image: ghcr.io/lunamos/lunamoth:latest`.
+# image is published you can swap `build:` for `image: ghcr.io/openchara/opencharaagent:latest`.
 #
 # Bound to 0.0.0.0 inside the container. Put a TLS reverse proxy (Caddy /
 # cloudflared, WS upgrade enabled) in front for any non-loopback access — see
 # the "Run on a server" section of the README. Mirrors reference/AstrBot/compose.yml.
 services:
-  lunamoth:
+  chara:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    image: lunamoth:latest
-    container_name: lunamoth
+    image: chara:latest
+    container_name: chara
     restart: always
     security_opt:
       - no-new-privileges:true
     ports:
-      - "6180:6180" # LunaMoth desktop UI (HTTP)
+      - "6180:6180" # OpenCharaAgent desktop UI (HTTP)
       - "6181:6181" # WS gateway (http+1; your reverse proxy path-routes /hub,/chara/* here)
     environment:
       - TZ=Asia/Shanghai
-      # The entrypoint generates an access token if LUNAMOTH_TOKEN is unset and
-      # prints it in the logs (`docker compose logs lunamoth`) — read it to build
+      # The entrypoint generates an access token if CHARA_TOKEN is unset and
+      # prints it in the logs (`docker compose logs chara`) — read it to build
       # your bookmark URL. To PIN a stable token (and a fixed bookmark URL), set it:
-      # - LUNAMOTH_TOKEN=your-long-random-token
-      # - LUNAMOTH_PORT=6180
+      # - CHARA_TOKEN=your-long-random-token
+      # - CHARA_PORT=6180
       # REQUIRED behind a named-domain reverse proxy: the Host/Origin allowlist is
       # loopback + the bound host only, so the public domain must be allow-listed
       # or the proxied GET/WS get 403/4403. Set it to your domain:
-      # - LUNAMOTH_ALLOW_HOST=your-host.example.com
+      # - CHARA_ALLOW_HOST=your-host.example.com
       # OPTIONAL password login — bookmark the bare https://host/ and sign in with
       # a password instead of the long #token= URL (the token still works). Set
-      # your own, or leave it unset and LunaMoth generates one and prints it ONCE
-      # in the logs; only its PBKDF2 hash is stored in /root/.lunamoth/auth.json.
-      # - LUNAMOTH_PASSWORD=your-strong-password
+      # your own, or leave it unset and OpenCharaAgent generates one and prints it ONCE
+      # in the logs; only its PBKDF2 hash is stored in /root/.chara/auth.json.
+      # - CHARA_PASSWORD=your-strong-password
     volumes:
       # Sessions, cards and config — the one thing that must survive a re-deploy.
-      - ./data:/root/.lunamoth
+      - ./data:/root/.chara
       - /etc/localtime:/etc/localtime:ro

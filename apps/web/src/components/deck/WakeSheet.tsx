@@ -30,7 +30,7 @@ export function WakeSheet({ card, onClose }: { card: DeckCard; onClose: () => vo
   const { hub, snapshot, refresh } = useHub();
   const nav = useNavigate();
   const defaults = (snapshot?.defaults as { model?: string }) || {};
-  // Distribution lock (server LUNAMOTH_FORCE_SANDBOX): wake is pinned to sandbox; the
+  // Distribution lock (server CHARA_FORCE_SANDBOX): wake is pinned to sandbox; the
   // toggle is shown ON, greyed, and non-interactive (the server clamps it regardless).
   const forceSandbox = !!(snapshot as { force_sandbox?: boolean } | null)?.force_sandbox;
 

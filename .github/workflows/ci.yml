@@ -30,7 +30,7 @@ jobs:
       - name: Sync (dev + server extras)
         run: uv sync --extra dev --extra server
       - name: Ruff (pyflakes-class checks)
-        run: uvx ruff check --select F src/lunamoth tests
+        run: uvx ruff check --select F src/chara tests
       - name: Pytest (incl. test_architecture.py boundary guard)
         run: uv run python -m pytest -q
 

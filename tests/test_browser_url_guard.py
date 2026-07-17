@@ -15,7 +15,7 @@ import json
 
 import pytest
 
-from lunamoth.tools.builtin import browser, _browser_driver as drv
+from chara.tools.builtin import browser, _browser_driver as drv
 
 
 class FakeCtx:
@@ -308,7 +308,7 @@ class _FakeReg:
 
 
 def test_image_worker_blocks_when_net_off(monkeypatch):
-    from lunamoth.tools.builtin import media
+    from chara.tools.builtin import media
 
     def boom(prompt, size):  # the HTTP call — must never happen net-off
         raise AssertionError("generate_bytes must not be called when network is off")
@@ -327,7 +327,7 @@ def test_image_worker_blocks_when_net_off(monkeypatch):
 
 
 def test_image_worker_runs_when_net_on(monkeypatch):
-    from lunamoth.tools.builtin import media
+    from chara.tools.builtin import media
 
     monkeypatch.setattr(media, "generate_bytes", lambda prompt, size, refs=None: b"PNGDATA")
 

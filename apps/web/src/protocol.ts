@@ -1,4 +1,4 @@
-/* The wire protocol — a TS mirror of src/lunamoth/protocol/{events,codec}.py.
+/* The wire protocol — a TS mirror of src/chara/protocol/{events,codec}.py.
  *
  * Six frozen event types keyed on a `type` discriminant (codec.py `_TYPES`).
  * PROTOCOL_VERSION is 1 and the format is additive-compatible: a decoder must

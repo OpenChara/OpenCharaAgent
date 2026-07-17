@@ -5,11 +5,11 @@ import time
 
 import pytest
 
-from lunamoth.messaging.base import Adapter, InboundMessage
-from lunamoth.messaging.gateway import MessageDeduplicator, MessagingGateway
-from lunamoth.messaging.text import split_text
-from lunamoth.protocol import MUSE, SAY, TextDelta, ThinkDelta, ToolEnd, ToolStart
-from lunamoth.protocol.api import Reply, StateSnapshot
+from chara.messaging.base import Adapter, InboundMessage
+from chara.messaging.gateway import MessageDeduplicator, MessagingGateway
+from chara.messaging.text import split_text
+from chara.protocol import MUSE, SAY, TextDelta, ThinkDelta, ToolEnd, ToolStart
+from chara.protocol.api import Reply, StateSnapshot
 
 
 class FakeAdapter(Adapter):
@@ -182,12 +182,12 @@ class FlakyAdapter(FakeAdapter):
 def fast_send_retry(monkeypatch):
     import logging
 
-    import lunamoth.messaging.gateway as gw_mod
+    import chara.messaging.gateway as gw_mod
 
     monkeypatch.setattr(gw_mod, "_SEND_RETRY_DELAY", 0.01)
-    # obs.setup_logging (run by sibling tests) cuts propagation on "lunamoth";
+    # obs.setup_logging (run by sibling tests) cuts propagation on "chara";
     # restore it so caplog can see gateway records regardless of test order.
-    monkeypatch.setattr(logging.getLogger("lunamoth"), "propagate", True)
+    monkeypatch.setattr(logging.getLogger("chara"), "propagate", True)
 
 
 def test_send_failure_retries_once_then_delivers(fast_send_retry):
@@ -213,7 +213,7 @@ def test_send_failure_drops_that_message_and_gateway_lives(fast_send_retry, capl
     gateway = MessagingGateway(handle=handle, adapters=[adapter], allowed_senders=["u1"], patience=999)
 
     gateway.enqueue(adapter, InboundMessage("u1", "Alice", "hi"))
-    with caplog.at_level(logging.ERROR, logger="lunamoth.messaging.gateway"):
+    with caplog.at_level(logging.ERROR, logger="chara.messaging.gateway"):
         assert gateway.tick(timeout=0)  # does NOT raise
     assert adapter.sent == []
     assert any("dropped a message" in m for m in caplog.messages)
@@ -226,14 +226,14 @@ def test_send_failure_drops_that_message_and_gateway_lives(fast_send_retry, capl
 def test_delivery_deferred_is_logged_not_retried(fast_send_retry, caplog):
     import logging
 
-    from lunamoth.messaging.base import DeliveryDeferred
+    from chara.messaging.base import DeliveryDeferred
 
     handle = FakeHandle()
     adapter = FlakyAdapter(failures=99, exc=DeliveryDeferred("no reply window"))
     gateway = MessagingGateway(handle=handle, adapters=[adapter], allowed_senders=["u1"], patience=999)
 
     gateway.enqueue(adapter, InboundMessage("u1", "Alice", "hi"))
-    with caplog.at_level(logging.ERROR, logger="lunamoth.messaging.gateway"):
+    with caplog.at_level(logging.ERROR, logger="chara.messaging.gateway"):
         assert gateway.tick(timeout=0)
     assert adapter.attempts == 1  # a conscious deferral is not retried
     assert any("could not deliver" in m for m in caplog.messages)
@@ -251,7 +251,7 @@ def test_split_text_counts_utf16_units_not_python_chars():
     # Platform caps (Telegram/Discord/Slack) are UTF-16 code units: an astral
     # char (emoji) counts 2. 10 emoji = 20 units; a cap of 10 must split into
     # chunks of at most 5 emoji, where a char count would have sent all 10.
-    from lunamoth.messaging.text import utf16_len
+    from chara.messaging.text import utf16_len
 
     text = "😀" * 10
     assert utf16_len(text) == 20
@@ -279,7 +279,7 @@ def test_split_text_oversized_fence_still_splits_inside():
     chunks = split_text(fence, 100)
     assert "".join(chunks) == fence
     assert len(chunks) > 1
-    from lunamoth.messaging.text import utf16_len
+    from chara.messaging.text import utf16_len
 
     assert all(utf16_len(c) <= 100 for c in chunks)
 
@@ -291,7 +291,7 @@ def test_weixin_context_tokens_no_race_between_send_and_poll(tmp_path):
     every access shares _state_lock, so concurrent access is safe."""
     import threading
 
-    from lunamoth.messaging.weixin import WeixinAdapter
+    from chara.messaging.weixin import WeixinAdapter
 
     adapter = WeixinAdapter({}, state_path=tmp_path / "state.json")
     errors: list[BaseException] = []
@@ -329,7 +329,7 @@ def test_gateway_send_retry_wait_is_interruptible_on_close():
     which cuts the retry wait short instead of sleeping the full delay."""
     import threading
 
-    import lunamoth.messaging.gateway as gw_mod
+    import chara.messaging.gateway as gw_mod
 
     handle = FakeHandle()
     adapter = FlakyAdapter(failures=99)  # always fails → enters the retry wait
@@ -375,7 +375,7 @@ class FakeWeixinTransport:
 
 
 def test_weixin_login_poll_persists_cursor_and_context_token(tmp_path):
-    from lunamoth.messaging.weixin import WeixinAdapter
+    from chara.messaging.weixin import WeixinAdapter
 
     transport = FakeWeixinTransport([
         {"qrcode": "qr-token", "qrcode_img_content": "img"},
@@ -438,7 +438,7 @@ def test_weixin_login_poll_persists_cursor_and_context_token(tmp_path):
 def test_weixin_drops_self_echo_from_own_account(tmp_path):
     """getupdates can surface the bot's OWN sent messages; with an open (empty)
     allow-list those must be dropped, not answered, or the bot loops on itself."""
-    from lunamoth.messaging.weixin import WeixinAdapter
+    from chara.messaging.weixin import WeixinAdapter
 
     transport = FakeWeixinTransport([
         {"qrcode": "qr-token", "qrcode_img_content": "img"},
@@ -484,7 +484,7 @@ def test_weixin_delivers_operator_messages_but_drops_reply_echoes(tmp_path):
     reach the chara (the regression: the old guard dropped the whole id, silently
     swallowing everything the operator sent); only an echo of a reply we just
     sent is dropped."""
-    from lunamoth.messaging.weixin import WeixinAdapter
+    from chara.messaging.weixin import WeixinAdapter
 
     transport = FakeWeixinTransport([
         {"qrcode": "qr-token", "qrcode_img_content": "img"},
@@ -515,8 +515,8 @@ def test_weixin_delivers_operator_messages_but_drops_reply_echoes(tmp_path):
 
 
 def test_weixin_reuses_saved_token_and_send_requires_context_token(tmp_path):
-    from lunamoth.messaging.base import DeliveryDeferred, InboundMessage
-    from lunamoth.messaging.weixin import WeixinAdapter
+    from chara.messaging.base import DeliveryDeferred, InboundMessage
+    from chara.messaging.weixin import WeixinAdapter
 
     state_path = tmp_path / "weixin_state.json"
     state_path.write_text(
@@ -552,8 +552,8 @@ def test_weixin_reuses_saved_token_and_send_requires_context_token(tmp_path):
 
 
 def test_weixin_session_timeout_marks_relogin_and_surfaces(tmp_path):
-    from lunamoth.messaging.base import InboundMessage
-    from lunamoth.messaging.weixin import WeixinAdapter
+    from chara.messaging.base import InboundMessage
+    from chara.messaging.weixin import WeixinAdapter
 
     state_path = tmp_path / "weixin_state.json"
     state_path.write_text(
@@ -581,7 +581,7 @@ def test_weixin_session_timeout_marks_relogin_and_surfaces(tmp_path):
 
 
 def test_qq_parse_private_text_segments():
-    from lunamoth.messaging.qq import parse_onebot_event
+    from chara.messaging.qq import parse_onebot_event
 
     raw = json.dumps(
         {
@@ -606,7 +606,7 @@ def test_qq_parse_private_text_segments():
 
 
 def test_qq_ignores_group_messages_for_v1():
-    from lunamoth.messaging.qq import parse_onebot_event
+    from chara.messaging.qq import parse_onebot_event
 
     raw = json.dumps(
         {
@@ -654,7 +654,7 @@ class FakeQQSocket:
 
 
 def test_qq_send_frame_shape_and_reply_target():
-    from lunamoth.messaging.qq import QQAdapter
+    from chara.messaging.qq import QQAdapter
 
     sock = FakeQQSocket()
     adapter = QQAdapter({"url": "ws://127.0.0.1:3001", "peer_id": "999"}, uuid_factory=lambda: "echo-1")
@@ -679,7 +679,7 @@ def test_qq_send_frame_shape_and_reply_target():
 
 
 def test_qq_reconnect_backoff_resets_after_success():
-    from lunamoth.messaging.qq import QQAdapter
+    from chara.messaging.qq import QQAdapter
 
     frames = [
         json.dumps(
@@ -744,8 +744,8 @@ class AckingQQSocket(FakeQQSocket):
 def test_qq_rejected_send_surfaces_as_delivery_deferred():
     # A non-zero retcode (not a friend, muted, bad id) used to be silently
     # treated as delivered — the ack is now correlated on `echo` and surfaced.
-    from lunamoth.messaging.base import DeliveryDeferred
-    from lunamoth.messaging.qq import QQAdapter
+    from chara.messaging.base import DeliveryDeferred
+    from chara.messaging.qq import QQAdapter
 
     adapter = QQAdapter({"url": "ws://127.0.0.1:3001", "peer_id": "999"}, ack_timeout=1.0)
     adapter._socket = AckingQQSocket(
@@ -759,7 +759,7 @@ def test_qq_rejected_send_surfaces_as_delivery_deferred():
 
 
 def test_qq_ok_ack_send_succeeds():
-    from lunamoth.messaging.qq import QQAdapter
+    from chara.messaging.qq import QQAdapter
 
     adapter = QQAdapter({"url": "ws://127.0.0.1:3001", "peer_id": "999"}, ack_timeout=1.0)
     sock = AckingQQSocket(adapter, {"status": "ok", "retcode": 0, "data": {"message_id": 7}})
@@ -775,18 +775,18 @@ def test_qq_missing_ack_never_hangs_the_send_path(caplog, monkeypatch):
     # is treated as delivered with a visible warning — bounded, never a hang.
     import logging
 
-    from lunamoth.messaging.qq import QQAdapter
+    from chara.messaging.qq import QQAdapter
 
-    # obs.setup_logging (run by sibling tests) cuts propagation on "lunamoth";
+    # obs.setup_logging (run by sibling tests) cuts propagation on "chara";
     # restore it so caplog sees qq records regardless of test order.
-    monkeypatch.setattr(logging.getLogger("lunamoth"), "propagate", True)
+    monkeypatch.setattr(logging.getLogger("chara"), "propagate", True)
 
     adapter = QQAdapter({"url": "ws://127.0.0.1:3001", "peer_id": "999"}, ack_timeout=0.05)
     sock = FakeQQSocket()
     adapter._socket = sock
     adapter._recv_alive.set()
 
-    with caplog.at_level(logging.WARNING, logger="lunamoth.messaging.qq"):
+    with caplog.at_level(logging.WARNING, logger="chara.messaging.qq"):
         adapter.send("hello")
     assert len(sock.sent) == 1
     assert any("no action response" in r.message for r in caplog.records)
@@ -794,7 +794,7 @@ def test_qq_missing_ack_never_hangs_the_send_path(caplog, monkeypatch):
 
 
 def test_qq_ack_frames_are_consumed_events_still_flow():
-    from lunamoth.messaging.qq import QQAdapter
+    from chara.messaging.qq import QQAdapter
 
     adapter = QQAdapter({"url": "ws://127.0.0.1:3001"})
     # An action response (echo, no post_type) is consumed by the ack router...
@@ -874,7 +874,7 @@ def test_gateway_dedup_is_keyed_per_platform():
 
 
 def test_qq_event_carries_message_id_for_dedup():
-    from lunamoth.messaging.qq import parse_onebot_event
+    from chara.messaging.qq import parse_onebot_event
 
     raw = json.dumps(
         {
@@ -893,8 +893,8 @@ def test_qq_event_carries_message_id_for_dedup():
 
 
 def test_qq_send_while_disconnected_is_delivery_deferred():
-    from lunamoth.messaging.base import DeliveryDeferred
-    from lunamoth.messaging.qq import QQAdapter
+    from chara.messaging.base import DeliveryDeferred
+    from chara.messaging.qq import QQAdapter
 
     adapter = QQAdapter({"url": "ws://127.0.0.1:3001", "peer_id": "999"})
     assert adapter._socket is None  # the reconnect loop owns the socket; it is down
@@ -905,14 +905,14 @@ def test_qq_send_while_disconnected_is_delivery_deferred():
 def test_qq_disconnected_send_does_not_crash_the_gateway(fast_send_retry, caplog):
     import logging
 
-    from lunamoth.messaging.qq import QQAdapter
+    from chara.messaging.qq import QQAdapter
 
     handle = FakeHandle()
     adapter = QQAdapter({"url": "ws://127.0.0.1:3001", "peer_id": "999"})
     gateway = MessagingGateway(handle=handle, adapters=[adapter], allowed_senders=["u1"], patience=999)
 
     gateway.enqueue(adapter, InboundMessage("u1", "Alice", "hi", message_id="q1"))
-    with caplog.at_level(logging.ERROR, logger="lunamoth.messaging.gateway"):
+    with caplog.at_level(logging.ERROR, logger="chara.messaging.gateway"):
         assert gateway.tick(timeout=0)  # the turn runs; only delivery is deferred
 
     assert handle.user_calls == ["hi"]
@@ -923,7 +923,7 @@ def test_qq_disconnected_send_does_not_crash_the_gateway(fast_send_retry, caplog
 
 
 def test_is_silence_narration_flags_only_whole_string_tokens():
-    from lunamoth.messaging.filters import is_silence_narration
+    from chara.messaging.filters import is_silence_narration
 
     # Silence tokens — dropped before delivery.
     for token in [
@@ -964,16 +964,16 @@ class _SilenceSayHandle(FakeHandle):
 def test_gateway_drops_silence_narration_before_delivery(caplog, monkeypatch):
     import logging
 
-    # obs.setup_logging (run by sibling tests) cuts propagation on "lunamoth";
+    # obs.setup_logging (run by sibling tests) cuts propagation on "chara";
     # restore it so caplog can see gateway INFO records regardless of order.
-    monkeypatch.setattr(logging.getLogger("lunamoth"), "propagate", True)
+    monkeypatch.setattr(logging.getLogger("chara"), "propagate", True)
 
     handle = _SilenceSayHandle()
     adapter = FakeAdapter()
     gateway = MessagingGateway(handle=handle, adapters=[adapter], allowed_senders=["u1"], patience=999)
 
     gateway.enqueue(adapter, InboundMessage("u1", "Alice", "hi"))
-    with caplog.at_level(logging.INFO, logger="lunamoth.messaging.gateway"):
+    with caplog.at_level(logging.INFO, logger="chara.messaging.gateway"):
         assert gateway.tick(timeout=0)
 
     assert handle.user_calls == ["hi"]   # the turn still ran
@@ -1050,7 +1050,7 @@ def _telegram_update(update_id, text="hello", chat_id=42, chat_type="private", *
 
 
 def test_telegram_offset_persists_and_restart_never_replays(tmp_path):
-    from lunamoth.messaging.telegram import TelegramAdapter
+    from chara.messaging.telegram import TelegramAdapter
 
     state_path = tmp_path / "telegram_state.json"
     transport = FakeTelegramTransport([
@@ -1083,7 +1083,7 @@ def test_telegram_offset_persists_and_restart_never_replays(tmp_path):
 def test_telegram_remember_peer_commits_and_persists(tmp_path):
     """2026-07-02 P1: only the post-allow-list remember_peer moves the durable
     speak destination; the ephemeral reply target never does."""
-    from lunamoth.messaging.telegram import TelegramAdapter
+    from chara.messaging.telegram import TelegramAdapter
 
     state_path = tmp_path / "telegram_state.json"
     adapter = TelegramAdapter({"bot_token": "tok"}, opener=FakeTelegramTransport([]),
@@ -1099,14 +1099,14 @@ def test_telegram_remember_peer_commits_and_persists(tmp_path):
 
 
 def test_telegram_default_state_path_honors_config_dir(monkeypatch, tmp_path):
-    from lunamoth.messaging.telegram import default_state_path
+    from chara.messaging.telegram import default_state_path
 
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path))
     assert default_state_path() == tmp_path.resolve() / "telegram_state.json"
 
 
 def test_telegram_update_carries_update_id_for_dedup():
-    from lunamoth.messaging.telegram import parse_update
+    from chara.messaging.telegram import parse_update
 
     msg = parse_update(_telegram_update(778899, chat_id=123456))
     assert msg is not None
@@ -1116,7 +1116,7 @@ def test_telegram_update_carries_update_id_for_dedup():
 
 
 def test_telegram_ignores_groups_edits_channels_and_media():
-    from lunamoth.messaging.telegram import parse_update
+    from chara.messaging.telegram import parse_update
 
     assert parse_update(_telegram_update(1, chat_type="group")) is None
     assert parse_update(_telegram_update(2, chat_type="supergroup")) is None
@@ -1129,7 +1129,7 @@ def test_telegram_ignores_groups_edits_channels_and_media():
 
 
 def test_telegram_declares_4096_split_for_the_gateway_splitter(tmp_path):
-    from lunamoth.messaging.telegram import TELEGRAM_TEXT_MAX, TelegramAdapter
+    from chara.messaging.telegram import TELEGRAM_TEXT_MAX, TelegramAdapter
 
     adapter = TelegramAdapter({"bot_token": "tok"}, opener=FakeTelegramTransport([]),
                               state_path=tmp_path / "telegram_state.json")
@@ -1137,8 +1137,8 @@ def test_telegram_declares_4096_split_for_the_gateway_splitter(tmp_path):
 
 
 def test_telegram_429_send_is_delivery_deferred_and_honors_retry_after(tmp_path):
-    from lunamoth.messaging.base import DeliveryDeferred
-    from lunamoth.messaging.telegram import TelegramAdapter
+    from chara.messaging.base import DeliveryDeferred
+    from chara.messaging.telegram import TelegramAdapter
 
     now = [1000.0]
     transport = FakeTelegramTransport([
@@ -1166,7 +1166,7 @@ def test_telegram_429_send_is_delivery_deferred_and_honors_retry_after(tmp_path)
 
 
 def test_telegram_bad_token_is_a_clear_startup_error_not_a_retry_loop(tmp_path):
-    from lunamoth.messaging.telegram import TelegramAdapter
+    from chara.messaging.telegram import TelegramAdapter
 
     transport = FakeTelegramTransport([
         _telegram_http_error(401, {"ok": False, "error_code": 401, "description": "Unauthorized"}),
@@ -1184,7 +1184,7 @@ def test_telegram_startup_check_retries_transient_then_polls(tmp_path):
     """A transient network/API blip during the one-shot getMe must not
     permanently kill the adapter (it used to raise out of run()); only a
     rejected token stays fatal (see the 401 test above)."""
-    from lunamoth.messaging.telegram import TelegramAdapter
+    from chara.messaging.telegram import TelegramAdapter
 
     transport = FakeTelegramTransport([
         ConnectionResetError("dns hiccup"),                       # getMe attempt 1
@@ -1219,7 +1219,7 @@ def test_weixin_transient_getupdates_error_retries_not_fatal(tmp_path):
     """A non-ok getupdates payload (a server-side blip) used to re-raise and
     permanently kill inbound; it now retries. A session timeout (needs the
     interactive QR re-login) stays fatal."""
-    from lunamoth.messaging.weixin import WeixinAdapter
+    from chara.messaging.weixin import WeixinAdapter
 
     sleeps = []
     adapter = WeixinAdapter({}, state_path=tmp_path / "state.json",
@@ -1254,8 +1254,8 @@ def test_weixin_transient_getupdates_error_retries_not_fatal(tmp_path):
 
 
 def test_telegram_send_network_failure_is_delivery_deferred(tmp_path):
-    from lunamoth.messaging.base import DeliveryDeferred
-    from lunamoth.messaging.telegram import TelegramAdapter
+    from chara.messaging.base import DeliveryDeferred
+    from chara.messaging.telegram import TelegramAdapter
 
     transport = FakeTelegramTransport([ConnectionResetError("socket dropped")])
     adapter = TelegramAdapter({"bot_token": "tok"}, opener=transport,
@@ -1267,8 +1267,8 @@ def test_telegram_send_network_failure_is_delivery_deferred(tmp_path):
 
 
 def test_telegram_unattended_speak_before_first_contact_is_deferred(tmp_path):
-    from lunamoth.messaging.base import DeliveryDeferred
-    from lunamoth.messaging.telegram import TelegramAdapter
+    from chara.messaging.base import DeliveryDeferred
+    from chara.messaging.telegram import TelegramAdapter
 
     adapter = TelegramAdapter({"bot_token": "tok"}, opener=FakeTelegramTransport([]),
                               state_path=tmp_path / "telegram_state.json")
@@ -1277,7 +1277,7 @@ def test_telegram_unattended_speak_before_first_contact_is_deferred(tmp_path):
 
 
 def test_telegram_allowed_senders_filter_through_the_gateway(tmp_path):
-    from lunamoth.messaging.telegram import TelegramAdapter
+    from chara.messaging.telegram import TelegramAdapter
 
     handle = FakeHandle()
     transport = FakeTelegramTransport([
@@ -1303,13 +1303,13 @@ def test_telegram_allowed_senders_filter_through_the_gateway(tmp_path):
 def test_gateway_config_error_exits_fatal_not_retried(tmp_path, monkeypatch):
     """A malformed messaging config is fatal (EX_CONFIG 78), so the supervisor
     marks the gateway `fatal` and never auto-restarts it (audit #27/#13)."""
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
     import argparse
     import json as _json
 
-    from lunamoth.front import cli
-    from lunamoth.server.supervisor import GATEWAY_FATAL_EXIT
-    from lunamoth.session import sessions as S
+    from chara.front import cli
+    from chara.server.supervisor import GATEWAY_FATAL_EXIT
+    from chara.session import sessions as S
 
     meta = S.create_session("gw", isolation="admin")
     (meta.root / "config.json").write_text(
@@ -1330,33 +1330,33 @@ def test_warn_if_open_allowlist_logs_by_posture(caplog, monkeypatch):
     NO owner → nobody can reach it → a (different) WARNING. An empty list WITH an
     owner (owner-only) or a restricted list → silent."""
     import logging
-    from lunamoth.messaging.access import warn_if_open_allowlist
-    # obs.setup_logging (run by sibling tests) cuts propagation on "lunamoth";
+    from chara.messaging.access import warn_if_open_allowlist
+    # obs.setup_logging (run by sibling tests) cuts propagation on "chara";
     # restore it so caplog sees the record regardless of test order.
-    monkeypatch.setattr(logging.getLogger("lunamoth"), "propagate", True)
+    monkeypatch.setattr(logging.getLogger("chara"), "propagate", True)
     # '*' → truly open
-    with caplog.at_level(logging.WARNING, logger="lunamoth.messaging.access"):
+    with caplog.at_level(logging.WARNING, logger="chara.messaging.access"):
         assert warn_if_open_allowlist({"*"}, channel="weixin") is True
     assert any("OPEN" in r.message for r in caplog.records)
     # empty + no owner → "nobody can reach" warning, not "open"
     caplog.clear()
-    with caplog.at_level(logging.WARNING, logger="lunamoth.messaging.access"):
+    with caplog.at_level(logging.WARNING, logger="chara.messaging.access"):
         assert warn_if_open_allowlist(set(), channel="weixin") is False
     assert any("NOBODY" in r.message for r in caplog.records)
     # empty + owner = owner-only → silent
     caplog.clear()
-    with caplog.at_level(logging.WARNING, logger="lunamoth.messaging.access"):
+    with caplog.at_level(logging.WARNING, logger="chara.messaging.access"):
         assert warn_if_open_allowlist(set(), channel="weixin", owner_id="me") is False
     assert not caplog.records
     # restricted list → silent
     caplog.clear()
-    with caplog.at_level(logging.WARNING, logger="lunamoth.messaging.access"):
+    with caplog.at_level(logging.WARNING, logger="chara.messaging.access"):
         assert warn_if_open_allowlist({"u1"}, channel="weixin") is False
     assert not caplog.records
 
 
 def test_sender_allowed_owner_and_wildcard():
-    from lunamoth.messaging.access import sender_allowed
+    from chara.messaging.access import sender_allowed
     # empty list: owner-only
     assert sender_allowed("me", set(), owner_id="me") is True
     assert sender_allowed("stranger", set(), owner_id="me") is False
@@ -1374,7 +1374,7 @@ def test_sender_allowed_owner_and_wildcard():
 def test_make_adapters_filters_by_per_platform_enabled():
     """Each platform's own `enabled` flag is honored independently: weixin can run
     while qq is off."""
-    from lunamoth.messaging.gateway import make_adapters
+    from chara.messaging.gateway import make_adapters
 
     cfg = {
         "enabled": True,
@@ -1391,7 +1391,7 @@ def test_make_adapters_filters_by_per_platform_enabled():
 def test_make_adapters_legacy_top_level_enabled_inherited():
     """Old configs predate per-platform flags: an adapter with no `enabled` key
     inherits the legacy top-level `enabled`, so existing setups keep working."""
-    from lunamoth.messaging.gateway import make_adapters
+    from chara.messaging.gateway import make_adapters
 
     on = make_adapters({"enabled": True, "adapters": {"weixin": {}}})
     assert [a.name for a in on] == ["weixin"]
@@ -1400,13 +1400,13 @@ def test_make_adapters_legacy_top_level_enabled_inherited():
 
 
 def test_make_adapters_all_disabled_returns_empty_not_error():
-    from lunamoth.messaging.gateway import make_adapters
+    from chara.messaging.gateway import make_adapters
 
     assert make_adapters({"enabled": True, "adapters": {"weixin": {"enabled": False}}}) == []
 
 
 def test_make_adapters_unconfigured_still_raises():
-    from lunamoth.messaging.gateway import make_adapters
+    from chara.messaging.gateway import make_adapters
 
     with pytest.raises(ValueError, match="no adapters"):
         make_adapters({"enabled": True, "adapters": {}})

@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from lunamoth.content.cards import CharacterCard, detect_language
+from chara.content.cards import CharacterCard, detect_language
 
 CARDS_DIR = Path(__file__).resolve().parents[1] / "cards"
 
@@ -58,7 +58,7 @@ def test_plain_card_without_bundle_gets_empty_defaults(tmp_path):
 # ---- presentation: dual theme + avatar sidecar (not the soul) ----------------
 
 def _card(ext):
-    return CharacterCard.from_card_dict({"data": {"name": "X", "extensions": {"lunamoth": ext}}})
+    return CharacterCard.from_card_dict({"data": {"name": "X", "extensions": {"chara": ext}}})
 
 
 def test_dual_theme_parsed():
@@ -86,7 +86,7 @@ def test_dual_theme_malformed_is_blank_never_raises():
 def test_avatar_file_reference_and_traversal_guard(tmp_path):
     p = tmp_path / "c.json"
     p.write_text(json.dumps({"data": {"name": "X",
-        "extensions": {"lunamoth": {"avatar_file": "c.avatar.png"}}}}))
+        "extensions": {"chara": {"avatar_file": "c.avatar.png"}}}}))
     (tmp_path / "c.avatar.png").write_bytes(b"\x89PNG\r\n\x1a\n")
     card = CharacterCard.load(str(p))
     assert card.avatar_file() == "c.avatar.png"
@@ -99,7 +99,7 @@ def test_avatar_file_reference_and_traversal_guard(tmp_path):
 def test_avatar_path_none_when_sidecar_missing(tmp_path):
     p = tmp_path / "c.json"
     p.write_text(json.dumps({"data": {"name": "X",
-        "extensions": {"lunamoth": {"avatar_file": "c.avatar.png"}}}}))
+        "extensions": {"chara": {"avatar_file": "c.avatar.png"}}}}))
     assert CharacterCard.load(str(p)).avatar_path() is None  # referenced but not on disk
 
 
@@ -111,7 +111,7 @@ def test_asset_resolution_is_confined_and_rejects_traversal(tmp_path):
     (folder / "sprite.png").write_bytes(b"img")
     (folder / "stickers" / "00.png").write_bytes(b"s")
     (tmp_path / "secret.png").write_bytes(b"nope")
-    card = {"name": "Zed", "data": {"name": "Zed", "first_mes": "hi", "extensions": {"lunamoth": {
+    card = {"name": "Zed", "data": {"name": "Zed", "first_mes": "hi", "extensions": {"chara": {
         "assets": {"sprite": "sprite.png",
                    "stickers": ["stickers/00.png", "../secret.png", "/etc/passwd.png"]}}}}}
     p = folder / "card.json"

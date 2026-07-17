@@ -24,7 +24,7 @@ class _FakeState:
         return dict(self._d)
 
     def permissions(self):
-        from lunamoth.core.state import Permissions
+        from chara.core.state import Permissions
         return Permissions(
             isolation=self._d["isolation"],
             network_on=bool(self._d["network_access"]),
@@ -51,7 +51,7 @@ class _FakeCtx:
         ).text
 
     def run_terminal_result(self, command, *, timeout, workdir=None, browser=False):
-        from lunamoth.tools.runner import run_terminal_result as _run
+        from chara.tools.runner import run_terminal_result as _run
         perms = self.state.permissions()
         return _run(
             command,
@@ -76,7 +76,7 @@ def ctx(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_modules_register():
-    from lunamoth.tools.registry import registry, discover_builtin_tools
+    from chara.tools.registry import registry, discover_builtin_tools
 
     discover_builtin_tools()
     names = registry.get_all_tool_names()
@@ -85,8 +85,8 @@ def test_modules_register():
 
 
 def test_schemas_match_hermes_shape():
-    from lunamoth.tools.builtin.terminal import TERMINAL_SCHEMA
-    from lunamoth.tools.builtin.process import PROCESS_SCHEMA
+    from chara.tools.builtin.terminal import TERMINAL_SCHEMA
+    from chara.tools.builtin.process import PROCESS_SCHEMA
 
     tp = TERMINAL_SCHEMA["parameters"]["properties"]
     assert set(tp) == {"command", "background", "timeout", "workdir", "pty",
@@ -108,7 +108,7 @@ def test_schemas_match_hermes_shape():
 # ---------------------------------------------------------------------------
 
 def test_terminal_foreground_runs(ctx):
-    from lunamoth.tools.builtin.terminal import terminal
+    from chara.tools.builtin.terminal import terminal
 
     out = terminal({"command": "echo hello-fg"}, ctx)
     assert "hello-fg" in out
@@ -116,7 +116,7 @@ def test_terminal_foreground_runs(ctx):
 
 
 def test_terminal_non_string_command(ctx):
-    from lunamoth.tools.builtin.terminal import terminal
+    from chara.tools.builtin.terminal import terminal
 
     res = json.loads(terminal({"command": 123}, ctx))
     assert res["status"] == "error"
@@ -124,7 +124,7 @@ def test_terminal_non_string_command(ctx):
 
 
 def test_terminal_blocked_workdir(ctx):
-    from lunamoth.tools.builtin.terminal import terminal
+    from chara.tools.builtin.terminal import terminal
 
     res = json.loads(terminal({"command": "echo hi", "workdir": "/tmp; rm -rf /"}, ctx))
     assert res["status"] == "blocked"
@@ -134,7 +134,7 @@ def test_terminal_blocked_workdir(ctx):
 def test_terminal_foreground_longlived_hard_blocked(ctx):
     # hermes parity (owner 2026-06-19): a long-lived / self-backgrounding command
     # in the foreground is HARD-BLOCKED (not run), with guidance to background it.
-    from lunamoth.tools.builtin.terminal import terminal
+    from chara.tools.builtin.terminal import terminal
     import json
 
     res = json.loads(terminal({"command": "nohup python -m http.server 8000"}, ctx))
@@ -150,7 +150,7 @@ def test_terminal_foreground_longlived_hard_blocked(ctx):
 
 
 def test_terminal_foreground_timeout_clamped(ctx):
-    from lunamoth.tools.builtin.terminal import terminal
+    from chara.tools.builtin.terminal import terminal
 
     out = terminal({"command": "echo ok", "timeout": 999999}, ctx)
     assert "ok" in out
@@ -172,8 +172,8 @@ def _wait_exit(reg, sid, deadline=10.0):
 
 
 def test_background_spawn_and_poll(ctx):
-    from lunamoth.tools.builtin.terminal import terminal
-    from lunamoth.tools.builtin._process_registry import get_registry
+    from chara.tools.builtin.terminal import terminal
+    from chara.tools.builtin._process_registry import get_registry
 
     res = json.loads(terminal(
         {"command": "echo bg-out; sleep 0.2", "background": True, "notify_on_complete": True},
@@ -192,14 +192,14 @@ def test_background_spawn_and_poll(ctx):
 
 
 def test_background_silent_hint(ctx):
-    from lunamoth.tools.builtin.terminal import terminal
+    from chara.tools.builtin.terminal import terminal
 
     res = json.loads(terminal({"command": "echo x", "background": True}, ctx))
     assert "hint" in res  # silent bg gets a nudge
 
 
 def test_background_notify_watch_mutex(ctx):
-    from lunamoth.tools.builtin.terminal import terminal
+    from chara.tools.builtin.terminal import terminal
 
     res = json.loads(terminal(
         {"command": "echo x", "background": True,
@@ -211,9 +211,9 @@ def test_background_notify_watch_mutex(ctx):
 
 
 def test_process_list_poll_log(ctx):
-    from lunamoth.tools.builtin.terminal import terminal
-    from lunamoth.tools.builtin.process import process
-    from lunamoth.tools.builtin._process_registry import get_registry
+    from chara.tools.builtin.terminal import terminal
+    from chara.tools.builtin.process import process
+    from chara.tools.builtin._process_registry import get_registry
 
     res = json.loads(terminal(
         {"command": "echo line1; echo line2; sleep 0.1", "background": True},
@@ -236,8 +236,8 @@ def test_process_list_poll_log(ctx):
 
 
 def test_process_wait(ctx):
-    from lunamoth.tools.builtin.terminal import terminal
-    from lunamoth.tools.builtin.process import process
+    from chara.tools.builtin.terminal import terminal
+    from chara.tools.builtin.process import process
 
     res = json.loads(terminal(
         {"command": "echo waited; sleep 0.2", "background": True},
@@ -251,9 +251,9 @@ def test_process_wait(ctx):
 
 
 def test_process_kill(ctx):
-    from lunamoth.tools.builtin.terminal import terminal
-    from lunamoth.tools.builtin.process import process
-    from lunamoth.tools.builtin._process_registry import get_registry
+    from chara.tools.builtin.terminal import terminal
+    from chara.tools.builtin.process import process
+    from chara.tools.builtin._process_registry import get_registry
 
     res = json.loads(terminal(
         {"command": "sleep 30", "background": True},
@@ -269,9 +269,9 @@ def test_process_kill(ctx):
 
 
 def test_process_write_submit_to_stdin(ctx):
-    from lunamoth.tools.builtin.terminal import terminal
-    from lunamoth.tools.builtin.process import process
-    from lunamoth.tools.builtin._process_registry import get_registry
+    from chara.tools.builtin.terminal import terminal
+    from chara.tools.builtin.process import process
+    from chara.tools.builtin._process_registry import get_registry
 
     # A reader that echoes a line from stdin then exits.
     res = json.loads(terminal(
@@ -289,7 +289,7 @@ def test_process_write_submit_to_stdin(ctx):
 
 
 def test_process_missing_session_id(ctx):
-    from lunamoth.tools.builtin.process import process
+    from chara.tools.builtin.process import process
 
     res = json.loads(process({"action": "poll"}, ctx))
     assert "error" in res
@@ -297,7 +297,7 @@ def test_process_missing_session_id(ctx):
 
 
 def test_process_unknown_action(ctx):
-    from lunamoth.tools.builtin.process import process
+    from chara.tools.builtin.process import process
 
     res = json.loads(process({"action": "frobnicate"}, ctx))
     assert "error" in res
@@ -305,7 +305,7 @@ def test_process_unknown_action(ctx):
 
 
 def test_process_not_found(ctx):
-    from lunamoth.tools.builtin.process import process
+    from chara.tools.builtin.process import process
 
     res = json.loads(process({"action": "poll", "session_id": "proc_doesnotexist"}, ctx))
     assert res["status"] == "not_found"
@@ -316,7 +316,7 @@ def test_process_not_found(ctx):
 # ---------------------------------------------------------------------------
 
 def test_watch_rate_limit_strikes_and_promotes():
-    from lunamoth.tools.builtin._process_registry import (
+    from chara.tools.builtin._process_registry import (
         ProcessRegistry, ProcessSession, WATCH_STRIKE_LIMIT,
     )
 
@@ -349,7 +349,7 @@ def test_watch_rate_limit_strikes_and_promotes():
 
 
 def test_reconcile_flips_exited_when_reader_blocked():
-    from lunamoth.tools.builtin._process_registry import ProcessRegistry, ProcessSession
+    from chara.tools.builtin._process_registry import ProcessRegistry, ProcessSession
 
     reg = ProcessRegistry()
 
@@ -376,7 +376,7 @@ def test_reconcile_flips_exited_when_reader_blocked():
 
 
 def test_prune_evicts_over_max():
-    from lunamoth.tools.builtin import _process_registry as pr
+    from chara.tools.builtin import _process_registry as pr
 
     reg = pr.ProcessRegistry()
     # Stuff finished sessions over MAX_PROCESSES; prune should evict the oldest.
@@ -389,7 +389,7 @@ def test_prune_evicts_over_max():
 
 
 def test_prune_drops_expired_ttl():
-    from lunamoth.tools.builtin import _process_registry as pr
+    from chara.tools.builtin import _process_registry as pr
 
     reg = pr.ProcessRegistry()
     old = pr.ProcessSession(

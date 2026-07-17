@@ -2,8 +2,8 @@
 chara (no tool can change/complete it), unattainable by design."""
 import pytest
 
-from lunamoth.tools.polaris import PolarisStore
-from lunamoth.session.settings import Settings
+from chara.tools.polaris import PolarisStore
+from chara.session.settings import Settings
 
 
 def test_get_set_seed_and_persist(tmp_path):
@@ -39,20 +39,20 @@ def test_clear(tmp_path):
 @pytest.fixture
 def agent(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sandbox"))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    from lunamoth.core.agent import LunaMothAgent
+    monkeypatch.setenv("CHARA_SANDBOX", str(tmp_path / "sandbox"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    from chara.core.agent import CharaAgent
 
     def make(**kw):
         kw.setdefault("toolpack", "sandbox")
-        return LunaMothAgent(Settings(character_path="", **kw))
+        return CharaAgent(Settings(character_path="", **kw))
 
     return make
 
 
 def test_no_chara_tool_can_change_polaris(agent):
     agent()  # building the agent triggers builtin tool discovery
-    from lunamoth.tools.registry import registry
+    from chara.tools.registry import registry
 
     names = set(registry._tools)
     # the old chara-mutation tools are gone; other chara-life tools still register

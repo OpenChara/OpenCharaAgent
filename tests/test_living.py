@@ -5,19 +5,19 @@ import time
 
 import pytest
 
-from lunamoth.session.settings import Settings
+from chara.session.settings import Settings
 
 
 @pytest.fixture
 def agent(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sandbox"))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    from lunamoth.core.agent import LunaMothAgent
+    monkeypatch.setenv("CHARA_SANDBOX", str(tmp_path / "sandbox"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    from chara.core.agent import CharaAgent
 
     def make(**kw):
         kw.setdefault("toolpack", "sandbox")
-        return LunaMothAgent(Settings(character_path="", **kw))
+        return CharaAgent(Settings(character_path="", **kw))
 
     return make
 
@@ -74,7 +74,7 @@ def test_idle_tick_carries_timestamp_and_presence_note(agent, monkeypatch):
         seen["in_context"] = kw.get("in_context")
 
         def gen():
-            from lunamoth.protocol import TextDelta
+            from chara.protocol import TextDelta
             yield TextDelta("…", "muse")
 
         return gen()
@@ -104,7 +104,7 @@ def test_long_silence_gets_one_gap_note(agent):
 
 
 def test_quiet_command_persists(agent):
-    from lunamoth.core import commands
+    from chara.core import commands
 
     a = agent()
     s = a.make_session()
@@ -116,8 +116,8 @@ def test_quiet_command_persists(agent):
 def test_say_event_flows_through_stream_agent(agent, monkeypatch):
     # End to end through the REAL tool loop: a fake one-turn model that calls
     # speak, then finishes. The user-facing words must arrive as a say TextDelta.
-    from lunamoth.core.llm import LLMClient
-    from lunamoth.protocol import MUSE, TextDelta
+    from chara.core.llm import LLMClient
+    from chara.protocol import MUSE, TextDelta
 
     a = agent()
     calls = {"n": 0}

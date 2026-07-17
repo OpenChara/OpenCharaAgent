@@ -15,24 +15,24 @@ import pytest
 
 
 def test_merge_preserving_blank_never_overwrites():
-    from lunamoth.server.hub import _merge_preserving
+    from chara.server.hub import _merge_preserving
 
     src = {
         "description": "the real persona", "first_mes": "hello there",
         "system_prompt": "sys", "mes_example": "ex",
-        "extensions": {"lunamoth": {"avatar_file": "a.png", "wishes": ["w"]}},
+        "extensions": {"chara": {"avatar_file": "a.png", "wishes": ["w"]}},
     }
     edit = {  # the blanked submission the wake editor can send
         "description": "", "first_mes": "", "system_prompt": "", "mes_example": "",
-        "extensions": {"lunamoth": {}},
+        "extensions": {"chara": {}},
     }
     out = _merge_preserving(src, edit)
     assert out["description"] == "the real persona"   # blank kept source
     assert out["first_mes"] == "hello there"
     assert out["system_prompt"] == "sys"
     assert out["mes_example"] == "ex"
-    assert out["extensions"]["lunamoth"]["avatar_file"] == "a.png"  # deep-merged
-    assert out["extensions"]["lunamoth"]["wishes"] == ["w"]
+    assert out["extensions"]["chara"]["avatar_file"] == "a.png"  # deep-merged
+    assert out["extensions"]["chara"]["wishes"] == ["w"]
 
     # a genuine (non-empty) edit still wins
     assert _merge_preserving(src, {"description": "new"})["description"] == "new"
@@ -43,9 +43,9 @@ def test_merge_preserving_blank_never_overwrites():
 @pytest.fixture
 def clean_home(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sb"))
+    monkeypatch.setenv("CHARA_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("CHARA_SANDBOX", str(tmp_path / "sb"))
     home = tmp_path / "home"
     home.mkdir(parents=True, exist_ok=True)
     (home / "desktop.json").write_text(
@@ -56,8 +56,8 @@ def clean_home(tmp_path, monkeypatch):
 def test_wake_blank_submission_keeps_source_persona_and_avatar(clean_home):
     """A blanked wake submission must still freeze the full source persona +
     first_mes + avatar declaration (the actual reported regression)."""
-    from lunamoth.server import hub
-    import lunamoth.session.sessions as S
+    from chara.server import hub
+    import chara.session.sessions as S
 
     quinn = next(c["path"] for c in hub.list_cards()
                  if c["name"] == "Quinn" and "sessions" not in c["path"])
@@ -72,5 +72,5 @@ def test_wake_blank_submission_keeps_source_persona_and_avatar(clean_home):
 
     assert len(d["description"]) > 100, "source persona must survive a blank wake"
     assert len(d["first_mes"]) > 10, "source first_mes must survive a blank wake"
-    ext = (d.get("extensions") or {}).get("lunamoth") or {}
+    ext = (d.get("extensions") or {}).get("chara") or {}
     assert ext.get("avatar_file") == "avatar.png", "avatar declaration must survive"

@@ -9,19 +9,19 @@ frontend socket. `/reset` bumps the epoch to empty, so first_mes re-shows.
 """
 import pytest
 
-from lunamoth.session.settings import Settings
+from chara.session.settings import Settings
 
 
 @pytest.fixture
 def agent(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_PROVIDER", "mock")
-    monkeypatch.setenv("LUNAMOTH_SANDBOX", str(tmp_path / "sandbox"))
-    monkeypatch.setenv("LUNAMOTH_CONFIG_DIR", str(tmp_path / "cfg"))
-    from lunamoth.core.agent import LunaMothAgent
+    monkeypatch.setenv("CHARA_SANDBOX", str(tmp_path / "sandbox"))
+    monkeypatch.setenv("CHARA_CONFIG_DIR", str(tmp_path / "cfg"))
+    from chara.core.agent import CharaAgent
 
     def make(**kw):
         kw.setdefault("toolpack", "")
-        return LunaMothAgent(Settings(character_path="", **kw))
+        return CharaAgent(Settings(character_path="", **kw))
 
     return make
 
@@ -29,7 +29,7 @@ def agent(tmp_path, monkeypatch):
 # ---- modes ---------------------------------------------------------------------
 
 def test_mode_normalization():
-    from lunamoth.presence import normalize_mode
+    from chara.presence import normalize_mode
 
     assert normalize_mode("live") == "live"
     assert normalize_mode("CHAT ") == "chat"
@@ -43,7 +43,7 @@ def test_mode_normalization():
 
 def test_presence_state_module_is_gone():
     """The PresenceState file/exports are deleted — only normalize_mode remains."""
-    import lunamoth.presence as presence
+    import chara.presence as presence
 
     assert hasattr(presence, "normalize_mode")
     assert not hasattr(presence, "PresenceState")
@@ -55,7 +55,7 @@ def test_presence_state_module_is_gone():
 def test_first_open_shows_the_card_greeting_on_an_empty_epoch(agent):
     """A brand-new chara introduces itself once (first_mes) the first time it is
     opened — recognized by an empty transcript epoch."""
-    from lunamoth.protocol.api import CharaHandle
+    from chara.protocol.api import CharaHandle
 
     a = agent()
     a.state.set_rest_until(0)
@@ -69,7 +69,7 @@ def test_greeting_is_persisted_server_side_before_attach_returns(agent):
     """The opener reaches the transcript the moment attach() decides to greet —
     BEFORE attach returns, NOT on a frontend `greet` round-trip. So it survives a
     process death / dropped socket. A later greet RPC is idempotent."""
-    from lunamoth.protocol.api import CharaHandle
+    from chara.protocol.api import CharaHandle
 
     a = agent()
     a.state.set_rest_until(0)
@@ -92,7 +92,7 @@ def test_greeting_is_persisted_server_side_before_attach_returns(agent):
 def test_opening_text_is_not_also_in_the_restored_tail(agent):
     """On the greeting attach, the opener is sent ONCE as opening_text; `restored`
     is captured before the commit, so the frontend never shows it twice."""
-    from lunamoth.protocol.api import CharaHandle
+    from chara.protocol.api import CharaHandle
 
     a = agent()
     a.state.set_rest_until(0)
@@ -107,8 +107,8 @@ def test_opening_text_is_not_also_in_the_restored_tail(agent):
 def test_reopen_does_not_replay_the_greeting(agent):
     """A non-empty epoch opens silently; the greeting rides `restored`, not a
     second opening — survives reconnect / page reload."""
-    from lunamoth.protocol.api import CharaHandle
-    from lunamoth.server.dispatch import JsonRpcDispatcher
+    from chara.protocol.api import CharaHandle
+    from chara.server.dispatch import JsonRpcDispatcher
 
     a = agent()
     a.state.set_rest_until(0)
@@ -130,7 +130,7 @@ def test_greeting_survives_a_new_handle_on_the_same_transcript(agent):
     """The KEY guarantee: the greeting authority is the transcript, not an
     in-memory flag. A fresh handle (e.g. a restarted child / new process) on the
     same already-greeted transcript must NOT re-greet."""
-    from lunamoth.protocol.api import CharaHandle
+    from chara.protocol.api import CharaHandle
 
     a = agent()
     a.state.set_rest_until(0)
@@ -144,7 +144,7 @@ def test_greeting_survives_a_new_handle_on_the_same_transcript(agent):
 
 def test_reset_reshows_the_greeting(agent):
     """/reset bumps the epoch to empty → the next open greets again (desired)."""
-    from lunamoth.protocol.api import CharaHandle
+    from chara.protocol.api import CharaHandle
 
     a = agent()
     a.state.set_rest_until(0)
@@ -159,7 +159,7 @@ def test_background_then_foreground_open_greets_once(agent):
     """A background open (the supervisor pre-attaching a resident) commits the
     greeting just like a foreground one — there is no present/away distinction.
     The point: it greets exactly once total, and a later open is silent."""
-    from lunamoth.protocol.api import CharaHandle
+    from chara.protocol.api import CharaHandle
 
     a = agent()
     a.state.set_rest_until(0)
@@ -173,7 +173,7 @@ def test_background_then_foreground_open_greets_once(agent):
 
 def test_detach_leaves_no_trace_and_is_a_noop(agent):
     """Leaving the chat is not an event: detach touches nothing in the context."""
-    from lunamoth.protocol.api import CharaHandle
+    from chara.protocol.api import CharaHandle
 
     a = agent()
     a.state.set_rest_until(0)
@@ -188,7 +188,7 @@ def test_detach_leaves_no_trace_and_is_a_noop(agent):
 
 def test_speaking_inserts_no_presence_marker(agent):
     """A user message is just a user message — no "entered" marker is injected."""
-    from lunamoth.protocol.api import CharaHandle
+    from chara.protocol.api import CharaHandle
 
     a = agent()
     a.state.set_rest_until(0)
@@ -217,7 +217,7 @@ def test_env_facts_carry_no_operator_token(agent):
 
 def test_reconnect_shows_the_conversation_so_far(agent):
     """A reopen restores the conversation that happened since the child started."""
-    from lunamoth.protocol.api import CharaHandle
+    from chara.protocol.api import CharaHandle
 
     a = agent()
     a.state.set_rest_until(0)
@@ -233,7 +233,7 @@ def test_reconnect_shows_the_conversation_so_far(agent):
 def test_display_restore_shows_tools_without_changing_model_context(agent):
     """The FRONTEND restore gains tool calls / results / reasoning, while the
     MODEL's replayed context (context.render()) is unchanged."""
-    from lunamoth.protocol.api import CharaHandle
+    from chara.protocol.api import CharaHandle
 
     a = agent()
     a.state.set_rest_until(0)
@@ -265,7 +265,7 @@ def test_display_restore_shows_tools_without_changing_model_context(agent):
 def test_snapshot_exposes_visual_fields(agent):
     """The snapshot carries avatar/sprite/bg/keyvisual so a chat view can show the
     real avatar. With no card art they are empty strings, never missing."""
-    from lunamoth.protocol.api import CharaHandle
+    from chara.protocol.api import CharaHandle
 
     a = agent()
     handle = CharaHandle(agent=a)

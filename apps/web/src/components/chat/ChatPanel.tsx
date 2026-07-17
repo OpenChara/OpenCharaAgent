@@ -430,7 +430,7 @@ function SettingsPane({ stream, name }: { stream: CharaStream; name: string }) {
   const t = useT();
   const { hub, refresh } = useHubApi();
   const nav = useNavigate();
-  // Distribution lock (server LUNAMOTH_FORCE_SANDBOX): the board state reports it; the
+  // Distribution lock (server CHARA_FORCE_SANDBOX): the board state reports it; the
   // sandbox toggle below is then shown ON, greyed, and non-interactive.
   const { snapshot: hubSnap } = useHubState();
   const forceSandbox = !!(hubSnap as { force_sandbox?: boolean } | null)?.force_sandbox;

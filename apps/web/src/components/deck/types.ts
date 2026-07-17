@@ -39,8 +39,8 @@ export interface DeckCard {
   [k: string]: unknown;
 }
 
-/** A lunamoth extensions block as `card.read` surfaces it. */
-export interface CardExtLunamoth {
+/** A chara extensions block as `card.read` surfaces it. */
+export interface CardExtChara {
   tagline?: string;
   force_roleplay?: boolean;
   /** Legacy stance string ("actor"); read only as a back-compat fallback. */
@@ -75,7 +75,7 @@ export interface FullCard {
   scenario?: string;
   first_mes?: string;
   creator_notes?: string;
-  extensions?: { lunamoth?: CardExtLunamoth; [k: string]: unknown };
+  extensions?: { chara?: CardExtChara; [k: string]: unknown };
   character_book?: { name?: string; entries?: WorldBookEntry[] };
   /** The raw SillyTavern card object (present for editable JSON cards). */
   raw?: { name?: string; data?: Record<string, unknown>; [k: string]: unknown };
