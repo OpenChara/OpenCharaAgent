@@ -13,7 +13,7 @@ SANDBOX_ROOT = Path(os.getenv("CHARA_SANDBOX", ROOT / "sandbox")).resolve()
 # X-Title and its ICON from the favicon of the HTTP-Referer URL — so to show a
 # OpenCharaAgent icon (not GitHub's), point the referer at a public page that serves the
 # OpenCharaAgent favicon. Both are env-overridable for a deployer's own site, no code edit.
-OPENROUTER_REFERER = os.getenv("CHARA_OPENROUTER_REFERER", "https://lunamoth.ai/")
+OPENROUTER_REFERER = os.getenv("CHARA_OPENROUTER_REFERER", "https://agent.lunamoth.ai/")
 OPENROUTER_TITLE = os.getenv("CHARA_OPENROUTER_TITLE", "OpenCharaAgent")
 
 
