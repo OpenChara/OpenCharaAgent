@@ -92,7 +92,7 @@
       ]
     },
     "extensions": {
-      "lunamoth": {
+      "chara": {
         "avatar_file": "avatar.png",
         "theme": {
           "primary": "#1F3A30",

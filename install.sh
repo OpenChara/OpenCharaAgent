@@ -19,27 +19,13 @@
 # header, to dodge the 60/hr anonymous API rate limit), but is never required.
 set -euo pipefail
 
-# Every knob honours its LUNAMOTH_* twin — pre-rename fleets and shell profiles
-# still export those.
-REPO_SLUG="${CHARA_REPO_SLUG:-${LUNAMOTH_REPO_SLUG:-OpenChara/OpenCharaAgent}}"
-REPO_URL="${CHARA_REPO:-${LUNAMOTH_REPO:-https://github.com/${REPO_SLUG}.git}}"
-CHARA_HOME="${CHARA_HOME:-${LUNAMOTH_HOME:-$HOME/.chara}}"
+REPO_SLUG="${CHARA_REPO_SLUG:-OpenChara/OpenCharaAgent}"
+REPO_URL="${CHARA_REPO:-https://github.com/${REPO_SLUG}.git}"
+CHARA_HOME="${CHARA_HOME:-$HOME/.chara}"
 APP_DIR="$CHARA_HOME/app"
 BIN_DIR="$CHARA_HOME/bin"
-LINK_DIR="${CHARA_LINK_DIR:-${LUNAMOTH_LINK_DIR:-$HOME/.local/bin}}"
-CHANNEL="${CHARA_CHANNEL:-${LUNAMOTH_CHANNEL:-user}}"
-
-# One-shot data migration from the LunaMoth days. MUST run before any mkdir
-# below: if the installer seeds ~/.chara/bin first, the in-app migration would
-# find a non-empty target and (correctly) refuse, stranding the user's charas
-# in ~/.lunamoth. A symlink stays at the old path so a not-yet-restarted old
-# install keeps resolving. Skipped when *_HOME is pinned or the move happened.
-if [ "$CHARA_HOME" = "$HOME/.chara" ] && [ -d "$HOME/.lunamoth" ] \
-   && [ ! -L "$HOME/.lunamoth" ] && [ ! -e "$HOME/.chara" ]; then
-  say "migrating data dir: ~/.lunamoth -> ~/.chara (symlink left behind)"
-  mv "$HOME/.lunamoth" "$HOME/.chara" && ln -s "$HOME/.chara" "$HOME/.lunamoth" \
-    || fail "data-dir migration failed — move ~/.lunamoth to ~/.chara by hand and re-run"
-fi
+LINK_DIR="${CHARA_LINK_DIR:-$HOME/.local/bin}"
+CHANNEL="${CHARA_CHANNEL:-user}"
 
 # --dev / --channel dev flag (works with `… | bash -s -- --dev`).
 for arg in "$@"; do
@@ -246,12 +232,8 @@ else
 fi
 
 say "installing chara (server + messaging extras) ..."
-# A pre-rename install registered the tool under its old name; retire it so its
-# stale `lunamoth` bin can't shadow the fresh alias. Best-effort — absent is fine.
-"$UV" tool uninstall lunamoth >/dev/null 2>&1 || true
 # `uv tool install` puts an isolated venv under uv's data dir and links the
-# `chara` entrypoint (+ the legacy `lunamoth` alias) onto PATH. Re-running
-# upgrades in place (--force).
+# `chara` entrypoint onto PATH. Re-running upgrades in place (--force).
 "$UV" tool install --force "opencharaagent[server,messaging] @ ${INSTALL_TARGET}" \
   || fail "uv tool install failed"
 

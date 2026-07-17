@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any
 
 from ...content.cards import (
-    product_ext,
     CharacterCard,
     card_json_from_png_bytes,
     detect_language,
@@ -153,7 +152,7 @@ def _card_entry(path: Path, builtin: bool, refs: dict[str, list[str]]) -> dict[s
     except Exception:  # noqa: BLE001 - one bad card must not break the deck
         _log.warning("unreadable card: %s", path, exc_info=True)
         return None
-    ext = product_ext(card.extensions) or {}
+    ext = card.extensions.get("chara", {}) if isinstance(card.extensions, dict) else {}
     # The world is the card's embedded book; surface its name for the deck label.
     world = str(card.character_book.name or "") if card.character_book else ""
     theme_color = ""
@@ -495,17 +494,6 @@ def _sanitize_card_extensions(card: dict[str, Any]) -> None:
     ext_root = data.get("extensions")
     if not isinstance(ext_root, dict):
         return
-    # Namespace consolidation (the LunaMoth → OpenCharaAgent rename): fold the
-    # pre-rename `lunamoth` namespace into `chara` (an existing `chara` field
-    # wins) and drop the old key — every write leaves the card on the new
-    # namespace, while product_ext() keeps READS honouring unmigrated cards.
-    legacy = ext_root.pop("lunamoth", None)
-    if isinstance(legacy, dict):
-        merged = dict(legacy)
-        cur = ext_root.get("chara")
-        if isinstance(cur, dict):
-            merged.update(cur)
-        ext_root["chara"] = merged
     chara = ext_root.get("chara")
     if not isinstance(chara, dict):
         return

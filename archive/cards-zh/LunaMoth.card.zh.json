@@ -17,7 +17,7 @@
     ],
     "creator_notes": "LunaMoth 运行时的默认角色。搭配 'sandbox' 工具包可让它真正在 workspace 中创作（网页 / 生成动画 / 生成音乐）；开启 --forever 空闲循环即是它的创作时间。纯角色扮演也成立。",
     "tags": [
-      "lunamoth",
+      "chara",
       "digital-soul",
       "artist"
     ],
@@ -137,7 +137,7 @@
       ]
     },
     "extensions": {
-      "lunamoth": {
+      "chara": {
         "toolpack": "sandbox",
         "memory_chars": 8000,
         "user_name": "创作者",

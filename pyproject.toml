@@ -18,9 +18,6 @@ dependencies = [
 
 [project.scripts]
 chara = "chara.front.cli:main"
-# Legacy alias from the LunaMoth days — pre-rename systemd units and muscle
-# memory keep working across the upgrade. Remove after a deprecation cycle.
-lunamoth = "chara.front.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

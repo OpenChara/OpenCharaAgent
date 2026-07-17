@@ -117,7 +117,7 @@ def pid_is_chara(pid: int, session: str | None = None) -> bool:
             cmdline = p.stdout
     except (OSError, subprocess.SubprocessError):
         return False
-    if "chara" not in cmdline and "lunamoth" not in cmdline:
+    if "chara" not in cmdline:
         return False
     if session is None:
         return True

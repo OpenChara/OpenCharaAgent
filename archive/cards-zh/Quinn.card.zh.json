@@ -17,7 +17,7 @@
     ],
     "creator_notes": "LunaMoth 运行时的默认角色（第二代）。设计目标：一个对齐的数字协助者——诚实、无害、乐于助人、心理稳定；从角色剥离后可干净退化为通用 agent。搭配 'sandbox' 工具包；空闲循环即是 ta 的业余时间。原创内容，与项目主体同为 Apache-2.0。",
     "tags": [
-      "lunamoth",
+      "chara",
       "intern",
       "assistant",
       "aligned",
@@ -176,7 +176,7 @@
       ]
     },
     "extensions": {
-      "lunamoth": {
+      "chara": {
         "toolpack": "sandbox",
         "memory_chars": 8000,
         "embodiment": "literal",

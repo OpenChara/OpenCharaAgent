@@ -68,6 +68,5 @@ def test_isolation_follows_the_backend_authority_not_a_stored_copy(tmp_path, mon
 
 def test_isolation_defaults_to_sandbox_when_backend_unset(tmp_path, monkeypatch):
     monkeypatch.delenv("CHARA_PY_BACKEND", raising=False)
-    monkeypatch.delenv("LUNAMOSS_PY_BACKEND", raising=False)
     st = EnvState(tmp_path / "env.json")
     assert st.permissions().isolation == "sandbox"

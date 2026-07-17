@@ -17,26 +17,6 @@ _CJK = re.compile(r"[\u4e00-\u9fff]")
 _HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
-def product_ext(extensions: Any) -> dict | None:
-    """The card's product extension namespace: ``extensions.chara``, MERGED over
-    its pre-rename twin ``extensions.lunamoth`` (per-field, the new key wins).
-
-    Every card written before the OpenCharaAgent rename — the bundled deck, every
-    living chara's frozen card, every shared card in the wild — carries its hooks
-    (polaris, theme, avatar_file, assets, website, rules overrides…) under the old
-    key, so reads MUST keep honouring it; a card edited after the rename may
-    legitimately hold both. Read-only: writers write ``chara`` and only ``chara``.
-    Returns None when neither namespace is present (callers guard on dict)."""
-    if not isinstance(extensions, dict):
-        return None
-    out: dict = {}
-    for key in ("lunamoth", "chara"):
-        v = extensions.get(key)
-        if isinstance(v, dict):
-            out.update(v)
-    return out or None
-
-
 def _clean_hex(value: Any) -> str:
     """An #RRGGBB color (upper-cased), or '' — presentation only, never raises."""
     if isinstance(value, str) and _HEX_RE.match(value.strip()):
@@ -187,7 +167,7 @@ class CharacterCard:
         under `polaris`. (The old chara-mutable `wishes`/`goals` lists are gone —
         no migration; a card simply declares a `polaris` string, or none.)
         """
-        ext = product_ext(self.extensions)
+        ext = self.extensions.get("chara")
         if not isinstance(ext, dict):
             return {}
         out = dict(ext)
@@ -207,7 +187,7 @@ class CharacterCard:
         or missing values come back empty (the renderer falls back to a glyph
         palette). Never raises — a malformed theme must not break a card.
         """
-        ext = product_ext(self.extensions)
+        ext = self.extensions.get("chara")
         if not isinstance(ext, dict):
             return {"primary": "", "secondary": ""}
         primary = ""
@@ -228,7 +208,7 @@ class CharacterCard:
         values (path separators / parent refs) are refused — the sidecar must
         sit in the card's own directory.
         """
-        ext = product_ext(self.extensions)
+        ext = self.extensions.get("chara")
         if not isinstance(ext, dict):
             return ""
         val = ext.get("avatar_file")
@@ -272,7 +252,7 @@ class CharacterCard:
         return p if p.is_file() else None
 
     def assets(self) -> dict:
-        ext = product_ext(self.extensions)
+        ext = self.extensions.get("chara")
         a = ext.get("assets") if isinstance(ext, dict) else None
         return a if isinstance(a, dict) else {}
 
@@ -492,7 +472,7 @@ def card_avatar_data_uri(card: "CharacterCard") -> str:
             return f"data:{mime};base64,{data}"
         except OSError:
             return ""
-    ext = product_ext(card.extensions)
+    ext = card.extensions.get("chara") if isinstance(card.extensions, dict) else None
     if isinstance(ext, dict):
         svg = ext.get("avatar_svg")
         if isinstance(svg, str) and svg.strip():

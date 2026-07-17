@@ -22,7 +22,6 @@ import json
 from typing import Callable
 
 from ..tools.builtin import _image_gen
-from ..content.cards import product_ext
 from . import matte as _matte
 
 # --- the brief LLM contract (ported from visuals/cardbrief.py) ----------------
@@ -147,7 +146,7 @@ def card_text(card: dict) -> str:
     for f in ("description", "personality", "scenario"):
         if d.get(f):
             parts.append(f"{f.upper()}: {d[f]}")
-    ext = product_ext(d.get("extensions")) or {}
+    ext = (d.get("extensions", {}) or {}).get("chara", {})
     if ext.get("tagline"):
         parts.append(f"TAGLINE: {ext['tagline']}")
     book = d.get("character_book") or {}
@@ -159,7 +158,7 @@ def card_text(card: dict) -> str:
 
 
 def card_theme(card: dict) -> str | None:
-    ext = product_ext(card.get("data", card).get("extensions")) or {}
+    ext = (card.get("data", card).get("extensions", {}) or {}).get("chara", {})
     theme = ext.get("theme")
     if isinstance(theme, dict) and isinstance(theme.get("primary"), str):
         return theme["primary"]

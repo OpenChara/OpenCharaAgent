@@ -1060,8 +1060,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    from ..config import migrate_legacy_home
-    migrate_legacy_home()  # ~/.lunamoth → ~/.chara, once, before any path is used
     args = build_parser().parse_args(argv)
     func = getattr(args, "func", None)
     if func is None:

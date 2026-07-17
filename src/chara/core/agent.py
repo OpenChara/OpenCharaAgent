@@ -83,8 +83,8 @@ def _abbrev(text: str, limit: int) -> str:
 @dataclass
 class Session:
     context: ContextBuffer = field(default_factory=lambda: ContextBuffer(
-        max_tokens=int(os.getenv("CHARA_CONTEXT_TOKENS", os.getenv("LUNAMOSS_CONTEXT_TOKENS", str(DEFAULT_CONTEXT_TOKENS)))),
-        trim_buffer_tokens=int(os.getenv("CHARA_CONTEXT_BUFFER_TOKENS", os.getenv("LUNAMOSS_CONTEXT_BUFFER_TOKENS", str(DEFAULT_TRIM_BUFFER_TOKENS)))),
+        max_tokens=int(os.getenv("CHARA_CONTEXT_TOKENS", str(DEFAULT_CONTEXT_TOKENS))),
+        trim_buffer_tokens=int(os.getenv("CHARA_CONTEXT_BUFFER_TOKENS", str(DEFAULT_TRIM_BUFFER_TOKENS))),
     ))
     ticks: int = 0
     wi_sticky: dict[str, int] = field(default_factory=dict)

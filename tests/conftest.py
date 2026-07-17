@@ -32,5 +32,4 @@ def _isolate_config_roots(tmp_path, monkeypatch):
     # meta.env()) leaks it across tests, so pin it clean per test — a test that
     # needs a specific backend sets it itself (monkeypatch wins, last-write).
     monkeypatch.delenv("CHARA_PY_BACKEND", raising=False)
-    monkeypatch.delenv("LUNAMOSS_PY_BACKEND", raising=False)
     yield

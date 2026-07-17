@@ -26,7 +26,7 @@ from ...session.settings import PRESETS, Settings
 def _st_dir() -> Path | None:
     # External scanning is OPT-IN. By default we only look inside the project folder
     # (no links outside it). Set CHARA_ST_DIR to also scan a SillyTavern data dir.
-    d = os.getenv("CHARA_ST_DIR", os.getenv("LUNAMOSS_ST_DIR", "")).strip()
+    d = os.getenv("CHARA_ST_DIR", "").strip()
     if not d:
         return None
     p = Path(d).expanduser()

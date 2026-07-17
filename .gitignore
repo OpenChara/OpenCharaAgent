@@ -84,7 +84,6 @@ docs/_build/
 
 # OpenCharaAgent runtime config (holds API keys — never commit)
 .chara/
-.lunamoth/
 
 # User-dropped SillyTavern cards (keep bundled cards, license + .gitkeep);
 # world books live INSIDE cards as the embedded character_book

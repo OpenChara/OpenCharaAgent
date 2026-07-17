@@ -107,7 +107,7 @@
       ]
     },
     "extensions": {
-      "lunamoth": {
+      "chara": {
         "force_roleplay": true,
         "avatar_file": "avatar.png",
         "theme": {

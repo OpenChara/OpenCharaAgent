@@ -4,21 +4,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-# Legacy env bridge (the LunaMoth → OpenCharaAgent rename): pre-rename installs —
-# systemd units, server instance.env files, shell profiles — still export
-# LUNAMOTH_*. Mirror every one into its CHARA_* twin ONCE, at import of this root
-# module, so no read site anywhere needs its own fallback. An explicitly-set
-# CHARA_* always wins (setdefault).
-def _bridge_legacy_env() -> None:
-    for k, v in list(os.environ.items()):
-        if k.startswith("LUNAMOTH_"):
-            os.environ.setdefault("CHARA_" + k[len("LUNAMOTH_"):], v)
-
-
-_bridge_legacy_env()
-
 ROOT = Path(__file__).resolve().parents[2]
-SANDBOX_ROOT = Path(os.getenv("CHARA_SANDBOX", os.getenv("LUNAMOTH_SANDBOX", os.getenv("LUNAMOSS_SANDBOX", ROOT / "sandbox")))).resolve()
+SANDBOX_ROOT = Path(os.getenv("CHARA_SANDBOX", ROOT / "sandbox")).resolve()
 
 # OpenRouter app attribution. When a request goes to openrouter.ai we send these
 # two headers so all OpenCharaAgent usage groups under one app on openrouter.ai/apps
@@ -26,10 +13,8 @@ SANDBOX_ROOT = Path(os.getenv("CHARA_SANDBOX", os.getenv("LUNAMOTH_SANDBOX", os.
 # X-Title and its ICON from the favicon of the HTTP-Referer URL — so to show a
 # OpenCharaAgent icon (not GitHub's), point the referer at a public page that serves the
 # OpenCharaAgent favicon. Both are env-overridable for a deployer's own site, no code edit.
-OPENROUTER_REFERER = os.getenv("CHARA_OPENROUTER_REFERER",
-                               os.getenv("LUNAMOTH_OPENROUTER_REFERER", "https://lunamoth.ai/"))
-OPENROUTER_TITLE = os.getenv("CHARA_OPENROUTER_TITLE",
-                             os.getenv("LUNAMOTH_OPENROUTER_TITLE", "OpenCharaAgent"))
+OPENROUTER_REFERER = os.getenv("CHARA_OPENROUTER_REFERER", "https://lunamoth.ai/")
+OPENROUTER_TITLE = os.getenv("CHARA_OPENROUTER_TITLE", "OpenCharaAgent")
 
 
 def openrouter_attribution_headers(base_url: str | None) -> dict[str, str]:
@@ -136,39 +121,6 @@ def find_uv() -> "str | None":
         if p.exists():
             return str(p)
     return None
-
-
-def migrate_legacy_home() -> None:
-    """One-shot ``~/.lunamoth`` → ``~/.chara`` move (the product rename).
-
-    Called from the CLI entry only — NEVER at import, so a test or library import
-    can't relocate a real data dir. No-op when an explicit *_HOME env points
-    elsewhere (server fleets pin their own paths), when there is nothing to
-    migrate, or when BOTH dirs already hold data (never merge blindly — the user
-    sorts that out). On success a symlink is left at the old path so a
-    not-yet-restarted pre-rename install (the old daemon, the dev shim's
-    hardcoded path) keeps resolving until it updates."""
-    if os.getenv("CHARA_HOME") or os.getenv("LUNAMOTH_HOME"):
-        return
-    old = Path.home() / ".lunamoth"
-    new = Path.home() / ".chara"
-    if old.is_symlink() or not old.is_dir():
-        return
-    if new.exists():
-        try:
-            if any(new.iterdir()):
-                return
-            new.rmdir()
-        except OSError:
-            return
-    try:
-        old.rename(new)
-    except OSError:
-        return
-    try:
-        old.symlink_to(new)
-    except OSError:
-        pass  # old installs break until updated; the data itself is safe
 
 
 def content_dir(name: str) -> Path:

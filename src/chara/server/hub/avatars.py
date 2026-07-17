@@ -17,7 +17,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from ...content.cards import CharacterCard, product_ext
+from ...content.cards import CharacterCard
 from ...content.imaging import (
     CAP_ART, CAP_AVATAR, CAP_STICKER, avatar_thumb_data_uri, compress_image_bytes,
     has_transparency,
@@ -48,7 +48,7 @@ def _avatar_data_uri(card_path: Path, card: "CharacterCard") -> str:
         mime = _AVATAR_MIME.get(ext, "application/octet-stream")
         data = base64.b64encode(sidecar.read_bytes()).decode("ascii")
         return f"data:{mime};base64,{data}"
-    ext = product_ext(card.extensions)
+    ext = card.extensions.get("chara") if isinstance(card.extensions, dict) else None
     if isinstance(ext, dict):
         svg, _note = _sanitize_avatar_svg(ext.get("avatar_svg"))
         if svg:
