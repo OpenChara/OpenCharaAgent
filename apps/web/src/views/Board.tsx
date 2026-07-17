@@ -4,9 +4,11 @@ import { useNavigate } from "../hooks/useHashRoute";
 import { useHub, type BoardSession } from "../state/hub";
 import { useOverlay } from "../state/overlay";
 import { statusOf, rpcErrText } from "../lib/status";
-import { modeLabel, paletteClass } from "../lib/format";
+import { modeLabel, paletteClass, timeAgo } from "../lib/format";
+import { useIsMobile } from "../hooks/useIsMobile";
 import { deckToast } from "../components/ui/deckToast";
 import { CardFace } from "../components/deck/visual";
+import { CharaListRow } from "../components/chat/CharaListRow";
 import { BrandLoader } from "../components/ui/BrandLoader";
 import type { DeckCard } from "../components/deck/types";
 
@@ -14,7 +16,9 @@ import type { DeckCard } from "../components/deck/types";
    app.js renderBoard: a grid of chara cards, each with a power toggle
    (optimistic: spins immediately, reverts on failure — the binding UI rule),
    a WeChat-style last-message preview (statusOf), and click-through to the
-   chat. Charas without a deck card fall back to the palette+glyph face. */
+   chat. Charas without a deck card fall back to the palette+glyph face.
+   On a PHONE the same roster renders as a WeChat-style conversation LIST
+   (CharaListRow) instead of the card grid; desktop keeps the grid as is. */
 
 const FIRST_RUN_SEEN = "lm-first-run-seen";
 
@@ -22,6 +26,7 @@ export function Board() {
   const t = useT();
   const nav = useNavigate();
   const overlay = useOverlay();
+  const mobile = useIsMobile();
   const { hub, snapshot, refresh } = useHub();
   // Optimistic autonomy override per chara (name → desired on/off): the slider
   // flips at once, reverts on failure (binding "no dead clicks" rule).
@@ -111,7 +116,7 @@ export function Board() {
           <span className="count">{sessions.length ? `· ${sessions.length}` : ""}</span>
         </h1>
         <div className="grow" />
-        {sessions.length > 0 && (
+        {!mobile && sessions.length > 0 && (
           <>
             <button className="btn" disabled={allBusy} onClick={() => void setAllAutonomy(true)}>
               {t("board-start-all")}
@@ -121,9 +126,21 @@ export function Board() {
             </button>
           </>
         )}
-        <button className="btn primary" onClick={() => nav("#/deck")}>
-          {t("new-chara")}
-        </button>
+        {mobile ? (
+          /* the compact "+" — the New-character action on the phone list header */
+          <button
+            className="btn primary crow-new"
+            aria-label={t("new-chara")}
+            title={t("new-chara")}
+            onClick={() => nav("#/deck")}
+          >
+            +
+          </button>
+        ) : (
+          <button className="btn primary" onClick={() => nav("#/deck")}>
+            {t("new-chara")}
+          </button>
+        )}
       </div>
 
       <div className="board">
@@ -135,6 +152,33 @@ export function Board() {
           <BrandLoader />
         ) : (
           <>
+            {mobile ? (
+              /* Phone: the roster as a WeChat-style conversation list. One row per
+                 living chara; tapping opens the (already full-screen) chat. The
+                 preview headlines the last conversation message — a user turn gets
+                 the "你: / You:" prefix — and falls back to the factual life-state
+                 line (statusOf) before any exchange. */
+              <div className="chara-list" id="board-list">
+                {sessions.map((s) => {
+                  const st = statusOf(t, s);
+                  const lm = s.last_message;
+                  const preview =
+                    lm && lm.text && lm.role === "user" ? t("preview-you", { text: lm.text }) : st.line;
+                  return (
+                    <CharaListRow
+                      key={s.name}
+                      charName={s.char_name}
+                      card={cards.find((c) => c.locked && c.owner === s.name) ?? null}
+                      dot={st.dot}
+                      preview={preview}
+                      previewErr={st.cls === "err"}
+                      time={timeAgo(t, lm && lm.ts ? lm.ts : s.last_active)}
+                      onOpen={() => nav(`#/chara/${encodeURIComponent(s.name)}`)}
+                    />
+                  );
+                })}
+              </div>
+            ) : (
             <div className="grid" id="board-grid">
           {sessions.map((s) => {
             const st = statusOf(t, s);
@@ -187,6 +231,7 @@ export function Board() {
             );
           })}
         </div>
+            )}
 
             {sessions.length === 0 && (
               <div className="empty-state" style={{ display: "flex" }}>

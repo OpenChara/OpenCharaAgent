@@ -62,6 +62,7 @@ export const I18N = {
   "new-card": ["＋ 新角色卡", "＋ New card"],
   "board-start-all": ["全部启动", "Start all"],
   "board-stop-all": ["全部关闭", "Stop all"],
+  "preview-you": ["你: {text}", "You: {text}"],
   "empty-board": ["还没有角色。", "No characters yet."],
   "meet-luna": ["遇见你的角色", "Meet your character"],
   "create-chara": ["创建角色", "Create a character"],

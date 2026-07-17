@@ -114,8 +114,10 @@ describe("I18N strings map", () => {
   // p-veil-sub, p-sprite-pos, p-sprite-opacity, sprite-off/left/center/right)
   // + the composer's send-button label (composer-send — the stop button now
   // coexists with send while streaming) → 730.
-  it("preserves the full key set from the source dict (730 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(730);
+  // + preview-you (the mobile conversation list's "你: / You:" prefix on a
+  //   user-authored last message) → 731.
+  it("preserves the full key set from the source dict (731 keys)", () => {
+    expect(Object.keys(I18N).length).toBe(731);
   });
 
   it("every value is a [zh, en] string tuple", () => {

@@ -133,6 +133,37 @@
   to { transform: none; opacity: 1; }
 }
 
+/* The characters home as a conversation LIST (CharaListRow) — rendered on phone
+   width today, and reusable later as the desktop chat view's left column, so the
+   row styles live OUTSIDE the media query. Row: avatar (with the board's .dot in
+   the corner) · name · relative time · one-line muted preview. */
+.chara-list { display: flex; flex-direction: column; width: 100%; }
+.crow {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 4px; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.crow:active, .crow.active { background: var(--accent-soft); }
+.crow + .crow { border-top: 1px solid var(--hairline-2); }
+.crow-ava { position: relative; flex: none; }
+.crow .avatar-s { width: 46px; height: 46px; border-radius: 12px; font-size: 20px; }
+/* reuse the board's .dot live|off|err, re-anchored to the avatar corner */
+.crow-ava .dot { right: -3px; bottom: -3px; border-color: var(--bg); }
+.crow-ava .dot.off { border-color: rgba(120, 135, 145, .5); }
+.crow-main { flex: 1 1 auto; min-width: 0; }
+.crow-top { display: flex; align-items: baseline; gap: 8px; }
+.crow-name {
+  flex: 1 1 auto; min-width: 0; font-size: 15.5px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.crow-time { flex: none; font-size: 11.5px; color: var(--text-3); }
+.crow-preview {
+  margin-top: 3px; font-size: 13px; color: var(--text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.crow-preview.err { color: var(--red); }
+/* the list header's compact "+" (New character) button */
+.crow-new { min-width: 34px; padding: 5px 0; font-size: 18px; line-height: 1; }
+
 @media (max-width: 680px) {
   /* (6a) A drilled-in chat hands the bottom edge to the composer — like WeChat, the
      level-1 tabs (Characters/Deck/Gateways/Settings) show the bar, but a specific
