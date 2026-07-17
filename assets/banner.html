@@ -16,9 +16,12 @@
      (y 278..726) is cut out and padded back to 3.2:1 at 2560x800; the 1280x320
      (4:1) canvas `cover`-crops it vertically, trimming mostly that padding.
      X-coordinates are unchanged by the crop — the room's structure ends at
-     x≈277@1x and the art's first glowing moth starts at x≈1110@1x; the lockup
-     must clear both, which at this type size forces it slightly RIGHT of true
-     center (the art is left-heavy, so the offset reads as balance, not error).
+     x≈277@1x, capping the wordmark's left edge; the art is left-heavy, so the
+     lockup sits slightly RIGHT of true center and reads as balance. NOTE: the
+     art's mid-field column of glowing moths (x≈1090-1165@1x, three stacked
+     glows) was ERASED from banner-art.png with feathered patch-copies — it
+     double-exposed against the sigil. Re-cropping from banner-art.src.png
+     brings that column back; re-erase it or re-place the sigil.
      Art direction, if the art is ever regenerated: the figure must be a
      faceless silhouette seen from behind, absorbed in its own work — the
      product is the user's OC, so the banner must not pin a specific character,
@@ -50,20 +53,19 @@
     justify-content: center;
   }
 
-  /* the horizontal lockup: sigil left of the wordmark, centered on its cap height */
+  /* the horizontal lockup: wordmark with the sigil to its RIGHT (owner choice) */
   .lockup {
     display: flex;
     align-items: center;
     gap: 26px;
-    /* shifted right of true center: the room (left) caps the lockup's left edge
-       at x≈292 and the art moths cap the right at x≈1095 — at this type size a
-       centered lockup would sit on the room, and the left-heavy art makes the
-       offset read as balance */
-    margin-left: 104px;
+    /* shifted right of true center: the room (left) caps the text's left edge
+       at x≈290; the sigil occupies the mid-field spot where the art's glow
+       column used to be (erased — see the header comment) */
+    margin-left: 174px;
   }
 
   /* the moth sigil (solid silhouette) */
-  .sigil { width: 66px; opacity: .96;
+  .sigil { width: 76px; opacity: .96;
            /* optically center against the caps: the h1 line box extends below the
               baseline for descenders the name barely uses */
            transform: translateY(-4px);
@@ -72,11 +74,11 @@
   h1 {
     font-family: "Didot", "Hoefler Text", serif;
     font-weight: 400;
-    font-size: 84px;
+    font-size: 96px;
     /* generous line box: at 1.04 the Didot "g" descender fell outside the h1 box
        and background-clip:text painted nothing there — the glyph came out clipped */
     line-height: 1.4;
-    letter-spacing: .015em;
+    letter-spacing: .01em;
     background: linear-gradient(180deg, #ffffff 30%, #a8cfec 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -87,8 +89,8 @@
 </head>
 <body>
   <div class="lockup">
-    <!-- the moth sigil: solid-silhouette variant of apps/desktop/assets/icon.svg
-         (no eyespots), matching apps/web BrandLoader; moonlight white -->
+    <h1>OpenCharaAgent</h1>
+
     <svg class="sigil" viewBox="240 270 544 560" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <g id="half">
@@ -108,8 +110,6 @@
         <circle cx="512" cy="404" r="19"/>
       </g>
     </svg>
-
-    <h1>OpenCharaAgent</h1>
   </div>
 
 </body>
