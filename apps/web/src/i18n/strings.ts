@@ -462,7 +462,7 @@ export const I18N = {
   "card-made": ["卡已收进卡册。", "The card is in your deck."],
   "wake-now-q": ["要现在唤醒 TA 吗？", "Wake them now?"],
   "later-deck": ["先放进卡册", "Keep in the deck for now"],
-  "tagline": ["和你的角色一起做东西<br>开源 AI 角色扮演 Agent Harness", "Build stuff with your characters<br>An open source AI roleplay agent harness"],
+  "tagline": ["和你的角色一起创作<br>开源 AI 角色扮演 Agent Harness", "Create with your characters<br>An open source AI roleplay agent harness"],
   "fr-create-title": ["创建你的角色", "Create your character"],
   "fr-create-sub": ["描述你想象的世界与角色，AI 自动生成角色卡", "Describe your world & character — AI writes the card"],
   "btn-try": ["或者从我们提供的默认角色开始", "Or start from one of our characters"],

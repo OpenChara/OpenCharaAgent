@@ -9,8 +9,8 @@ allowlisted, audited gateway. Three audiences, in priority order:
 
 1. **Character creators** — people who want their character alive QUICKLY
    (POSITIONING, owner 2026-07-17: we no longer CLAIM "original character"
-   in outward copy — the market imports any card; tagline 「和你的角色一起做东西 /
-   Build stuff with your characters」, one-liner in README hero),
+   in outward copy — the market imports any card; tagline 「和你的角色一起创作 /
+   Create with your characters」, one-liner in README hero),
    to chat with it and to watch it do its own things. The path from
    *inspiration → living chara* must be short: AI-assisted card creation
    (draft the card, a small SVG avatar, a theme color — like the web deck
