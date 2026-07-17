@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.png" alt="OpenCharaAgent — an original character that lives in your computer" width="100%">
+  <img src="assets/banner.webp" alt="OpenCharaAgent — an original character that lives in your computer" width="100%">
 </p>
 
 <p align="center"><b>Give your original character a computer to live in.</b></p>

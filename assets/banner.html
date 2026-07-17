@@ -1,26 +1,35 @@
 <!DOCTYPE html>
-<!-- OpenCharaAgent GitHub banner source. Render with headless Chrome:
-     chrome --headless --screenshot=banner.png --window-size=1280,400 \
-            --force-device-scale-factor=2 file://.../banner.html
+<!-- OpenCharaAgent GitHub banner source. Two steps:
+     1) render with headless Chrome:
+        chrome --headless --screenshot=banner.png --window-size=1280,320 \
+               --force-device-scale-factor=2 file://.../banner.html
+     2) convert the (untracked) banner.png to the SHIPPED assets/banner.webp —
+        PNG is the wrong container for this photographic art (~2MB); WebP q82
+        lands around a tenth of that:
+        uv run --no-project --with pillow python -c "from PIL import Image; \
+          Image.open('banner.png').save('banner.webp', quality=82, method=6)"
      Fonts are macOS system serifs (Didot / Hoefler Text) — render on macOS.
 
      The wordmark and sigil stay live text/SVG here; only the background
      is art. banner-art.png is cropped from the generated banner-art.src.png
      (1672x941): the image model letterboxed its own output, so the content band
-     (y 278..726) is cut out and padded back to 3.2:1 with a PER-COLUMN ramp from
-     the band's edge row to the letterbox colour — a flat pad leaves a visible
-     ~10-level seam. It lands at exactly 2560x800 = 1280x400@2x, so `cover` neither
-     scales nor crops. Art direction, if it is ever regenerated: the figure must be
-     a faceless silhouette seen from behind, absorbed in its own work — the product
-     is the user's OC, so the banner must not pin a specific character, and a
-     character that looked back at the viewer would say the opposite of what this
-     runtime is for. -->
+     (y 278..726) is cut out and padded back to 3.2:1 at 2560x800; the 1280x320
+     (4:1) canvas `cover`-crops it vertically, trimming mostly that padding.
+     X-coordinates are unchanged by the crop — the room's structure ends at
+     x≈277@1x and the art's first glowing moth starts at x≈1110@1x; the lockup
+     must clear both, which at this type size forces it slightly RIGHT of true
+     center (the art is left-heavy, so the offset reads as balance, not error).
+     Art direction, if the art is ever regenerated: the figure must be a
+     faceless silhouette seen from behind, absorbed in its own work — the
+     product is the user's OC, so the banner must not pin a specific character,
+     and a character that looked back at the viewer would say the opposite of
+     what this runtime is for. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 1280px; height: 400px; overflow: hidden; }
+  html, body { width: 1280px; height: 320px; overflow: hidden; }
   body {
     position: relative;
     /* Layers, topmost first: a faint glow lifting the wordmark off the art, a wide
@@ -30,7 +39,7 @@
        and glowing moths (right) are meant to survive as quiet accents. */
     background:
       radial-gradient(ellipse 900px 520px at 50% 46%, rgba(110, 170, 220, .10), rgba(110, 170, 220, 0) 68%),
-      radial-gradient(ellipse 1040px 360px at 50% 50%, rgba(7, 16, 27, .55), rgba(7, 16, 27, 0) 74%),
+      radial-gradient(ellipse 1080px 300px at 53% 50%, rgba(7, 16, 27, .55), rgba(7, 16, 27, 0) 74%),
       linear-gradient(180deg, rgba(10, 23, 38, .65) 0%, rgba(10, 23, 38, 0) 34%,
                               rgba(10, 23, 38, 0) 66%, rgba(10, 23, 38, .65) 100%),
       url("banner-art.png") center / cover no-repeat;
@@ -45,11 +54,16 @@
   .lockup {
     display: flex;
     align-items: center;
-    gap: 24px;
+    gap: 26px;
+    /* shifted right of true center: the room (left) caps the lockup's left edge
+       at x≈292 and the art moths cap the right at x≈1095 — at this type size a
+       centered lockup would sit on the room, and the left-heavy art makes the
+       offset read as balance */
+    margin-left: 104px;
   }
 
   /* the moth sigil (solid silhouette) */
-  .sigil { width: 58px; opacity: .96;
+  .sigil { width: 66px; opacity: .96;
            /* optically center against the caps: the h1 line box extends below the
               baseline for descenders the name barely uses */
            transform: translateY(-4px);
@@ -58,7 +72,7 @@
   h1 {
     font-family: "Didot", "Hoefler Text", serif;
     font-weight: 400;
-    font-size: 74px;
+    font-size: 84px;
     /* generous line box: at 1.04 the Didot "g" descender fell outside the h1 box
        and background-clip:text painted nothing there — the glyph came out clipped */
     line-height: 1.4;

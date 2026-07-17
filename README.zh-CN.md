@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.png" alt="OpenCharaAgent —— 住在你电脑里的原创角色" width="100%">
+  <img src="assets/banner.webp" alt="OpenCharaAgent —— 住在你电脑里的原创角色" width="100%">
 </p>
 
 <p align="center"><b>给你的原创角色一台可以住进去的电脑。</b></p>

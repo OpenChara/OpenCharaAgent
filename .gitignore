@@ -137,3 +137,4 @@ src/chara/front/webui/
 
 # Build-time copy of repo-root cards/ + toolpacks/ into the package (build-wheel.sh)
 src/chara/_bundled/
+assets/banner.png
