@@ -4,7 +4,7 @@
             --force-device-scale-factor=2 file://.../banner.html
      Fonts are macOS system serifs (Didot / Hoefler Text) — render on macOS.
 
-     The wordmark, sigil and subtitle stay live text/SVG here; only the background
+     The wordmark and sigil stay live text/SVG here; only the background
      is art. banner-art.png is cropped from the generated banner-art.src.png
      (1672x941): the image model letterboxed its own output, so the content band
      (y 278..726) is cut out and padded back to 3.2:1 with a PER-COLUMN ramp from
@@ -23,14 +23,16 @@
   html, body { width: 1280px; height: 400px; overflow: hidden; }
   body {
     position: relative;
-    /* Layers, topmost first: a faint glow lifting the wordmark off the art, a scrim
-       holding the top and bottom edges down, then the art itself. banner-art.png is
-       pre-cropped to exactly 1280x400@2x and is already near-black through the
-       centre by composition, so the scrim only has to touch the edges. */
+    /* Layers, topmost first: a faint glow lifting the wordmark off the art, a wide
+       soft darkening pooled behind the lockup so the type sits on a quiet field,
+       a scrim holding the top and bottom edges down, then the art itself.
+       banner-art.png is pre-cropped to exactly 1280x400@2x; the lit room (left)
+       and glowing moths (right) are meant to survive as quiet accents. */
     background:
-      radial-gradient(ellipse 900px 520px at 50% 46%, rgba(110, 170, 220, .14), rgba(110, 170, 220, 0) 68%),
-      linear-gradient(180deg, rgba(10, 23, 38, .55) 0%, rgba(10, 23, 38, 0) 34%,
-                              rgba(10, 23, 38, 0) 66%, rgba(10, 23, 38, .55) 100%),
+      radial-gradient(ellipse 900px 520px at 50% 46%, rgba(110, 170, 220, .10), rgba(110, 170, 220, 0) 68%),
+      radial-gradient(ellipse 1040px 360px at 50% 50%, rgba(7, 16, 27, .55), rgba(7, 16, 27, 0) 74%),
+      linear-gradient(180deg, rgba(10, 23, 38, .65) 0%, rgba(10, 23, 38, 0) 34%,
+                              rgba(10, 23, 38, 0) 66%, rgba(10, 23, 38, .65) 100%),
       url("banner-art.png") center / cover no-repeat;
     background-color: #0a1726;
     display: flex;
@@ -39,28 +41,27 @@
     justify-content: center;
   }
 
-  /* stars */
-  .star { position: absolute; border-radius: 50%; background: #eaf7ff; }
-
   /* the horizontal lockup: sigil left of the wordmark, centered on its cap height */
   .lockup {
     display: flex;
     align-items: center;
-    gap: 28px;
+    gap: 24px;
   }
 
   /* the moth sigil (solid silhouette) */
-  .sigil { width: 72px; opacity: .96;
+  .sigil { width: 58px; opacity: .96;
            /* optically center against the caps: the h1 line box extends below the
-              baseline for descenders the all-caps-height name barely uses */
-           transform: translateY(-5px);
+              baseline for descenders the name barely uses */
+           transform: translateY(-4px);
            filter: drop-shadow(0 0 18px rgba(160, 210, 245, .55)); }
 
   h1 {
     font-family: "Didot", "Hoefler Text", serif;
     font-weight: 400;
-    font-size: 92px;
-    line-height: 1.04;
+    font-size: 74px;
+    /* generous line box: at 1.04 the Didot "g" descender fell outside the h1 box
+       and background-clip:text painted nothing there — the glyph came out clipped */
+    line-height: 1.4;
     letter-spacing: .015em;
     background: linear-gradient(180deg, #ffffff 30%, #a8cfec 100%);
     -webkit-background-clip: text;
@@ -68,41 +69,9 @@
     text-shadow: 0 0 64px rgba(140, 195, 240, .35);
   }
 
-  .sub {
-    margin-top: 14px;
-    display: flex;
-    align-items: center;
-    gap: 26px;
-  }
-  .sub .rule {
-    width: 130px; height: 1px;
-    background: linear-gradient(90deg, rgba(159, 208, 238, 0), rgba(159, 208, 238, .75));
-  }
-  .sub .rule.right { transform: scaleX(-1); }
-  .sub em {
-    font-family: "Didot", serif;
-    font-style: italic;
-    font-weight: 400;
-    font-size: 27px;
-    letter-spacing: .12em;
-    color: #9fd0ee;
-    white-space: nowrap;
-  }
 </style>
 </head>
 <body>
-  <!-- scattered stars -->
-  <div class="star" style="left:128px;  top:84px;  width:3px; height:3px; opacity:.7"></div>
-  <div class="star" style="left:236px;  top:248px; width:2px; height:2px; opacity:.45"></div>
-  <div class="star" style="left:332px;  top:120px; width:2px; height:2px; opacity:.55"></div>
-  <div class="star" style="left:184px;  top:330px; width:2px; height:2px; opacity:.35"></div>
-  <div class="star" style="left:906px;  top:96px;  width:3px; height:3px; opacity:.65"></div>
-  <div class="star" style="left:1042px; top:208px; width:2px; height:2px; opacity:.5"></div>
-  <div class="star" style="left:1130px; top:118px; width:3px; height:3px; opacity:.7"></div>
-  <div class="star" style="left:986px;  top:322px; width:2px; height:2px; opacity:.4"></div>
-  <div class="star" style="left:78px;   top:196px; width:2px; height:2px; opacity:.5"></div>
-  <div class="star" style="left:1196px; top:276px; width:2px; height:2px; opacity:.45"></div>
-
   <div class="lockup">
     <!-- the moth sigil: solid-silhouette variant of apps/desktop/assets/icon.svg
          (no eyespots), matching apps/web BrandLoader; moonlight white -->
@@ -127,12 +96,6 @@
     </svg>
 
     <h1>OpenCharaAgent</h1>
-  </div>
-
-  <div class="sub">
-    <div class="rule"></div>
-    <em>Original Character That Lives With You</em>
-    <div class="rule right"></div>
   </div>
 
 </body>
