@@ -1872,7 +1872,9 @@ body.dark .wb-content{background:rgba(255,255,255,.04)}
 .fr-dots i.done{background:var(--accent); opacity:.45}
 .fr-dots i.on{background:var(--accent)}
 .fr-word{
-  font-family:var(--display); font-size:52px; font-weight:600; letter-spacing:.2px;
+  /* 14 glyphs must survive a 390px phone: scale with the viewport, cap at the
+     desktop size (52px from ~495px up, unchanged there) */
+  font-family:var(--display); font-size:clamp(28px, 10.5vw, 52px); font-weight:600; letter-spacing:.2px;
   line-height:1.1; margin-bottom:18px;
   background:linear-gradient(180deg,#8FC6EA 0%,#5B9FD4 55%,#3E7FB4 100%);
   -webkit-background-clip:text; background-clip:text; color:transparent;

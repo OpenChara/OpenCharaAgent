@@ -117,7 +117,7 @@ describe("I18N strings map", () => {
   // + preview-you (the mobile conversation list's "你: / You:" prefix on a
   //   user-authored last message) → 731.
   it("preserves the full key set from the source dict (731 keys)", () => {
-    expect(Object.keys(I18N).length).toBe(731);
+    expect(Object.keys(I18N).length).toBe(732);
   });
 
   it("every value is a [zh, en] string tuple", () => {

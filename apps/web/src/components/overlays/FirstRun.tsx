@@ -80,6 +80,16 @@ export function FirstRun({ onClose }: { onClose: () => void }) {
             <span>{t("btn-try")}</span>
             <small>{t("btn-try-sub")}</small>
           </button>
+          <button
+            className="fr-tert"
+            id="fr-market"
+            onClick={() => {
+              onClose();
+              window.location.hash = "#/market";
+            }}
+          >
+            {t("fr-market")} →
+          </button>
         </div>
       ) : (
         <div id="fr-picker" className="bp-host" style={{ display: "block" }}>
