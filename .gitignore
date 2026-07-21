@@ -103,7 +103,6 @@ sandbox/workspace/*
 sandbox/assets/
 
 # pre-rename config dir (still readable as fallback)
-.lunamoss/
 
 # reference repos for study (not ours)
 reference/

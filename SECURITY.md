@@ -68,6 +68,7 @@ IP — so a chara cannot `file://`-read host secrets or pivot to internal servic
 
 ## Reporting a vulnerability
 
-Please do **not** open a public issue for a security report. Email the maintainer
-at lunamos.thu@gmail.com with a description and, ideally, a reproduction. We aim
-to acknowledge within a few days.
+Please do **not** open a public issue for a security report. Use GitHub's private
+reporting instead: the repository's **Security** tab, then **Report a
+vulnerability**. Include a description and, ideally, a reproduction. We aim to
+acknowledge within a few days.

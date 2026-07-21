@@ -13,13 +13,7 @@ from ..content.knobs import DEFAULT_PATIENCE, DEFAULT_QUIET, patience_is_explici
 
 # Runtime config lives in the project, NOT inside the sandbox (the sandbox is
 # zeroed on shutdown). It is gitignored so API keys never enter version control.
-def _default_config_dir() -> Path:
-    new, old = ROOT / ".chara", ROOT / ".lunamoss"
-    # Keep reading a pre-rename config dir until a new one is created.
-    return old if old.is_dir() and not new.is_dir() else new
-
-
-CONFIG_DIR = Path(os.getenv("CHARA_CONFIG_DIR", _default_config_dir())).resolve()
+CONFIG_DIR = Path(os.getenv("CHARA_CONFIG_DIR", ROOT / ".chara")).resolve()
 CONFIG_PATH = CONFIG_DIR / "config.json"
 
 
