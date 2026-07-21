@@ -116,7 +116,8 @@ describe("I18N strings map", () => {
   // coexists with send while streaming) → 730.
   // + preview-you (the mobile conversation list's "你: / You:" prefix on a
   //   user-authored last message) → 731.
-  it("preserves the full key set from the source dict (731 keys)", () => {
+  // + fr-market (the welcome overlay's jump-to-market button) → 732.
+  it("preserves the full key set from the source dict (732 keys)", () => {
     expect(Object.keys(I18N).length).toBe(732);
   });
 
