@@ -6,7 +6,7 @@ drift. Two install channels mirror ``install.sh``:
 
   * dev / git checkout  → ``git pull --ff-only`` + ``uv sync``.
   * wheel (the default) → installed by ``uv tool install --force
-    "chara[...] @ <release-wheel-URL>"`` — a URL-PINNED tool. The mature in-place
+    "opencharaagent[...] @ <release wheel>"`` — a URL-PINNED tool. The mature in-place
     upgrade is therefore "fetch the LATEST release's wheel URL + reinstall", NOT
     ``uv tool upgrade`` (a no-op on a URL-pinned tool: the recorded requirement is a
     fixed URL with no newer version to resolve — the reason the update button never
@@ -19,13 +19,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import shutil
 import subprocess
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -153,16 +153,24 @@ def _http_get(url: str, timeout: float = _DOWNLOAD_TIMEOUT) -> bytes:
 
 def download_verified_wheel(wheel_url: str, sums_url: str) -> tuple[Path, str]:
     """Download the wheel AND its SHA256SUMS manifest, verify, land the verified bytes
-    in a temp file. Returns ``(path, sha256)``; the CALLER owns (and removes) the file.
+    in a fresh temp dir under the asset's own filename. Returns ``(path, sha256)``; the
+    CALLER owns (and removes) ``path.parent``.
+
+    The filename matters: uv parses the package name, version and tags out of a local
+    wheel's name, so ``opencharaagent[...] @ /tmp/chara-x1y2.whl`` is refused outright
+    (install.sh downloads under the real basename for the same reason).
 
     Mirrors install.sh's check: pick the hash for THIS wheel by basename (a SHA256SUMS
     may list several files), falling back to the manifest's sole hash. Raises
     ``ChecksumMismatch`` on any verification failure — a mismatch, or a manifest that
     carries no hash at all (a published-but-unreadable manifest is refused, never
-    shrugged past) — and ``URLError``/``OSError`` on download failures."""
+    shrugged past) — ``ValueError`` when the URL names no wheel, and
+    ``URLError``/``OSError`` on download failures."""
+    basename = Path(urllib.parse.unquote(urllib.parse.urlsplit(wheel_url).path)).name
+    if not basename.endswith(".whl"):
+        raise ValueError(f"the release asset is not a wheel: {wheel_url}")
     blob = _http_get(wheel_url)
     sums = _http_get(sums_url).decode("utf-8", errors="replace")
-    basename = wheel_url.rsplit("/", 1)[-1]
     expected = ""
     for line in sums.splitlines():
         if basename in line:
@@ -180,14 +188,14 @@ def download_verified_wheel(wheel_url: str, sums_url: str) -> tuple[Path, str]:
     if actual != expected:
         raise ChecksumMismatch(
             f"wheel checksum MISMATCH (expected {expected}, got {actual}) — refusing to install")
-    fd, tmp = tempfile.mkstemp(prefix="chara-", suffix=".whl")
+    tmp_dir = Path(tempfile.mkdtemp(prefix="chara-update-"))
+    path = tmp_dir / basename
     try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(blob)
+        path.write_bytes(blob)
     except BaseException:
-        Path(tmp).unlink(missing_ok=True)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
         raise
-    return Path(tmp), actual
+    return path, actual
 
 
 def apply() -> dict[str, Any]:
@@ -258,4 +266,4 @@ def apply() -> dict[str, Any]:
                 "manual_command": manual_command()}
     finally:
         if tmp_wheel is not None:
-            tmp_wheel.unlink(missing_ok=True)
+            shutil.rmtree(tmp_wheel.parent, ignore_errors=True)

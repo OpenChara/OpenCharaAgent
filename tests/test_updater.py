@@ -1,7 +1,7 @@
 """The shared self-update core (chara/updater.py).
 
 The headline regression: a wheel install is URL-PINNED (install.sh:
-`uv tool install "chara @ <wheel-url>"`), so `uv tool upgrade` is a no-op —
+`uv tool install "opencharaagent[...] @ <wheel-url>"`), so `uv tool upgrade` is a no-op —
 the update must REINSTALL from the latest release wheel URL. These pin that, plus
 the uv-not-found and no-release error paths, and wheel-URL extraction.
 """
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -27,7 +28,7 @@ def test_apply_wheel_reinstalls_from_latest_url_never_upgrade(monkeypatch):
     monkeypatch.setattr(updater, "is_dev", lambda: False)
     monkeypatch.setattr(updater, "find_uv", lambda: "/fake/uv")
     monkeypatch.setattr(updater, "_latest_wheel_assets",
-                        lambda: ("https://x/chara-0.9.0-py3-none-any.whl", None))
+                        lambda: ("https://x/opencharaagent-0.9.0-py3-none-any.whl", None))
     seen = {}
 
     def fake_run(cmd, **kw):
@@ -39,7 +40,7 @@ def test_apply_wheel_reinstalls_from_latest_url_never_upgrade(monkeypatch):
     assert res["ok"] and res["restart_required"]
     # reinstall from the latest URL — NOT `uv tool upgrade` (the no-op that never worked)
     assert seen["cmd"] == ["/fake/uv", "tool", "install", "--force",
-                           "opencharaagent[server,messaging] @ https://x/chara-0.9.0-py3-none-any.whl"]
+                           "opencharaagent[server,messaging] @ https://x/opencharaagent-0.9.0-py3-none-any.whl"]
     assert "upgrade" not in seen["cmd"]
     assert "NOT verified" in res["output"]  # no manifest → say so plainly
 
@@ -50,11 +51,11 @@ def test_apply_wheel_verifies_checksum_and_installs_the_local_file(monkeypatch):
     monkeypatch.setattr(updater, "is_dev", lambda: False)
     monkeypatch.setattr(updater, "find_uv", lambda: "/fake/uv")
     monkeypatch.setattr(updater, "_latest_wheel_assets",
-                        lambda: ("https://x/chara-1.0.0-py3-none-any.whl",
+                        lambda: ("https://x/opencharaagent-1.0.0-py3-none-any.whl",
                                  "https://x/SHA256SUMS"))
     blob = b"wheel-bytes"
     digest = hashlib.sha256(blob).hexdigest()
-    sums = f"{digest}  chara-1.0.0-py3-none-any.whl\n".encode()
+    sums = f"{digest}  opencharaagent-1.0.0-py3-none-any.whl\n".encode()
     monkeypatch.setattr(updater, "_http_get",
                         lambda url, timeout=0: blob if url.endswith(".whl") else sums)
     seen = {}
@@ -71,8 +72,11 @@ def test_apply_wheel_verifies_checksum_and_installs_the_local_file(monkeypatch):
     assert res["ok"] and res["restart_required"]
     assert not seen["target"].startswith("http")      # a local file, not the URL
     assert seen["bytes"] == blob                      # the exact verified bytes
+    # uv reads name/version/tags from a local wheel's filename and refuses anything
+    # else ("chara-x1y2.whl" is invalid), so the asset's own basename must survive
+    assert Path(seen["target"]).name == "opencharaagent-1.0.0-py3-none-any.whl"
     assert digest in res["output"]                    # the verification is reported
-    assert not Path(seen["target"]).exists()          # temp wheel removed in finally
+    assert not Path(seen["target"]).parent.exists()   # temp dir removed in finally
 
 
 def test_apply_shares_one_wall_budget_across_download_and_install(monkeypatch):
@@ -82,11 +86,11 @@ def test_apply_shares_one_wall_budget_across_download_and_install(monkeypatch):
     monkeypatch.setattr(updater, "is_dev", lambda: False)
     monkeypatch.setattr(updater, "find_uv", lambda: "/fake/uv")
     monkeypatch.setattr(updater, "_latest_wheel_assets",
-                        lambda: ("https://x/chara-1.0.0-py3-none-any.whl",
+                        lambda: ("https://x/opencharaagent-1.0.0-py3-none-any.whl",
                                  "https://x/SHA256SUMS"))
     blob = b"wheel-bytes"
     digest = hashlib.sha256(blob).hexdigest()
-    sums = f"{digest}  chara-1.0.0-py3-none-any.whl\n".encode()
+    sums = f"{digest}  opencharaagent-1.0.0-py3-none-any.whl\n".encode()
 
     clock = {"t": 1000.0}
 
@@ -126,9 +130,9 @@ def test_apply_wheel_checksum_mismatch_never_installs(monkeypatch):
     monkeypatch.setattr(updater, "is_dev", lambda: False)
     monkeypatch.setattr(updater, "find_uv", lambda: "/fake/uv")
     monkeypatch.setattr(updater, "_latest_wheel_assets",
-                        lambda: ("https://x/chara-1.0.0-py3-none-any.whl",
+                        lambda: ("https://x/opencharaagent-1.0.0-py3-none-any.whl",
                                  "https://x/SHA256SUMS"))
-    sums = ("0" * 64 + "  chara-1.0.0-py3-none-any.whl\n").encode()
+    sums = ("0" * 64 + "  opencharaagent-1.0.0-py3-none-any.whl\n").encode()
     monkeypatch.setattr(updater, "_http_get",
                         lambda url, timeout=0: b"tampered" if url.endswith(".whl") else sums)
     calls = []
@@ -145,15 +149,16 @@ def test_download_verified_wheel_picks_the_hash_by_basename(monkeypatch):
     blob = b"the-wheel"
     digest = hashlib.sha256(blob).hexdigest()
     manifest = ("1" * 64 + "  other-2.0.0-py3-none-any.whl\n"
-                + digest + "  chara-1.0.0-py3-none-any.whl\n").encode()
+                + digest + "  opencharaagent-1.0.0-py3-none-any.whl\n").encode()
     monkeypatch.setattr(updater, "_http_get",
                         lambda url, timeout=0: blob if url.endswith(".whl") else manifest)
     path, sha = updater.download_verified_wheel(
-        "https://x/chara-1.0.0-py3-none-any.whl", "https://x/SHA256SUMS")
+        "https://x/opencharaagent-1.0.0-py3-none-any.whl", "https://x/SHA256SUMS")
     try:
         assert sha == digest and path.read_bytes() == blob
+        assert path.name == "opencharaagent-1.0.0-py3-none-any.whl"
     finally:
-        path.unlink(missing_ok=True)
+        shutil.rmtree(path.parent)
 
 
 def test_download_verified_wheel_refuses_a_hashless_manifest(monkeypatch):
@@ -161,6 +166,19 @@ def test_download_verified_wheel_refuses_a_hashless_manifest(monkeypatch):
                         lambda url, timeout=0: b"w" if url.endswith(".whl") else b"no hashes here\n")
     with pytest.raises(updater.ChecksumMismatch):
         updater.download_verified_wheel("https://x/w.whl", "https://x/SHA256SUMS")
+
+
+def test_apply_refuses_an_asset_url_that_names_no_wheel(monkeypatch):
+    monkeypatch.setattr(updater, "is_dev", lambda: False)
+    monkeypatch.setattr(updater, "find_uv", lambda: "/fake/uv")
+    monkeypatch.setattr(updater, "_latest_wheel_assets",
+                        lambda: ("https://x/download/", "https://x/SHA256SUMS"))
+    calls = []
+    monkeypatch.setattr(updater.subprocess, "run",
+                        lambda cmd, **kw: calls.append(cmd) or _completed(cmd))
+    res = updater.apply()
+    assert res["ok"] is False and calls == []
+    assert "not a wheel" in res["output"]
 
 
 def test_apply_wheel_no_release_is_a_clear_error(monkeypatch):
@@ -226,7 +244,7 @@ def test_fetch_releases_extracts_the_wheel_asset_url(monkeypatch):
         "html_url": "https://h", "draft": False, "prerelease": False,
         "assets": [
             {"name": "SHA256SUMS", "browser_download_url": "https://x/SHA256SUMS"},
-            {"name": "chara-0.9.0-py3-none-any.whl", "browser_download_url": "https://x/w.whl"},
+            {"name": "opencharaagent-0.9.0-py3-none-any.whl", "browser_download_url": "https://x/w.whl"},
         ],
     }]).encode()
 
