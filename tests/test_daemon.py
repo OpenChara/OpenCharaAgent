@@ -10,6 +10,7 @@ import pytest
 
 from chara.session import sessions as S
 from chara.front import cli
+from chara.server.hub import sessions as hub_sessions
 
 
 @pytest.fixture(autouse=True)
@@ -93,10 +94,13 @@ def test_start_daemon_releases_the_claim_on_spawn_failure(monkeypatch):
     assert meta.daemon_pid_path.read_text(encoding="utf-8").strip() == "7"
 
 
-def test_start_daemon_argv_carries_the_session_marker(monkeypatch):
+@pytest.mark.parametrize("start", [cli._start_daemon, hub_sessions.start_daemon],
+                         ids=["cli", "hub"])
+def test_start_daemon_argv_carries_the_session_marker(monkeypatch, start):
     """The daemon argv is otherwise identical across charas; the inert --session
     marker is what lets pid_is_chara tell sibling daemons apart after reboot
-    pid-reuse (terminal.py accepts and ignores it)."""
+    pid-reuse (terminal.py accepts and ignores it). Both starters stamp it — the
+    CLI's and the hub's (the board / wake path)."""
     meta = S.create_session("marked")
     _configure(meta)
 
@@ -109,8 +113,9 @@ def test_start_daemon_argv_carries_the_session_marker(monkeypatch):
         seen["argv"] = argv
         return _Proc()
 
-    monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
-    assert cli._start_daemon(meta) is True
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    assert start(meta) is True
+    assert seen["argv"][1:3] == ["-m", "chara.front.terminal"]
     i = seen["argv"].index("--session")
     assert seen["argv"][i + 1] == "marked"
 

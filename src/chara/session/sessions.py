@@ -82,6 +82,21 @@ _CLAIM_TTL = 60.0
 # hours old, so the grace window costs nothing.
 _IDENTITY_GRACE = 5.0
 
+# The module every daemon.pid process runs (front/cli._start_daemon and the hub's
+# start_daemon both spawn ``python -m chara.front.terminal``).
+_DAEMON_MODULE = "chara.front.terminal"
+
+
+def _chara_entry(tokens: list[str]) -> str | None:
+    """The chara module (``-m chara.…``) or entrypoint (``chara``) an argv runs."""
+    for i, tok in enumerate(tokens[:-1]):
+        if tok == "-m" and tokens[i + 1].startswith("chara."):
+            return tokens[i + 1]
+    # The console script runs as `<python> <bin>/chara …` (or bare `<bin>/chara`).
+    if any(Path(tok).name == "chara" for tok in tokens[:2]):
+        return "chara"
+    return None
+
 
 def pid_is_chara(pid: int, session: str | None = None) -> bool:
     """Does this pid actually belong to a chara process — and, when ``session``
@@ -89,20 +104,20 @@ def pid_is_chara(pid: int, session: str | None = None) -> bool:
 
     Liveness alone (``kill(pid, 0)``) is not identity: after a reboot the OS can hand
     a recorded pid to an UNRELATED process. Read the command line (/proc on Linux,
-    ``ps`` on macOS) and require the lowercase package name in it — the daemon argv
-    always carries it (``-m chara.front.terminal``, or the ``chara``
-    entrypoint). Case-SENSITIVE on purpose: a stranger whose path merely contains
-    e.g. ``.../OpenCharaAgent/...`` must not pass.
+    ``ps`` on macOS) and require it to RUN chara — ``-m chara.…`` or the ``chara``
+    entrypoint — not merely mention it: ``chara`` is a substring of ``character``,
+    and every jailed job a chara spawns carries ``~/.chara/sessions/…`` in its argv.
 
-    The package name alone can't tell chara A's daemon from chara B's — every daemon
-    argv is identically ``-m chara.front.terminal`` (the session rides only env),
-    so reboot pid-reuse ACROSS siblings made start-all skip A and A.stop() kill B.
-    cli._start_daemon therefore stamps an inert ``--session <name>`` marker into the
-    argv (front/terminal.py accepts and ignores it). With ``session`` given, a
-    cmdline carrying a DIFFERENT ``--session`` is a sibling's process — foreign. A
-    chara cmdline with NO marker at all still passes: a pre-upgrade daemon
-    (spawned before the marker existed) must not be treated as a stranger.
-    False on any doubt."""
+    With ``session`` given the pid must be a DAEMON, i.e. run ``-m
+    chara.front.terminal``: the supervisor's ``-m chara.front.cli serve NAME``
+    children are chara processes too, but never the owner of a daemon.pid.
+    The module alone can't tell chara A's daemon from chara B's — the session rides
+    only env — so reboot pid-reuse ACROSS siblings made start-all skip A and A.stop()
+    kill B. Every daemon spawn therefore stamps an inert ``--session <name>`` marker
+    into the argv (front/terminal.py accepts and ignores it). A cmdline carrying a
+    DIFFERENT ``--session`` is a sibling's daemon — foreign. A daemon with NO marker
+    at all still passes: one spawned before the marker existed must not be treated
+    as a stranger. False on any doubt."""
     if pid <= 0:
         return False
     try:
@@ -117,13 +132,17 @@ def pid_is_chara(pid: int, session: str | None = None) -> bool:
             cmdline = p.stdout
     except (OSError, subprocess.SubprocessError):
         return False
-    if "chara" not in cmdline:
+    # Session names are token-safe (valid_name: no whitespace), so plain word
+    # splitting recovers the module and the marker from either the /proc or the
+    # `ps` rendering.
+    tokens = cmdline.split()
+    entry = _chara_entry(tokens)
+    if entry is None:
         return False
     if session is None:
         return True
-    # Session names are token-safe (valid_name: no whitespace), so plain word
-    # splitting recovers the marker from either the /proc or the `ps` rendering.
-    tokens = cmdline.split()
+    if entry != _DAEMON_MODULE:
+        return False
     marker: str | None = None
     for i, tok in enumerate(tokens):
         if tok == "--session":
