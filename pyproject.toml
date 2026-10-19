@@ -13,7 +13,7 @@ license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
   "textual>=6.0,<7",
-  "pillow>=10",
+  "pillow>=12.3",
 ]
 
 [project.scripts]
@@ -40,7 +40,7 @@ visuals = [
     # numba 0.53 / llvmlite 0.36 (Python <3.10 only) and fails to build on 3.12.
     "numba>=0.59",
     "llvmlite>=0.42",
-    "pillow>=10",
+    "pillow>=12.3",
     "numpy>=1.24",
 ]
 
