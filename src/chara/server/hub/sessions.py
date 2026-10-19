@@ -562,7 +562,9 @@ def start_daemon(meta: S.SessionMeta, patience: float | None = None) -> bool:
         return False
     env = {**os.environ, **meta.env()}  # meta.env() carries CHARA_PY_BACKEND
     log = meta.daemon_log.open("ab")
-    argv = [sys.executable, "-m", "chara.front.terminal"]
+    # The inert --session marker is what lets sessions.pid_is_chara tell sibling
+    # daemons apart after reboot pid-reuse (same argv as cli._start_daemon).
+    argv = [sys.executable, "-m", "chara.front.terminal", "--session", meta.name]
     if patience is not None:
         argv += ["--patience", str(patience)]
     proc = subprocess.Popen(

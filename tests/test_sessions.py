@@ -161,19 +161,43 @@ def test_empty_daemon_pid_is_an_in_flight_claim():
     assert not meta.daemon_pid_path.exists()  # a crashed starter's claim self-heals
 
 
+# Stand-ins with a real chara process's command line: `python -c <sleep>` ignores
+# the trailing args, so /proc (or ps) shows e.g. `… -m chara.front.terminal
+# --session alice` while the process just sleeps.
+_SLEEP = "import time; time.sleep(30)"
+
+
+def _fake_proc(*argv: str) -> subprocess.Popen:
+    return subprocess.Popen([sys.executable, "-c", _SLEEP, *argv])
+
+
+def _wait_visible(*procs: subprocess.Popen) -> None:
+    """Give the children a beat to finish exec (until then /proc shows the parent)."""
+    deadline = time.time() + 5
+    while time.time() < deadline and not all(S.pid_is_chara(p.pid) for p in procs):
+        time.sleep(0.05)
+
+
 def test_pid_is_chara_reads_the_command_line():
-    # argv carrying the package name passes; a plain sleeper does not; nor a dead pid.
-    probe = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)",
-                              "chara-identity-probe"])
+    # A process RUNNING chara passes; a plain sleeper does not; nor a dead pid.
+    daemon = _fake_proc("-m", "chara.front.terminal", "--session", "alice")
+    serve = _fake_proc("-m", "chara.front.cli", "serve", "bob", "--stdio")
     sleeper = subprocess.Popen(["/bin/sleep", "30"])
+    # Strangers that merely MENTION chara: `character` contains it, and every jailed
+    # job a chara spawns carries ~/.chara/… in its argv.
+    character = _fake_proc("/srv/characters/importer")
+    jailed = _fake_proc("--bind", "/home/u/.chara/sessions/bob/sandbox/workspace", "job.py")
+    procs = (daemon, serve, sleeper, character, jailed)
     try:
-        deadline = time.time() + 5  # give the children a beat to finish exec
-        while time.time() < deadline and not S.pid_is_chara(probe.pid):
-            time.sleep(0.05)
-        assert S.pid_is_chara(probe.pid) is True
+        _wait_visible(daemon, serve)
+        assert S.pid_is_chara(daemon.pid) is True
+        assert S.pid_is_chara(serve.pid) is True
         assert S.pid_is_chara(sleeper.pid) is False
+        assert S.pid_is_chara(character.pid) is False
+        assert S.pid_is_chara(jailed.pid) is False
+        assert S.pid_is_chara(jailed.pid, session="alice") is False
     finally:
-        for p in (probe, sleeper):
+        for p in procs:
             p.kill()
             p.wait()
     assert S.pid_is_chara(999999999) is False
@@ -181,33 +205,32 @@ def test_pid_is_chara_reads_the_command_line():
 
 def test_pid_is_chara_tells_sibling_sessions_apart():
     """Every daemon argv is otherwise identically `-m chara.front.terminal` (the
-    session rides only env), so cli._start_daemon stamps an inert `--session NAME`
+    session rides only env), so the daemon starters stamp an inert `--session NAME`
     marker. With a session given, a DIFFERENT marker is a sibling's daemon (reboot
     pid-reuse across charas once made start-all skip A and A.stop() kill B)."""
-    code = "import time; time.sleep(30)"
-    alice = subprocess.Popen([sys.executable, "-c", code, "chara", "--session", "alice"])
-    bob = subprocess.Popen([sys.executable, "-c", code, "chara", "--session", "bob"])
-    old = subprocess.Popen([sys.executable, "-c", code, "chara-pre-marker-daemon"])
+    alice = _fake_proc("-m", "chara.front.terminal", "--session", "alice")
+    bob = _fake_proc("-m", "chara.front.terminal", "--session", "bob")
+    old = _fake_proc("-m", "chara.front.terminal")
+    # the supervisor's per-chara child: a chara process, but never a daemon
+    serve = _fake_proc("-m", "chara.front.cli", "serve", "bob", "--stdio")
+    procs = (alice, bob, old, serve)
     try:
-        deadline = time.time() + 5  # give the children a beat to finish exec
-        while time.time() < deadline and not (
-            S.pid_is_chara(alice.pid, session="alice")
-            and S.pid_is_chara(bob.pid, session="bob")
-            and S.pid_is_chara(old.pid)
-        ):
-            time.sleep(0.05)
+        _wait_visible(*procs)
         assert S.pid_is_chara(alice.pid, session="alice") is True
         assert S.pid_is_chara(bob.pid, session="bob") is True
         # the sibling collision: bob's daemon must NOT pass as alice's (and vice versa)
         assert S.pid_is_chara(bob.pid, session="alice") is False
         assert S.pid_is_chara(alice.pid, session="bob") is False
-        # back-compat: a pre-upgrade daemon carries NO marker — chara, just
-        # unlabeled: it must not be treated as foreign.
+        # back-compat: a daemon spawned before the marker existed carries NONE —
+        # chara, just unlabeled: it must not be treated as foreign.
         assert S.pid_is_chara(old.pid, session="alice") is True
+        # a marker-less serve child must not pass as anyone's daemon
+        assert S.pid_is_chara(serve.pid, session="alice") is False
+        assert S.pid_is_chara(serve.pid, session="bob") is False
         # the bare match (no session asked) is unchanged
         assert S.pid_is_chara(bob.pid) is True
     finally:
-        for p in (alice, bob, old):
+        for p in procs:
             p.kill()
             p.wait()
 
