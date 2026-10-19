@@ -17,10 +17,14 @@ apps/desktop/
 
 ## Backend resolution (in order, no silent fallback)
 
-1. `~/.chara/bin/chara desktop --no-open` — the installed copy.
+1. `chara desktop --no-open` from the installed launcher — the first
+   executable `chara` in `$UV_TOOL_BIN_DIR`, `$XDG_BIN_HOME`,
+   `$CHARA_LINK_DIR`, then `~/.local/bin` (where `install.sh` leaves it on
+   both channels; a Finder/Dock launch has no shell PATH, so these are
+   checked directly).
 2. Development checkout: if `pyproject.toml` exists three levels up
-   (i.e. this repo), `uv run --extra server chara desktop --no-open`
-   with the repo as cwd.
+   (i.e. this repo), `uv run --extra dev --extra server chara desktop
+   --no-open` with the repo as cwd.
 3. Neither → error dialog, exit. A backend that dies or never prints its
    URL is likewise a visible error, never a retry-with-something-else.
 
@@ -36,11 +40,12 @@ First `npm run dev` in a fresh checkout may take a while: `uv run` builds the
 virtualenv before the backend prints its URL (the shell waits up to 3 min).
 `CHARA_SHELL_DEBUG=1 npm run dev` echoes backend output to the terminal.
 
-Closing the window ends the visit: the backend process group (hub + per-chara
-`serve --stdio` children) gets SIGTERM, 8 s grace, then SIGKILL. Chara daemons
-are not part of that group — background life keeps running, as designed. On
-macOS the app stays in the dock; clicking the dock icon starts a fresh visit
-(new backend, new window).
+Closing the window only hides it: the app retires to the menu-bar tray icon
+and the backend keeps running. Clicking the tray icon, the dock icon or
+relaunching the app brings the window back. Quit (tray menu / Cmd-Q) ends the
+visit: the backend process group (hub + per-chara `serve --stdio` children)
+gets SIGTERM, 8 s grace, then SIGKILL. Chara daemons are not part of that
+group — background life keeps running, as designed.
 
 ## Package
 
@@ -50,7 +55,7 @@ npm run dist:linux  # Linux AppImage
 ```
 
 No Windows (project platform policy). The packaged app expects the installed
-backend (`install.sh` → `~/.chara/bin/chara`); it does not bundle Python.
+backend (`install.sh` → `~/.local/bin/chara`); it does not bundle Python.
 
 ## Security baseline
 

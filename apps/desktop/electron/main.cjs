@@ -35,14 +35,29 @@ let quitting = false
 
 // ---- backend discovery -------------------------------------------------------------
 
+// Where install.sh leaves the `chara` launcher: the user channel's `uv tool
+// install` links it into uv's tool bin dir (UV_TOOL_BIN_DIR > XDG_BIN_HOME >
+// ~/.local/bin), the dev channel writes its shim to CHARA_LINK_DIR (default
+// ~/.local/bin). A Finder/Dock launch inherits no shell PATH, so the shell
+// checks those locations directly instead of resolving `chara` on PATH.
+function launcherCandidates() {
+  const dirs = [
+    process.env.UV_TOOL_BIN_DIR,
+    process.env.XDG_BIN_HOME,
+    process.env.CHARA_LINK_DIR,
+    path.join(os.homedir(), '.local', 'bin'),
+  ].filter(Boolean)
+  return [...new Set(dirs)].map((dir) => path.join(dir, 'chara'))
+}
+
 function installedLauncher() {
-  const bin = path.join(os.homedir(), '.chara', 'bin', 'chara')
-  try {
-    fs.accessSync(bin, fs.constants.X_OK)
-    return bin
-  } catch {
-    return null
+  for (const bin of launcherCandidates()) {
+    try {
+      fs.accessSync(bin, fs.constants.X_OK)
+      return bin
+    } catch { /* not here */ }
   }
+  return null
 }
 
 function devRepoRoot() {
@@ -87,7 +102,7 @@ function startBackend() {
     if (!found) {
       reject(new Error(
         'No OpenCharaAgent backend found.\n\n' +
-        `Looked for ${path.join(os.homedir(), '.chara', 'bin', 'chara')} ` +
+        `Looked for ${launcherCandidates().join(', ')} ` +
         '(install.sh) and for a development checkout next to apps/desktop.'))
       return
     }
@@ -279,11 +294,12 @@ function createTray() {
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
+  // Relaunching the app while it sits in the tray must bring the window back
+  // (it is hidden, or gone after a renderer crash), not just focus it.
   app.on('second-instance', () => {
-    if (win) {
-      if (win.isMinimized()) win.restore()
-      win.focus()
-    }
+    if (quitting) return
+    if (win && win.isMinimized()) win.restore()
+    showWindow()
   })
 
   ipcMain.handle('chara:notify', (_event, payload) => {
@@ -295,11 +311,9 @@ if (!app.requestSingleInstanceLock()) {
       silent: false,
     })
     n.on('click', () => {
-      if (win) {
-        if (win.isMinimized()) win.restore()
-        win.show()
-        win.focus()
-      }
+      if (quitting) return
+      if (win && win.isMinimized()) win.restore()
+      showWindow()
     })
     n.show()
     return true
