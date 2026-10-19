@@ -147,13 +147,16 @@ describe("statusOf", () => {
     expect(out.dot).toBe("live");
   });
 
-  it("a user turn is a headline too (WeChat semantics: last message, either side)", () => {
+  it("a user turn is a headline too, attributed to the user on every layout", () => {
+    // WeChat semantics: last message, either side — but the user's own words carry
+    // the You: prefix, so the desktop bubble under the chara's portrait never
+    // reads them as the chara's (the mobile list used to be the only one to say so).
     const out = statusOf(
       en,
       { status: "running", last_message: { text: "你在吗", ts: 200, role: "user" } },
       NOW,
     );
-    expect(out.line).toBe("你在吗");
+    expect(out.line).toBe("You: 你在吗");
     expect(out.cls).toBe("msg");
   });
 
