@@ -37,6 +37,18 @@ export function Board() {
   // not on the roster row — match by owner to show the avatar/sprite on the board.
   const cards = (snapshot?.cards as DeckCard[] | undefined) || [];
 
+  // The hub socket pushes no roster updates, so the board re-reads hub.state
+  // whenever it comes into view: on mount (back from a chat, where the
+  // last_message preview and life state moved on) and when the page is shown again.
+  useEffect(() => {
+    void refresh();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [refresh]);
+
   // First-run: once the hub snapshot has loaded and there are no charas, show the
   // welcome overlay a single time per browser (app.js openFirstRun on empty boot).
   const shown = useRef(false);
@@ -162,17 +174,13 @@ export function Board() {
                 {sessions.map((s) => {
                   const st = statusOf(t, s);
                   const lm = s.last_message;
-                  const preview =
-                    st.cls !== "err" && lm && lm.text && lm.role === "user"
-                      ? t("preview-you", { text: lm.text })
-                      : st.line; // an error state outranks the conversation preview
                   return (
                     <CharaListRow
                       key={s.name}
                       charName={s.char_name}
                       card={cards.find((c) => c.locked && c.owner === s.name) ?? null}
                       dot={st.dot}
-                      preview={preview}
+                      preview={st.line}
                       previewErr={st.cls === "err"}
                       time={timeAgo(t, lm && lm.ts ? lm.ts : s.last_active)}
                       onOpen={() => nav(`#/chara/${encodeURIComponent(s.name)}`)}

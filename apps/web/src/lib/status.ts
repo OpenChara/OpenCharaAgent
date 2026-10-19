@@ -135,10 +135,15 @@ export function statusOf(t: TFn, s: SessionSnapshot, now: number = Date.now()): 
   // The backend already excludes the card's opening `first_mes` on a chara that
   // has only greeted, so the opener never reads as a message line here. With no
   // conversation yet, fall through to the factual life/idle status. The dot
-  // still reflects autonomy: off = paused (mode chat), else live.
+  // still reflects autonomy: off = paused (mode chat), else live. A user turn
+  // carries the "你: / You:" prefix on every layout, so the user's own words
+  // never read as the chara's.
   const dot = s.paused ? "off" : "live";
   const lm = s.last_message;
-  if (lm && lm.text) return { dot, line: lm.text, cls: "msg" };
+  if (lm && lm.text) {
+    const line = lm.role === "user" ? t("preview-you", { text: lm.text }) : lm.text;
+    return { dot, line, cls: "msg" };
+  }
   // OFF = autonomy off (mode chat). That is the ONLY "offline" the board shows:
   // the chara's on/off state IS its autonomy, decoupled from any process/PID.
   if (s.paused) return { dot: "off", line: t("st-paused"), cls: "" };

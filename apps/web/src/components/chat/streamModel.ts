@@ -229,7 +229,13 @@ export class StreamModel {
   }
 
   pushToolStart(name: string, preview: string, index: number): void {
-    if (name === "speak") return; // a speak turn shows only the special bubble — no chip
+    // A speak turn shows only the special bubble — no chip. Each speak is its own
+    // bubble (as on restore): close the open item so a second speak's text doesn't
+    // append into the first one's still-open super bubble.
+    if (name === "speak") {
+      this.closeCurrent();
+      return;
+    }
     this.closeCurrent();
     const group = this.ensureToolGroup();
     this.tally(name);
@@ -432,16 +438,17 @@ export class StreamModel {
             // no chip for a speak call (live parity); remember its id so the
             // matching tool-result row is dropped instead of orphaning.
             if (tc.id) speakCallIds.add(tc.id);
+            // The text renders as super DIRECTLY (isSuper arg) — the same single
+            // special bubble the live path opens from the superchat-marked
+            // TextDelta, in the same place among the calls' chips.
+            const speak = speakTextOf(fn);
+            if (speak !== null) {
+              this.appendSay(speak, true, m.ts);
+              this.closeCurrent();
+            }
             continue;
           }
           this.restoreToolCall(fn, tc.id, restoreChips);
-        }
-        // Restored speak texts render as super DIRECTLY (isSuper arg) — the same
-        // single special bubble the live path opens from the superchat-marked
-        // TextDelta.
-        for (const speak of speakTextsFromMessage(m)) {
-          this.appendSay(speak, true, m.ts);
-          this.closeCurrent();
         }
       }
     }
@@ -508,18 +515,24 @@ export function speakTextsFromMessage(m: RestoredMessage): string[] {
   for (const tc of calls) {
     const fn = tc && tc.function;
     if (!fn || fn.name !== "speak") continue;
-    let args: unknown = fn.arguments;
-    if (typeof args === "string") {
-      try {
-        args = JSON.parse(args);
-      } catch {
-        continue;
-      }
-    }
-    const text = args && typeof args === "object" ? (args as { text?: unknown }).text : undefined;
-    if (typeof text === "string" && text.trim()) out.push(text);
+    const text = speakTextOf(fn);
+    if (text !== null) out.push(text);
   }
   return out;
+}
+
+/** One speak call's text arg, or null when it carries none. */
+function speakTextOf(fn: { arguments?: unknown }): string | null {
+  let args: unknown = fn.arguments;
+  if (typeof args === "string") {
+    try {
+      args = JSON.parse(args);
+    } catch {
+      return null;
+    }
+  }
+  const text = args && typeof args === "object" ? (args as { text?: unknown }).text : undefined;
+  return typeof text === "string" && text.trim() ? text : null;
 }
 
 /** A chip's display label (chat.js showToolEnd / restoreToolCall). */

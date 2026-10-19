@@ -190,6 +190,42 @@ describe("StreamModel — super-chat (the speak tool's one special bubble)", () 
     const sup = m.items.find((i) => i.kind === "super") as TextItem;
     expect(sup.ts).toBeGreaterThan(0);
   });
+
+  // Live and reload must draw the same thing. Each case is one assistant step,
+  // fed through the live event sequence (llm.py: ToolStart → ToolEnd → the
+  // speak's superchat TextDelta) and through renderRestored.
+  const shape = (m: StreamModel) =>
+    m.items.map((i) =>
+      i.kind === "super" ? `super:${(i as TextItem).raw.trim()}` : i.kind === "tool-group"
+        ? `tools:${(i as ToolGroupItem).chips.map((c) => c.name).join(",")}` : i.kind,
+    );
+  const call = (id: string, name: string, args: object) => ({
+    id,
+    function: { name, arguments: JSON.stringify(args) },
+  });
+  it.each([
+    ["two speaks", [["speak", { text: "A" }], ["speak", { text: "B" }]], ["super:A", "super:B"]],
+    ["speak then a tool", [["speak", { text: "A" }], ["read_file", { path: "x" }]], ["super:A", "tools:read_file"]],
+    ["a tool then speak", [["read_file", { path: "x" }], ["speak", { text: "A" }]], ["tools:read_file", "super:A"]],
+  ] as const)("%s: live and restored render the same", (_label, calls, expected) => {
+    const live = new StreamModel();
+    calls.forEach(([name, args], i) => {
+      live.pushToolStart(name, "", i);
+      live.pushToolEnd(name, true, 0.1, "", i);
+      if (name === "speak") live.pushText(`${(args as { text: string }).text}\n`, "say", true);
+    });
+    const restored = new StreamModel();
+    restored.renderRestored([
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: calls.map(([name, args], i) => call(`c${i}`, name, args)),
+      },
+      ...calls.map((_c, i) => ({ role: "tool", content: "{}", tool_call_id: `c${i}` })),
+    ]);
+    expect(shape(live)).toEqual(expected);
+    expect(shape(restored)).toEqual(expected);
+  });
 });
 
 describe("StreamModel — finalize + system + user", () => {
