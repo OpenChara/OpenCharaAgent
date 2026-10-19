@@ -772,7 +772,7 @@ def _uv_path() -> str:
 def cmd_update(args: argparse.Namespace) -> int:
     # Two channels (mirrors install.sh): a git checkout is the DEV/edge channel
     # (git pull + uv sync); anything else is a wheel install from a GitHub
-    # Release, upgraded in place via `uv tool upgrade`.
+    # Release, upgraded in place by reinstalling the newest release wheel.
     if (APP_DIR / ".git").exists():
         return _update_dev_checkout(args)
     return _update_wheel(args)
@@ -810,7 +810,7 @@ def _update_dev_checkout(args: argparse.Namespace) -> int:
 def _update_wheel(args: argparse.Namespace) -> int:
     # Wheel install (the user channel): reinstall from the LATEST release wheel URL
     # via the shared self-update core. `uv tool upgrade` is a no-op on a URL-pinned
-    # tool (install.sh pins `chara @ <wheel-url>`), so it could never upgrade —
+    # tool (install.sh pins `opencharaagent[...] @ <wheel>`), so it could never upgrade —
     # the core fetches the newest release wheel and `uv tool install --force`s it.
     # The wheel carries the built frontend (front/webui/), so there's no node step.
     from .. import updater

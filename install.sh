@@ -8,7 +8,7 @@
 #   * USER (default) — install the prebuilt WHEEL from the latest GitHub Release
 #     via `uv tool install`. The wheel bundles the built frontend (front/webui/),
 #     so there's no node build and no source checkout. Update later with
-#     `chara update` (uv tool upgrade).
+#     `chara update` (reinstalls the newest release wheel).
 #
 #   * DEV/edge — `CHARA_CHANNEL=dev` (or `--dev`) keeps the old git-checkout
 #     layout: a clone in $CHARA_HOME/app + `uv sync`. Developers have node and

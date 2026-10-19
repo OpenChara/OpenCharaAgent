@@ -2,8 +2,9 @@
 
 We READ the repo's GitHub Releases (tag + markdown notes) as both the changelog and the
 latest-version signal, and APPLY via the SAME channel-aware steps as ``chara update``:
-a dev/git checkout = ``git pull --ff-only`` + ``uv sync``; a wheel install = ``uv tool
-upgrade chara``. We only ever CHECK + surface — never auto-update, never default-update.
+a dev/git checkout = ``git pull --ff-only`` + ``uv sync``; a wheel install = reinstall
+the newest release wheel (``chara/updater.py``). We only ever CHECK + surface — never
+auto-update, never default-update.
 
 The release fetch is cached (GitHub's unauthenticated rate limit is 60/hr) in the same
 ``update_check.json`` stamp the CLI already uses, extended with the release list.
