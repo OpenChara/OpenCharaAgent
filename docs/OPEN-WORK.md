@@ -128,9 +128,9 @@ product backlog behind it.
   the `curl|bash` CLI install (that stays the dev/terminal path). The hard part:
   `apps/desktop` is a THIN Electron shell that spawns the Python backend
   (`chara desktop`); today `electron-builder` (`npm run dist`) bundles only
-  the shell, and `main.cjs` finds the backend via a dev checkout or a (currently
-  mismatched) installed path — so the DMG today is NOT self-contained and shows
-  "No backend found". Plan:
+  the shell, and `main.cjs` finds the backend via a dev checkout or the installed
+  `chara` launcher (`~/.local/bin`, uv's tool bin dir) — so the DMG today is NOT
+  self-contained and shows "No backend found" without a prior `install.sh`. Plan:
   1. **Freeze the backend** — PyInstaller/py2app into a standalone `chara`
      binary, OR ship a uv-managed standalone Python + the venv as a folder.
      KEY constraint: the supervisor RE-INVOKES the backend as subprocesses
@@ -144,12 +144,6 @@ product backlog behind it.
   3. **Sign + notarize** (Apple Developer ID) — otherwise Gatekeeper blocks the
      .app on any other Mac. Linux: AppImage has the same bundling shape, no
      signing.
-  - **Bug to fix regardless** (independent of the DMG work; still open 2026-07-02):
-    `apps/desktop/electron/main.cjs` `installedLauncher()` looks for
-    `~/.chara/bin/chara`, but `install.sh` links the shim at
-    `~/.local/bin/chara` (and the default `user` channel is now a uv tool
-    install, whose bin dir is uv's). Fix the discovery to check
-    `~/.local/bin/chara` + `uv tool` bin.
   - Icon assets already exist (`apps/desktop/assets/icon.png` + the menu-bar
     `trayTemplate*`). The menu-bar-resident idea (above) composes with this.
 
